@@ -44,6 +44,9 @@ Targets: a Debian VPS running Caddy and Docker, and Debian LXC containers.
 
 ## Design notes
 
+Full plan: [docs/DESIGN.md](docs/DESIGN.md). The UI is server-rendered with
+FastAPI, HTMX and Tabler, with no Node build step.
+
 - **Split privileges.** A small root collector writes snapshots. The web UI
   runs as an unprivileged user and only reads them.
 - **Not public by default.** The UI binds to localhost or a WireGuard
