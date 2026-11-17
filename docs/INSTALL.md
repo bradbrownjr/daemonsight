@@ -170,15 +170,21 @@ while the collector or hub keeps running), the config file, the password
 hash, the session secret and any upload token. Only its owner can read it.
 Keep copies as private as the server: the secret and token are live.
 
-**Scheduled:** the collector on a host, or the hub, writes one every 24
-hours to `backups` in the data folder and keeps the newest seven:
+**Scheduled:** the hub, and the collector on a host that keeps its own
+data, write one every 24 hours to `backups` in the data folder and keep the
+newest seven. A host that uploads to a hub skips them, since the hub's
+backups hold its history; set `interval_hours` to turn them back on.
 
 ```toml
 [backup]
 dir = ""             # default: <data_dir>/backups
-interval_hours = 24  # 0 turns scheduled backups off
+interval_hours = 24  # 0 turns them off; unset, a host that uploads skips them
 keep = 7
 ```
+
+A host that uploads keeps only its token and config locally. If it's
+rebuilt, reinstall, then `hub revoke` and `hub add-host` it again for a new
+token, or restore one of its own manual backups.
 
 On Unraid that folder is inside appdata, so an appdata backup copies it off
 the server. On a host, copy `/var/lib/daemonsight/backups` somewhere else

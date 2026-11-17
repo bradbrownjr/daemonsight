@@ -107,3 +107,14 @@ def test_schedule_and_prune(live):
     assert len(list(cfg.backup_dir.glob("daemonsight-*.tar.gz"))) == 2
     cfg.backup.interval_hours = 0
     assert not backup.due(cfg, time.time() + 10**6)
+
+
+def test_uploading_hosts_skip_scheduled_backups(cfg):
+    assert cfg.backup_interval_hours == 24
+    cfg.upload.url = "https://hub.example.com/api/v1/ingest"
+    assert cfg.backup_interval_hours == 0          # the hub's backups hold its history
+    cfg.backup.interval_hours = 12
+    assert cfg.backup_interval_hours == 12         # an explicit setting wins
+    cfg.backup.interval_hours = None
+    cfg.hub.enabled = True
+    assert cfg.backup_interval_hours == 24

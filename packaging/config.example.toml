@@ -82,7 +82,7 @@
 # this file, the password, the session secret and any upload token, in one
 # owner-only .tar.gz. Made by the collector on a host and by the hub.
 # dir = ""                      # default: <data_dir>/backups
-# interval_hours = 24           # 0 turns scheduled backups off
+# interval_hours = 24           # 0 turns them off; unset, a host that uploads to a hub skips them
 # keep = 7
 
 [upload]

@@ -134,10 +134,11 @@ def prune(dest_dir: Path, keep: int) -> list[Path]:
 
 def due(cfg: Config, now: float) -> bool:
     """True when the newest backup is older than interval_hours."""
-    if cfg.backup.interval_hours <= 0:
+    hours = cfg.backup_interval_hours
+    if hours <= 0:
         return False
     newest = max((p.stat().st_mtime for p in cfg.backup_dir.glob(f"{PREFIX}*{SUFFIX}")), default=0)
-    return now - newest >= cfg.backup.interval_hours * 3600
+    return now - newest >= hours * 3600
 
 
 def scheduled(cfg: Config, config_file: Path) -> Path | None:

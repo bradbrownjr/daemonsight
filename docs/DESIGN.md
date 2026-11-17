@@ -118,8 +118,10 @@ rows hourly; the hub prunes every host's. Open findings are never pruned.
 Backups (`backup.py`): one owner-only `.tar.gz` with a consistent copy of
 the database (SQLite's online backup API, so the writer keeps running), the
 config, the password hash, the session secret and any upload token, plus a
-manifest. The collector or hub makes one every `[backup] interval_hours`
-(24) and keeps `keep` (7). `daemonsight restore` refuses while the writer
+manifest. The hub, and a collector that keeps its own data, make one every
+`[backup] interval_hours` (24) and keep `keep` (7). A collector that
+uploads skips them unless `interval_hours` is set: the hub's backups hold
+its history. `daemonsight restore` refuses while the writer
 holds `daemonsight.lock` in the data folder, checks the archive's names (it
 never extracts by path), the database's integrity and its schema version,
 and keeps every file it replaces as `<name>.before-restore`.

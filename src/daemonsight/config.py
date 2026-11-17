@@ -97,7 +97,9 @@ class RetentionConfig:
 class BackupConfig:
     """Scheduled backups, made by the collector on a host and by the hub."""
     dir: str = ""                    # default: <data_dir>/backups
-    interval_hours: int = 24         # 0 turns scheduled backups off
+    # 0 turns scheduled backups off. Unset: every 24 hours, except on a host
+    # that uploads to a hub, whose history the hub's backups already hold.
+    interval_hours: int | None = None
     keep: int = 7
 
 
@@ -132,6 +134,12 @@ class Config:
     def metrics_hours(self) -> int:
         old = self.collector.metrics_retention_hours
         return old if old is not None else self.retention.metrics_hours
+
+    @property
+    def backup_interval_hours(self) -> int:
+        if self.backup.interval_hours is not None:
+            return self.backup.interval_hours
+        return 0 if self.upload.url and not self.hub.enabled else 24
 
     @property
     def backup_dir(self) -> Path:
