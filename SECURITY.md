@@ -59,7 +59,8 @@ database and its own config, and nothing else.
 - **Rate limit:** five failed logins from one address in five minutes blocks
   that address for the rest of the window. Every failure is logged as
   `Failed login from <address>` for fail2ban.
-- **Session cookie:** signed, `HttpOnly`, `SameSite=Strict`, 12 hours.
+- **Session cookie:** signed, `HttpOnly`, `SameSite=Strict`, 12 hours, and
+  tied to the current password.
   Set `web.secure_cookies = true` when the UI is served over HTTPS.
 - **Headers on every response:** a Content Security Policy that allows only
   the app's own scripts, styles and connections (no inline script, no
@@ -85,12 +86,14 @@ another machine, add its address there. If you don't, every visitor looks
 like the proxy: the log names the proxy instead of the attacker, and five bad
 passwords from anyone lock everyone out for five minutes.
 
-### Known limit
+### Ending sessions
 
-Logging out clears the cookie, but a copied cookie stays valid until it
-expires, and changing the password doesn't end existing sessions. To end
-every session, delete `/etc/daemonsight/secret`, run `sudo daemonsight init`
-to make a new one, and restart `daemonsight-web`.
+Each session is tied to the password it logged in with. Changing the
+password (`sudo daemonsight set-password`) ends every session at once.
+Logging out clears the cookie in that browser; a copy of the cookie taken
+earlier stays valid until it expires or the password changes. To end every
+session without changing the password, delete `/etc/daemonsight/secret`, run
+`sudo daemonsight init` to make a new one, and restart `daemonsight-web`.
 
 ## fail2ban
 

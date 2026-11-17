@@ -3,6 +3,8 @@ collector's database."""
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import sqlite3
 from contextlib import contextmanager
@@ -78,8 +80,20 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
         finally:
             conn.close()
 
+    def password_mark() -> str | None:
+        """A keyed fingerprint of the current password hash. A session stores
+        it at login and must still match, so changing the password ends every
+        session. Keyed with the session secret so the cookie reveals nothing
+        about the hash."""
+        stored = passwords.current_hash()
+        if not stored:
+            return None
+        return hmac.new(secret.encode(), stored.encode(), hashlib.sha256).hexdigest()
+
     def require_login(request: Request) -> None:
-        if request.session.get("user") != "admin":
+        mark = password_mark()
+        if (request.session.get("user") != "admin" or mark is None
+                or not hmac.compare_digest(str(request.session.get("pw", "")), mark)):
             raise LoginRequired()
 
     def theme(request: Request) -> str:
@@ -120,6 +134,7 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
         limiter.reset(client)
         request.session.clear()
         request.session["user"] = "admin"
+        request.session["pw"] = password_mark()
         log.info("Login from %s", client)
         return RedirectResponse(_safe_next(next), status_code=303)
 

@@ -70,7 +70,7 @@ def cmd_set_password(args, cfg) -> int:
         print("The two entries don't match.", file=sys.stderr)
         return 1
     _write_private(Path(cfg.web.password_file), hash_password(first))
-    print(f"Saved to {cfg.web.password_file}. Restart daemonsight-web if it is running.")
+    print(f"Saved to {cfg.web.password_file}. Anyone logged in has to log in again.")
     return 0
 
 

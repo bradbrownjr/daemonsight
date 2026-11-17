@@ -136,3 +136,17 @@ def test_sort_and_filter_markup(seeded):
     assert "data-row" in html
     r = c.get("/static/app.js")
     assert r.status_code == 200 and "javascript" in r.headers["content-type"]
+
+
+def test_changing_password_ends_sessions(seeded):
+    from pathlib import Path
+
+    from daemonsight.web.auth import hash_password
+
+    c = login(client(seeded))
+    assert c.get("/").status_code == 200
+    Path(seeded.web.password_file).write_text(hash_password("a brand new passphrase"))
+    r = c.get("/")
+    assert r.status_code == 303 and r.headers["location"].startswith("/login")
+    assert c.post("/login", data={"password": "a brand new passphrase", "next": "/"}).status_code == 303
+    assert c.get("/").status_code == 200
