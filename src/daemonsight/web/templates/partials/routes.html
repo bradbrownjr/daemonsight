@@ -17,7 +17,7 @@
       <thead><tr><th data-sort="text">Site</th><th data-sort="text">Who can reach it</th><th data-sort="text">Handles</th><th data-sort="text">Listens on</th></tr></thead>
       <tbody>
         {% for s in v.sites %}
-        <tr data-row>
+        <tr data-row id="{{ s.anchor }}">
           <td><strong>{{ s.host }}</strong>{{ src("src-s-" ~ loop.index, s.src) }}</td>
           <td><span class="badge {{ s.access_badge }}">{{ s.access }}</span></td>
           <td>

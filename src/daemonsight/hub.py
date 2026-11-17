@@ -18,7 +18,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from . import db
+from . import db, full_version
 from .findings import Finding
 
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
@@ -127,7 +127,29 @@ class SettingsIn(_Model):
     interval_system: int = Field(default=10, ge=1, le=86400)
 
 
+UPDATE_STATES = ("running", "done", "failed", "refused", "rolled_back")
+
+
+class UpdateStateIn(_Model):
+    """The host's last update attempt, from daemonsight-update."""
+    ref: Annotated[str, Field(pattern=r"^[0-9a-f]{7,40}$")]
+    status: Literal[UPDATE_STATES]  # type: ignore[valid-type]
+    at: float
+    detail: Annotated[str, Field(max_length=300)] = ""
+
+    @field_validator("detail")
+    @classmethod
+    def _printable(cls, v: str) -> str:
+        if any(ord(ch) < 32 for ch in v):
+            raise ValueError("control characters in detail")
+        return v
+
+
 class Upload(_Model):
+    # Unknown top-level fields are ignored, so a host updated ahead of its
+    # hub can still report. Everything inside stays strict.
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+
     v: Literal[1]
     host: Annotated[str, Field(pattern=HOST_RE.pattern)]
     seq: int = Field(ge=1)
@@ -140,6 +162,8 @@ class Upload(_Model):
         Field(default_factory=list, max_length=50_000)
     events: list[EventIn] = Field(default_factory=list, max_length=2_000)
     findings: list[FindingIn] = Field(default_factory=list, max_length=2_000)
+    remote_update: bool | None = None
+    update: UpdateStateIn | None = None
 
     @field_validator("snapshots")
     @classmethod
@@ -225,10 +249,11 @@ def unpack(body: bytes, gzipped: bool, max_unpacked: int) -> Upload:
 
 # --- storing ----------------------------------------------------------------
 
-def store(conn, host_row, up: Upload, now: float, address: str | None) -> None:
+def store(conn, host_row, up: Upload, now: float, address: str | None) -> str | None:
     """Write one accepted upload. Safe to repeat: snapshots only move
     forward, metric points with the same time and name are replaced, and
-    events are keyed by their collector id."""
+    events are keyed by their collector id. Returns the commit the host
+    should update to, if the hub has asked for one and it isn't done."""
     host = host_row["id"]
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -252,8 +277,12 @@ def store(conn, host_row, up: Upload, now: float, address: str | None) -> None:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [(host, e.ts, e.kind, e.severity, e.title, e.detail, e.link, e.id) for e in up.events])
         conn.execute(
-            "UPDATE hosts SET last_seq=?, last_seen=?, last_sent_at=?, max_interval=?, version=?, address=? "
-            "WHERE id=?", (up.seq, now, up.sent_at, up.max_interval, up.version, address, host))
+            "UPDATE hosts SET last_seq=?, last_seen=?, last_sent_at=?, max_interval=?, version=?, address=?, "
+            "remote_update=?, update_state=COALESCE(?, update_state) WHERE id=?",
+            (up.seq, now, up.sent_at, up.max_interval, up.version, address,
+             None if up.remote_update is None else int(up.remote_update),
+             up.update.model_dump_json() if up.update else None, host))
+        pending = _pending_update(conn, host, up, now)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -268,6 +297,82 @@ def store(conn, host_row, up: Upload, now: float, address: str | None) -> None:
                     f"This host's clock is {abs(skew):.0f} seconds {'ahead of' if skew > 0 else 'behind'} the hub's. "
                     "Times on its pages may be wrong. Check NTP on the host (timedatectl).", "/")
     db.set_finding(conn, host, now, f, rule="host.clock_skew", key="clock")
+    return pending
+
+
+# --- updates from the hub ---------------------------------------------------
+# The hub can only name a commit. The host installs it from its own clone of
+# the GitHub repo, and only if the commit is on main or in a v* tag
+# (packaging/daemonsight-update). Hosts turn this off with
+# [upload] remote_update = false.
+
+REV_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def revision(version: str | None) -> str | None:
+    """The commit in a version string like "0.1.0 (b41c588)"."""
+    m = re.search(r"\(([0-9a-f]{7,40})\)\s*$", version or "")
+    return m.group(1) if m else None
+
+
+def same_rev(a: str | None, b: str | None) -> bool:
+    return bool(a and b) and (a.startswith(b) or b.startswith(a))
+
+
+def hub_revision() -> str | None:
+    return revision(full_version())
+
+
+def request_update(conn, host_id: str, target: str, now: float) -> bool:
+    if not REV_RE.match(target or ""):
+        raise ValueError(f"not a commit: {target!r}")
+    cur = conn.execute("UPDATE hosts SET update_to=?, update_asked=? WHERE id=?", (target, now, host_id))
+    return cur.rowcount == 1
+
+
+def cancel_update(conn, host_id: str) -> bool:
+    return conn.execute("UPDATE hosts SET update_to=NULL WHERE id=? AND update_to IS NOT NULL",
+                        (host_id,)).rowcount == 1
+
+
+def behind(row, target: str | None) -> bool:
+    """A host that has reported, accepts updates, and runs another commit."""
+    return bool(target) and row["last_seen"] is not None and row["remote_update"] != 0 \
+        and not same_rev(revision(row["version"]), target)
+
+
+def request_update_all(conn, target: str, now: float) -> list[str]:
+    ids = [r["id"] for r in conn.execute("SELECT * FROM hosts ORDER BY id") if behind(r, target)]
+    for i in ids:
+        request_update(conn, i, target, now)
+    return ids
+
+
+def _pending_update(conn, host: str, up: Upload, now: float) -> str | None:
+    row = conn.execute("SELECT update_to, update_asked FROM hosts WHERE id=?", (host,)).fetchone()
+    target = row["update_to"]
+    if not target:
+        return None
+    short = target[:7]
+    if same_rev(revision(up.version), target):
+        conn.execute("UPDATE hosts SET update_to=NULL WHERE id=?", (host,))
+        _event(conn, host, now, None, f"Updated to {short}")
+        return None
+    u = up.update
+    if u and same_rev(u.ref, target) and u.at >= (row["update_asked"] or 0) \
+            and u.status in ("failed", "refused", "rolled_back"):
+        conn.execute("UPDATE hosts SET update_to=NULL WHERE id=?", (host,))
+        word = {"failed": "failed", "refused": "was refused", "rolled_back": "failed and was rolled back"}[u.status]
+        _event(conn, host, now, "medium", f"Update to {short} {word}", u.detail or None)
+        return None
+    if up.remote_update is False:
+        return None
+    return target
+
+
+def _event(conn, host: str, ts: float, severity: str | None, title: str, detail: str | None = None) -> None:
+    conn.execute("INSERT INTO events (host, ts, kind, severity, title, detail) VALUES (?, ?, 'update', ?, ?, ?)",
+                 (host, ts, severity, title, detail))
 
 
 def _silent(conn, host: str, now: float, f: Finding | None) -> None:

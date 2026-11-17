@@ -225,6 +225,19 @@ def cmd_hub(args, cfg) -> int:
         print("  1. sudo daemonsight set-upload-token --url https://<this hub>/api/v1/ingest")
         print("     (paste the token), and make sure host_id in its config is", repr(args.name))
         print("  2. sudo systemctl restart daemonsight-collector")
+    elif args.hub_command == "update":
+        target = hub.hub_revision()
+        if not target:
+            print("This hub's own commit isn't known, so there's nothing to update hosts to.", file=sys.stderr)
+            return 1
+        if args.all:
+            ids = hub.request_update_all(conn, target, time.time())
+        elif args.name and hub.request_update(conn, args.name, target, time.time()):
+            ids = [args.name]
+        else:
+            print("Name a host the hub knows, or use --all.", file=sys.stderr)
+            return 1
+        print(f"Asked {', '.join(ids) or 'no hosts'} to update to {target}. Each picks it up with its next upload.")
     elif args.hub_command == "list":
         rows = conn.execute("SELECT * FROM hosts ORDER BY id").fetchall()
         if not rows:
@@ -266,6 +279,9 @@ def main(argv: list[str] | None = None) -> int:
     add.add_argument("name")
     add.add_argument("--quiet", action="store_true", help="print only the token, for piping to set-upload-token")
     hubsub.add_parser("list", help="list hosts and when each last uploaded")
+    upd = hubsub.add_parser("update", help="ask a host, or every host that's behind, to install the hub's version")
+    upd.add_argument("name", nargs="?")
+    upd.add_argument("--all", action="store_true")
     rev = hubsub.add_parser("revoke", help="stop accepting a host's uploads")
     rev.add_argument("name")
     rev.add_argument("--purge", action="store_true", help="also delete the host's data")

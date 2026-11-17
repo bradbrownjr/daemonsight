@@ -74,6 +74,9 @@ class UploadConfig:
     token_file: str = "/etc/daemonsight/hub.token"
     # Seconds between uploads.
     interval: int = 30
+    # Install updates the hub asks for (a commit on main or a release tag of
+    # the GitHub repo, checked on this host). The hub can't change this.
+    remote_update: bool = True
 
 
 @dataclass

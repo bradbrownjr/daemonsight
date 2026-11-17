@@ -234,6 +234,32 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                 ctx = views.hosts_list(conn, cfg) if conn else {"hosts": []}
             return render(request, "partials/hosts.html", {"v": ctx})
 
+        @app.post("/hosts/update")
+        async def update_hosts(request: Request, host: str = Form(""), action: str = Form("update")):
+            """Ask one host, or every host that's behind, to install the
+            hub's commit; or cancel a request that hasn't been picked up."""
+            require_login(request)
+            # The session cookie is SameSite=strict; refuse cross-site posts
+            # outright too, for browsers that say where a request came from.
+            if request.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
+                return PlainTextResponse("cross-site request refused", status_code=403)
+            target = hub.hub_revision()
+            client = request.client.host if request.client else "?"
+            now = time.time()
+            if action == "cancel" and hub.HOST_RE.match(host):
+                if hub.cancel_update(hub_conn, host):
+                    log.info("Update for %s cancelled from %s", host, client)
+            elif action == "update" and target:
+                if host == "*":
+                    ids = hub.request_update_all(hub_conn, target, now)
+                elif hub.HOST_RE.match(host) and hub.request_update(hub_conn, host, target, now):
+                    ids = [host]
+                else:
+                    ids = []
+                if ids:
+                    log.info("Update to %s requested for %s from %s", target, ", ".join(ids), client)
+            return RedirectResponse("/", status_code=303)
+
         add_ingest(app, cfg, hub_conn)
     else:
         add_pages("")
@@ -316,5 +342,8 @@ def add_ingest(app: FastAPI, cfg: Config, conn) -> None:
         if up.seq <= row["last_seq"]:
             log.info("Stale upload from %s (%s): seq %d, already at %d", client, row["id"], up.seq, row["last_seq"])
             return JSONResponse({"last_seq": row["last_seq"]}, status_code=409)
-        hub.store(conn, row, up, time.time(), client)
-        return JSONResponse({"last_seq": up.seq})
+        target = hub.store(conn, row, up, time.time(), client)
+        reply = {"last_seq": up.seq}
+        if target:
+            reply["update_to"] = target
+        return JSONResponse(reply)

@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for an update the DaemonSight hub asked for
+Documentation=https://github.com/bradbrownjr/daemonsight/blob/main/docs/INSTALL.md
+
+[Path]
+# Written by the collector when the hub's reply carries update_to and
+# [upload] remote_update is on (the default). See docs/INSTALL.md "Update".
+PathExists=/var/lib/daemonsight/update.request
+Unit=daemonsight-update.service
+
+[Install]
+WantedBy=paths.target

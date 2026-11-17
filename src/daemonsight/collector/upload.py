@@ -28,6 +28,7 @@ import httpx
 
 from .. import db, full_version
 from ..config import Config
+from . import remote_update
 
 log = logging.getLogger("daemonsight.upload")
 
@@ -113,6 +114,25 @@ class Uploader:
         self.max_interval = max(max_interval, cfg.upload.interval)
         self.client = httpx.AsyncClient(timeout=30.0, verify=True, follow_redirects=False,
                                         headers={"User-Agent": f"daemonsight/{full_version()}"})
+        self._update_seen: tuple[str, str] | None = None
+
+    def _hub_asks(self, reply) -> None:
+        """Act on an update the hub's reply asks for, logging each change."""
+        try:
+            target = reply.json().get("update_to")
+        except (ValueError, AttributeError):
+            return
+        if not target:
+            self._update_seen = None
+            return
+        outcome = remote_update.handle(self.cfg, target)
+        if (target, outcome) != self._update_seen:
+            self._update_seen = (target, outcome)
+            msg = {"requested": "the hub asked for an update to %s; requested it",
+                   "off": "the hub asked for an update to %s, but remote_update is off here",
+                   "invalid": "the hub sent an update target that isn't a commit: %r"}.get(outcome)
+            if msg:
+                (log.warning if outcome == "invalid" else log.info)(msg, target)
 
     def _token(self) -> str:
         try:
@@ -136,6 +156,10 @@ class Uploader:
             db.set_meta(self.conn, {"upload.seq": seq})
         payload["seq"] = seq
         payload["sent_at"] = time.time()
+        payload["remote_update"] = self.cfg.upload.remote_update
+        last = remote_update.read_result(self.cfg.data_dir)
+        if last:
+            payload["update"] = last
         body = gzip.compress(json.dumps(payload, separators=(",", ":")).encode(), compresslevel=6)
         try:
             r = await self.client.post(self.cfg.upload.url, content=body, headers={
@@ -148,6 +172,7 @@ class Uploader:
                 db.set_meta(self.conn, {**cursors, "upload.last_ok": time.time()})
             log.debug("uploaded seq %d (%d bytes, %d metrics, %d events)", seq, len(body),
                       len(payload["metrics"]), len(payload["events"]))
+            self._hub_asks(r)
             return more
         if r.status_code == 409:
             # The hub has seen a higher number (our clock went back): jump past it.

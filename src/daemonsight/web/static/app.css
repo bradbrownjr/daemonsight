@@ -27,7 +27,13 @@ html:not(.ds-js) .ds-js-only { display: none !important; }
 th[aria-sort="ascending"] .ds-sort::after { content: "\25B2"; opacity: 1; }
 th[aria-sort="descending"] .ds-sort::after { content: "\25BC"; opacity: 1; }
 th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--tblr-primary); }
+/* The row a finding links to (/exposure#port-2083-tcp). */
+[id] { scroll-margin-top: 4rem; }
 tr:target > td { background: var(--tblr-primary-lt); }
+tr:target > td:first-child { box-shadow: inset 4px 0 0 var(--tblr-primary); }
+tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
+@keyframes ds-flash { 0%, 40% { background: rgba(var(--tblr-primary-rgb), .3); } }
+@media (prefers-reduced-motion: reduce) { tr.ds-flash > td { animation: none; } }
 /* Source panels (_macros.html). Native popovers; hidden where unsupported. */
 .ds-no-popover .ds-src-btn { display: none; }
 .ds-src-btn { all: unset; cursor: pointer; display: inline-flex; vertical-align: -3px; margin-left: .35rem;

@@ -158,16 +158,32 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
 - **No replays.** Each upload has a sequence number that must go up.
 - **Every upload is checked before anything is stored:**
   - gzip or plain JSON only, at most 8 MiB as sent and 48 MiB unpacked
-  - every field's type and length, the shape of each source's data, and no
-    unknown fields
+  - every field's type and length, and the shape of each source's data.
+    Unknown top-level fields are ignored, so a host updated before its hub
+    can still report; anything inside a known field must match exactly.
   - links must be paths on the hub's own site
   - a collector can't open or close the hub's own `host.*` findings
   - ten bad tokens from one address in five minutes block that address,
     and one host may upload at most 120 times a minute
 - **Refusals are logged** as `Refused upload from <address>: <reason>`.
   The fail2ban filter counts only bad tokens.
-- **The hub never sends commands.** Its reply carries only the last sequence
-  number it accepted.
+- **The hub can ask for one thing: an update.** Its reply carries the last
+  sequence number it accepted and, when you've asked from the Hosts page, a
+  commit for the host to install. Nothing else it says is acted on.
+  - The hub names a commit, never a source. The host fetches from the
+    GitHub URL in its own `daemonsight-update` and installs the commit only
+    if it is on `main` or in a `v*` release tag.
+  - The collector doesn't install anything. It writes the commit to
+    `update.request` in its data folder; a systemd path unit starts
+    `daemonsight-update.service`, which checks the commit and installs it.
+  - If the collector isn't running 20 seconds after an update, the previous
+    commit goes back on.
+  - The worst a compromised hub can do is move hosts to another published
+    version of DaemonSight. That's the same trust you place in the GitHub
+    repo every time you update.
+  - It's on by default, as with UniFi or FortiGate controllers. A host turns
+    it off with `[upload] remote_update = false` in its own config; the hub
+    can't change that.
 - **The container runs as a non-root user** (uid 10001). Its config,
   password, session secret and database are in its `/data` volume.
 - **Silence is a finding.** A host that misses three of its longest

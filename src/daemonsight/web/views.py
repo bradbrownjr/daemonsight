@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import replace
 
-from .. import db, findings as rules
+from .. import db, findings as rules, hub
 from ..collector.sources.caddy import is_local
 from . import provenance as prov
 from ..config import Config, ExposureConfig
@@ -386,7 +387,7 @@ def exposure(conn, cfg: Config) -> dict:
             "fw": FW_LABEL[fw["state"]], "fw_badge": FW_BADGE[fw["state"]], "fw_why": fw["why"],
             "expected": ("Yes" if key in expected else "No") if internet else "—",
             "jail": (jail or "None") if internet else "—", "jail_bad": internet and not jail,
-            "anchor": f"port-{r['port']}-{r['proto']}", "src": prov.listener(r, ctr_names),
+            "anchor": rules.anchor("port", r["port"], r["proto"]), "src": prov.listener(r, ctr_names),
         })
     docker = []
     for c in (_snap_data(snaps, "docker") or {}).get("containers", []):
@@ -409,6 +410,7 @@ def exposure(conn, cfg: Config) -> dict:
                      "tables": (fwdata or {}).get("tables", []), "backend": (fwdata or {}).get("backend"),
                      "duplicates": (fwdata or {}).get("duplicates", 0),
                      "forwards": [{"proto": f["proto"], "ports": f["ports"], "to": f["to"],
+                                   "anchor": rules.anchor("fwd", f["family"], f["proto"], f["to"]),
                                    "family": "IPv6" if f["family"] == "ip6" else "IPv4",
                                    "conditions": ", ".join(f["conditions"]), "copies": f["copies"],
                                    "wide": sum(hi - lo + 1 for lo, hi in f["ranges"]) > 1000,
@@ -479,6 +481,7 @@ def routes(conn, cfg: Config) -> dict:
             else:
                 handlers.append({"kind": "Respond", "path": path, "detail": str(h.get("status") or 200)})
         sites.append({
+            "anchor": rules.anchor("site", s["host"]),
             "host": s["host"], "listen": ", ".join(s["listen"]),
             "access": ("Only " + ", ".join(s["allow"])) if s["allow"] else "Anyone",
             "access_badge": "bg-green-lt" if s["allow"] else "bg-secondary-lt",
@@ -508,6 +511,7 @@ def jails(conn, cfg: Config) -> dict:
         else:
             watching = [{"text": lp["path"], "missing": not lp["exists"]} for lp in j["logpaths"]]
         rows.append({
+            "anchor": rules.anchor("jail", j["name"]),
             "name": j["name"], "backend": "journal" if j["backend"] == "systemd" else "files",
             "watching": watching,
             "failed_now": j["failed_now"], "failed_total": j["failed_total"],
@@ -568,6 +572,7 @@ def hosts_list(conn, cfg: Config) -> dict:
         counts.setdefault(r["host"], {})[r["severity"]] = r["n"]
     silent = {r["host"] for r in conn.execute(
         "SELECT host FROM findings WHERE rule = 'host.silent' AND resolved_at IS NULL")}
+    target = hub.hub_revision()
     rows = []
     for h in conn.execute("SELECT * FROM hosts ORDER BY id"):
         system = db.get_snapshot(conn, h["id"], "system")
@@ -587,9 +592,36 @@ def hosts_list(conn, cfg: Config) -> dict:
             "uptime": fmt_duration(now - data["boot_time"]) if data.get("boot_time") else "",
             "version": h["version"] or "",
             "address": h["address"] or "",
+            **_update_state(h, target, now),
             "findings": [(SEVERITY_BADGE[sev][0], SEVERITY_BADGE[sev][1], c[sev])
                          for sev in ("critical", "high", "medium", "low") if c.get(sev)],
             "findings_v": sum(c.get(sev, 0) * w for sev, w in (("critical", 1000), ("high", 100),
                                                                 ("medium", 10), ("low", 1))),
         })
-    return {"hosts": rows, "reporting": sum(1 for r in rows if r["state"] == "Reporting")}
+    return {"hosts": rows, "reporting": sum(1 for r in rows if r["state"] == "Reporting"),
+            "hub_rev": target, "behind": sum(1 for r in rows if r["can_update"])}
+
+
+UPDATE_WORDS = {"failed": "failed", "refused": "refused", "rolled_back": "failed, rolled back"}
+
+
+def _update_state(h, target: str | None, now: float) -> dict:
+    """What the Version column says about updates from the hub."""
+    out = {"rev": hub.revision(h["version"]), "can_update": False, "updating": "", "update_note": ""}
+    if h["update_to"]:
+        asked = fmt_ago(h["update_asked"]) if h["update_asked"] else ""
+        out["updating"] = f"Updating to {h['update_to'][:7]}" + (f", asked {asked}" if asked else "")
+        return out
+    if h["remote_update"] == 0:
+        out["update_note"] = "Updates from the hub are off on this host"
+        return out
+    out["can_update"] = hub.behind(h, target)
+    try:
+        last = json.loads(h["update_state"]) if h["update_state"] else None
+    except ValueError:
+        last = None
+    if last and last.get("status") in UPDATE_WORDS and not hub.same_rev(out["rev"], last.get("ref")):
+        out["update_note"] = (f"Update to {str(last.get('ref'))[:7]} {UPDATE_WORDS[last['status']]} "
+                              f"{fmt_ago(last.get('at') or now)}"
+                              + (f": {last['detail']}" if last.get("detail") else ""))
+    return out

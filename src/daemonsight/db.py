@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -86,7 +86,11 @@ CREATE TABLE IF NOT EXISTS hosts (
     last_sent_at REAL,
     max_interval REAL,
     version      TEXT,
-    address      TEXT
+    address      TEXT,
+    update_to    TEXT,      -- commit the hub asked this host to install
+    update_asked REAL,
+    update_state TEXT,      -- JSON: the host's last update result
+    remote_update INTEGER   -- 0 when the host turned hub updates off
 );
 """
 
@@ -139,6 +143,12 @@ def migrate(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE events ADD COLUMN src_id INTEGER")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS events_by_source "
                      "ON events (host, src_id) WHERE src_id IS NOT NULL")
+        # Version 2 hosts rows have no update columns.
+        have = {r[1] for r in conn.execute("PRAGMA table_info(hosts)")}
+        for col, kind in (("update_to", "TEXT"), ("update_asked", "REAL"), ("update_state", "TEXT"),
+                          ("remote_update", "INTEGER")):
+            if col not in have:
+                conn.execute(f"ALTER TABLE hosts ADD COLUMN {col} {kind}")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 

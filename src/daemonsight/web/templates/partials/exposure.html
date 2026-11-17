@@ -88,7 +88,7 @@
       <thead><tr><th data-sort="text">Family</th><th data-sort="text">Protocol</th><th data-sort="text">Ports</th><th data-sort="text">Sent to</th><th data-sort="text">When</th><th data-sort="num">Copies</th></tr></thead>
       <tbody>
         {% for f in v.firewall.forwards %}
-        <tr data-row>
+        <tr data-row id="{{ f.anchor }}">
           <td>{{ f.family }}</td>
           <td>{{ f.proto }}</td>
           <td class="font-monospace {{ 'text-red' if f.wide }}">{{ f.ports }}</td>

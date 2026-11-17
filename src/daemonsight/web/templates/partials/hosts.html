@@ -2,7 +2,14 @@
 <section class="card" id="hosts" aria-labelledby="hosts-title" data-section{% if not v.hosts %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="hosts-title">Hosts</h2>
-    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.hosts|length }} host{{ "s" if v.hosts|length != 1 }} · {{ v.reporting }} reporting</div>
+    <div class="card-actions text-secondary d-flex align-items-center gap-2"><span><span class="ds-shown"></span>{{ v.hosts|length }} host{{ "s" if v.hosts|length != 1 }} · {{ v.reporting }} reporting</span>
+      {% if v.behind %}
+      <form method="post" action="/hosts/update" class="m-0">
+        <input type="hidden" name="host" value="*">
+        <button class="btn btn-sm btn-primary" type="submit" title="Ask every host on another version to install {{ v.hub_rev }}">Update {{ v.behind }} host{{ "s" if v.behind != 1 }} to {{ v.hub_rev }}</button>
+      </form>
+      {% endif %}
+    </div>
   </div>
   {% if not v.hosts %}
   <div class="card-body">
@@ -21,7 +28,21 @@
           <td data-v="{{ h.seen_v }}">{{ h.seen }}</td>
           <td data-v="{{ h.findings_v }}">{% for label, cls, n in h.findings %}<span class="badge {{ cls }} me-1">{{ n }} {{ label|lower }}</span>{% else %}<span class="text-secondary">None</span>{% endfor %}</td>
           <td>{{ h.os }}{% if h.uptime %}<div class="text-secondary small">up {{ h.uptime }}</div>{% endif %}</td>
-          <td class="small">{{ h.version }}</td>
+          <td class="small">{{ h.version }}
+            {% if h.updating %}
+            <form method="post" action="/hosts/update" class="m-0 mt-1 d-flex align-items-center gap-2">
+              <input type="hidden" name="host" value="{{ h.id }}"><input type="hidden" name="action" value="cancel">
+              <span class="badge bg-blue-lt">{{ h.updating }}</span>
+              <button class="btn btn-sm btn-ghost-secondary" type="submit">Cancel</button>
+            </form>
+            {% elif h.can_update %}
+            <form method="post" action="/hosts/update" class="m-0 mt-1">
+              <input type="hidden" name="host" value="{{ h.id }}">
+              <button class="btn btn-sm btn-outline-primary" type="submit">Update to {{ v.hub_rev }}</button>
+            </form>
+            {% endif %}
+            {% if h.update_note %}<div class="text-secondary">{{ h.update_note }}</div>{% endif %}
+          </td>
           <td class="font-monospace small">{{ h.address }}</td>
         </tr>
         {% endfor %}

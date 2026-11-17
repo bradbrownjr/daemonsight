@@ -173,6 +173,20 @@
   }
   setHideEmpty(store.get("hideEmpty") === true);
 
+  // A finding links to its row, e.g. /exposure#port-2083-tcp. Saved sort
+  // orders are applied after the browser has scrolled to the row, so scroll
+  // again, clear a filter that hides it, and flash it once.
+  function showTarget() {
+    var id = decodeURIComponent(window.location.hash.slice(1));
+    var el = id && document.getElementById(id);
+    if (!el) return;
+    if (el.classList.contains("ds-filtered") && filterInput) { filterInput.value = ""; applyFilter(); }
+    el.scrollIntoView({ block: el.tagName === "TR" ? "center" : "start" });
+    el.classList.remove("ds-flash");
+    void el.offsetWidth; // restart the animation
+    el.classList.add("ds-flash");
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     filterInput = document.getElementById("ds-filter");
     hideEmptySwitch = document.getElementById("ds-hide-empty");
@@ -212,6 +226,8 @@
       if (elt && /every/.test(elt.getAttribute("hx-trigger") || "") && popoverOpen()) e.preventDefault();
     });
     document.body.addEventListener("htmx:afterSettle", applyAll);
+    window.addEventListener("hashchange", showTarget);
     applyAll();
+    showTarget();
   });
 }());

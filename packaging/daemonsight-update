@@ -4,20 +4,66 @@
 #
 #   sudo daemonsight-update          the latest commit on main
 #   sudo daemonsight-update <ref>    a branch, tag or commit, e.g. to go back
+#   daemonsight-update --hub-request run by daemonsight-update.service when
+#                                    the hub asks for an update
 #
 # The source is a root-owned clone in /opt/daemonsight/src, never a user's
-# checkout, so only what is on GitHub can be installed this way.
+# checkout, so only what is on GitHub can be installed this way. A commit the
+# hub asks for must also be on main or in a v* release tag.
+#
+# After installing, it waits 20 seconds and checks the collector is still
+# running. If not, it puts the previous commit back.
 set -euo pipefail
 
 REPO_URL=https://github.com/bradbrownjr/daemonsight.git
 PREFIX=/opt/daemonsight
 SRC=$PREFIX/src
-REF=${1:-main}
+DATA=/var/lib/daemonsight
+SETTLE=${DAEMONSIGHT_UPDATE_SETTLE:-20}
+
+HUB=0
+if [[ ${1:-} == --hub-request ]]; then
+  HUB=1
+  shift
+fi
 
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo daemonsight-update" >&2; exit 1; }
 [[ $# -le 1 ]] || { echo "Usage: daemonsight-update [branch, tag or commit]" >&2; exit 2; }
-[[ $REF =~ ^[A-Za-z0-9._/-]+$ && $REF != -* ]] || { echo "Not a branch, tag or commit: $REF" >&2; exit 2; }
 command -v git >/dev/null || { echo "Install git first: apt install git" >&2; exit 1; }
+
+# For --hub-request: tell the hub how it went, through the collector's next
+# upload. Details are fixed phrases from this script, never command output.
+REF=""
+result() {
+  [[ $HUB -eq 1 && -n $REF ]] || return 0
+  local tmp="$DATA/update.result.tmp"
+  printf '{"ref":"%s","status":"%s","at":%s,"detail":"%s"}\n' "$REF" "$1" "$(date +%s)" "${2:-}" > "$tmp"
+  chmod 0640 "$tmp"
+  mv -f "$tmp" "$DATA/update.result"
+}
+
+if [[ $HUB -eq 1 ]]; then
+  request="$DATA/update.request"
+  [[ -f $request ]] || exit 0
+  REF=$(head -c 64 "$request" | tr -d '[:space:]')
+  rm -f "$request"
+  if [[ ! $REF =~ ^[0-9a-f]{7,40}$ ]]; then
+    echo "Ignored an update request that isn't a commit." >&2
+    exit 0
+  fi
+  enabled=$("$PREFIX/venv/bin/python" -c \
+    'from daemonsight import config; print(int(config.load().upload.remote_update))' 2>/dev/null || echo 1)
+  if [[ $enabled != 1 ]]; then
+    result refused "remote_update is off on this host"
+    echo "The hub asked for $REF, but remote_update is off." >&2
+    exit 0
+  fi
+  result running ""
+  trap 'result failed "the update stopped with an error; see journalctl -u daemonsight-update"' ERR
+else
+  REF=${1:-main}
+  [[ $REF =~ ^[A-Za-z0-9._/-]+$ && $REF != -* ]] || { echo "Not a branch, tag or commit: $REF" >&2; exit 2; }
+fi
 
 old=$(cat "$PREFIX/REVISION" 2>/dev/null || echo "unknown")
 
@@ -26,20 +72,54 @@ if [[ ! -d $SRC/.git ]]; then
   git clone --quiet "$REPO_URL" "$SRC"
 fi
 git -C "$SRC" fetch --quiet --force --tags origin
-# A branch follows GitHub; a tag or commit is used as it is.
-if git -C "$SRC" rev-parse --verify --quiet "refs/remotes/origin/$REF^{commit}" >/dev/null; then
+
+if [[ $HUB -eq 1 ]]; then
+  if ! git -C "$SRC" cat-file -e "$REF^{commit}" 2>/dev/null; then
+    result refused "not a commit in the GitHub repo"
+    echo "The hub asked for $REF, which isn't in $REPO_URL." >&2
+    exit 1
+  fi
+  if ! git -C "$SRC" merge-base --is-ancestor "$REF" origin/main \
+      && [[ -z $(git -C "$SRC" tag --list 'v*' --contains "$REF") ]]; then
+    result refused "not on main or in a release tag"
+    echo "The hub asked for $REF, which isn't on main or in a v* tag." >&2
+    exit 1
+  fi
+  target=$REF
+elif git -C "$SRC" rev-parse --verify --quiet "refs/remotes/origin/$REF^{commit}" >/dev/null; then
+  # A branch follows GitHub; a tag or commit is used as it is.
   target="origin/$REF"
 else
   target="$REF"
 fi
-git -C "$SRC" -c advice.detachedHead=false checkout --quiet --force --detach "$target"
-git -C "$SRC" clean --quiet -fdx
 
+install_at() {
+  git -C "$SRC" -c advice.detachedHead=false checkout --quiet --force --detach "$1"
+  git -C "$SRC" clean --quiet -fdx
+  "$SRC/install.sh"
+}
+
+install_at "$target"
 new=$(git -C "$SRC" rev-parse --short HEAD)
 echo "==> DaemonSight $old -> $new"
 git -C "$SRC" log --oneline --no-decorate "${old}..HEAD" 2>/dev/null | head -20 || true
 
-"$SRC/install.sh"
+# A collector that crashes on start shows as activating (restarting) or
+# failed, not active.
+echo "==> Checking the collector stays up (${SETTLE} s)"
+sleep "$SETTLE"
+if ! systemctl is-active --quiet daemonsight-collector; then
+  if [[ $old =~ ^[0-9a-f]{7,40}$ && $old != "$new" ]]; then
+    echo "The collector isn't running on $new; going back to $old." >&2
+    install_at "$old"
+    result rolled_back "the collector didn't stay running; went back to $old"
+  else
+    result failed "the collector didn't stay running"
+  fi
+  journalctl -u daemonsight-collector -n 20 --no-pager >&2 || true
+  exit 1
+fi
+result done ""
 
 echo
 for unit in daemonsight-collector daemonsight-web; do

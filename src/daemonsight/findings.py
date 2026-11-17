@@ -7,9 +7,16 @@ marked resolved. Rule names and severities follow docs/DESIGN.md.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .config import Config
+
+
+def anchor(kind: str, *parts) -> str:
+    """The id of a table row a finding links to, e.g. port-2083-tcp. The
+    pages build their row ids with this too, so the two always match."""
+    return f"{kind}-" + re.sub(r"[^A-Za-z0-9_.-]+", "_", "-".join(str(p) for p in parts)).strip("_")
 
 
 @dataclass(frozen=True)
@@ -219,7 +226,7 @@ def expose_unexpected(snaps, cfg: Config, ctx) -> list[Finding]:
             "expose.unexpected", key, sev, f"Port {key} is reachable from the internet",
             f"{who} listens on {', '.join(r['addresses'])} {verdict} ({fw['why']}). It is not in "
             f"exposure.expected_public. Bind it to 127.0.0.1, or add it to the list if it is meant to be public.",
-            "/exposure#listeners"))
+            f"/exposure#{anchor('port', r['port'], r['proto'])}"))
     return out
 
 
@@ -245,7 +252,7 @@ def expose_forward_all(snaps, cfg, ctx) -> list[Finding]:
                 f"The rule forwards {f['ports']}{where}. The provider firewall lets in "
                 f"{', '.join(map(str, reach)) or 'none of them'}. A port added to the provider policy later "
                 f"goes to {f['to']} as well. Listing the ports in the rule removes that dependence.",
-                "/exposure#forwards"))
+                f"/exposure#{anchor('fwd', f['family'], f['proto'], f['to'])}"))
             continue
         out.append(Finding(
             "expose.forward_all", f"{f['family']} {f['proto']} {f['to']}", "high",
@@ -253,7 +260,7 @@ def expose_forward_all(snaps, cfg, ctx) -> list[Finding]:
              if f["ports"].startswith("all except ") else f"{proto} ports {f['ports']} are forwarded to {f['to']}"),
             f"Every {proto} port{where} except the ones listed goes to {f['to']} ({count} ports). Anything "
             f"that host listens on, now or later, is reachable from the internet through this one. "
-            f"Forward only the ports it needs.", "/exposure#forwards"))
+            f"Forward only the ports it needs.", f"/exposure#{anchor('fwd', f['family'], f['proto'], f['to'])}"))
     return out
 
 
@@ -325,7 +332,7 @@ def route_upstream_down(snaps, cfg, ctx) -> list[Finding]:
                         "route.upstream_down", f"{site['host']} {u['text']}", "medium",
                         f"{site['host']}: nothing listens on {u['text']}",
                         f"Caddy proxies this site to {u['text']}, and nothing on this host listens there. "
-                        "Visitors get a 502 error.", "/routes"))
+                        "Visitors get a 502 error.", f"/routes#{anchor('site', site['host'])}"))
     return out
 
 
@@ -380,7 +387,8 @@ def jail_uncovered(snaps, cfg: Config, ctx) -> list[Finding]:
         why = "fail2ban is not running on this host." if not running else \
             "No jail reads its journal or log files. Add a jail, or link an existing one in exposure.jail_covers."
         out.append(Finding("jail.uncovered", name, "high", f"{name} is public with no fail2ban jail",
-                           f"It listens on {r['port']}/{r['proto']} from the internet. {why}", "/fail2ban"))
+                           f"It listens on {r['port']}/{r['proto']} from the internet. {why}",
+                           f"/exposure#{anchor('port', r['port'], r['proto'])}"))
     return out
 
 
@@ -392,7 +400,7 @@ def jail_log_missing(snaps, cfg, ctx) -> list[Finding]:
             if not lp["exists"]:
                 out.append(Finding("jail.log_missing", f"{j['name']} {lp['path']}", "medium",
                                    f"Jail {j['name']} watches a missing file",
-                                   f"{lp['path']} does not exist.", "/fail2ban"))
+                                   f"{lp['path']} does not exist.", f"/fail2ban#{anchor('jail', j['name'])}"))
     return out
 
 

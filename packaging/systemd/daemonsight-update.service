@@ -1,0 +1,12 @@
+[Unit]
+Description=Install the DaemonSight update the hub asked for
+Documentation=https://github.com/bradbrownjr/daemonsight/blob/main/docs/INSTALL.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root, unsandboxed: it reinstalls DaemonSight and restarts its units. It
+# installs only a commit on main or in a v* tag of the GitHub repo.
+ExecStart=/usr/local/sbin/daemonsight-update --hub-request
+TimeoutStartSec=20min

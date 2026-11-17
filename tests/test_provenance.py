@@ -69,3 +69,11 @@ def check_panels(html: str) -> int:
     for target in set(re.findall(r'class="ds-src-btn" popovertarget="([^"]+)"', html)):
         assert target in ids, target
     return len(ids)
+
+
+def test_findings_link_to_their_row():
+    """A finding's link names a row id that the page renders."""
+    from daemonsight.findings import anchor
+    assert anchor("port", 2083, "tcp") == "port-2083-tcp"
+    assert anchor("site", "a.example.com, b.example.com") == "site-a.example.com_b.example.com"
+    assert anchor("fwd", "ip", "tcp", "10.0.0.2:80") == "fwd-ip-tcp-10.0.0.2_80"

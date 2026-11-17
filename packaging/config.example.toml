@@ -91,6 +91,9 @@
 # url = "https://upload.example.com/api/v1/ingest"
 # token_file = "/etc/daemonsight/hub.token"   # written by: sudo daemonsight set-upload-token
 # interval = 30
+# Install updates the hub asks for: a commit on main or in a release tag,
+# checked on this host before it's installed. The hub can't change this.
+# remote_update = true
 
 [hub]
 # Only on the hub (the container sets this). Receives uploads from collectors.

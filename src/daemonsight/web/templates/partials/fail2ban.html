@@ -19,7 +19,7 @@
       </tr></thead>
       <tbody>
         {% for j in v.jails %}
-        <tr data-row>
+        <tr data-row id="{{ j.anchor }}">
           <td><strong>{{ j.name }}</strong>{{ src("src-j-" ~ loop.index, j.src) }}<div class="text-secondary small">{{ j.backend }}</div></td>
           <td class="font-monospace small">{% for w in j.watching %}<div class="{{ 'text-red' if w.missing }}">{{ w.text }}{% if w.missing %} (missing){% endif %}</div>{% endfor %}</td>
           <td>{{ j.failed_now }}<div class="text-secondary small">{{ j.failed_total }} total</div></td>

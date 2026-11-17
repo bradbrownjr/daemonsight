@@ -379,6 +379,10 @@ To go back, name the commit (the update prints the old one first):
 sudo daemonsight-update 80ef9c1
 ```
 
+After an update, `daemonsight-update` waits 20 seconds and checks the
+collector is still running. If it isn't, it reinstalls the commit it
+replaced.
+
 An install made before `daemonsight-update` existed needs one manual update
 first, from the folder you installed from:
 
@@ -403,11 +407,46 @@ rm /tmp/daemonsight-update.sudoers
 That account can then install whatever is on GitHub's `main` as root, but
 nothing from its own files. Don't add this rule on a production server.
 
+### Updating from the hub
+
+A host that uploads to a hub can be updated from the hub's Hosts page. A
+host on a different commit from the hub gets an "Update to <commit>"
+button, and "Update N hosts" does them all. The host picks the request up
+with its next upload, installs that commit, and reports back. The page shows
+"Updating to …" until it's done, then the Recent changes list says
+"Updated to …", or why it failed.
+
+The target is always the hub's own version, so update the hub first, then
+its hosts. On Unraid, update the container from the Docker tab.
+
+From the command line, on the hub:
+
+```bash
+docker exec daemonsight daemonsight hub update vps     # one host
+docker exec daemonsight daemonsight hub update --all   # every host that's behind
+```
+
+On the host, the update runs as `daemonsight-update.service`:
+
+```bash
+journalctl -u daemonsight-update -n 50
+```
+
+Hub updates are on unless a host turns them off in its own config:
+
+```toml
+[upload]
+remote_update = false
+```
+
+What a hub can and can't make a host do is in
+[SECURITY.md](../SECURITY.md), "The hub".
+
 ## Remove
 
 ```bash
-sudo systemctl disable --now daemonsight-web daemonsight-collector
-sudo rm /etc/systemd/system/daemonsight-{collector,web}.service
+sudo systemctl disable --now daemonsight-web daemonsight-collector daemonsight-update.path
+sudo rm /etc/systemd/system/daemonsight-{collector,web,update}.service /etc/systemd/system/daemonsight-update.path
 sudo systemctl daemon-reload
 sudo rm -rf /opt/daemonsight /var/lib/daemonsight /etc/daemonsight
 sudo rm -f /usr/local/bin/daemonsight /usr/local/sbin/daemonsight-update

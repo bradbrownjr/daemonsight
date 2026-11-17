@@ -120,14 +120,14 @@ def diff_events(source: str, prev: dict | None, cur: dict | None, eph: tuple[int
             old = before.get(j["name"])
             if old is None:
                 events.append({"kind": "jail_new", "severity": None, "title": f"Jail {j['name']} started",
-                               "detail": None, "link": "/fail2ban"})
+                               "detail": None, "link": f"/fail2ban#{findings.anchor('jail', j['name'])}"})
                 continue
             if isinstance(j.get("banned_total"), int) and isinstance(old.get("banned_total"), int) \
                     and j["banned_total"] > old["banned_total"]:
                 n = j["banned_total"] - old["banned_total"]
                 events.append({"kind": "ban", "severity": None,
                                "title": f"{j['name']} banned {n} address{'es' if n > 1 else ''}",
-                               "detail": None, "link": "/fail2ban"})
+                               "detail": None, "link": f"/fail2ban#{findings.anchor('jail', j['name'])}"})
         for name in sorted(before.keys() - {j["name"] for j in cur.get("jails", [])}):
             events.append({"kind": "jail_gone", "severity": "high", "title": f"Jail {name} stopped",
                            "detail": None, "link": "/fail2ban"})

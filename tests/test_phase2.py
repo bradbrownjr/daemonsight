@@ -260,6 +260,7 @@ def test_expose_unexpected_uses_firewall(cfg):
     assert set(got) == {"3306/tcp", "8000/tcp"}
     assert got["3306/tcp"].severity == "medium"  # blocked by the firewall
     assert got["8000/tcp"].severity == "medium"  # LAN-only by rule: restricted
+    assert got["3306/tcp"].link == "/exposure#port-3306-tcp"  # the listener's row
 
     snaps["firewall"] = snap("firewall", {"available": False, "reason": "nft is not installed"})
     got = {f.key: f for f in findings.evaluate(snaps, cfg) if f.rule == "expose.unexpected"}
@@ -345,14 +346,17 @@ def test_phase2_pages_render(cfg):
     html = c.get("/exposure").text
     assert "203.0.113.10" in html and "3306/tcp" in html
     assert "Blocked" in html and "inet filter input" in html
+    assert 'id="port-3306-tcp"' in html  # where expose.unexpected links
     assert c.get("/partials/exposure").text.lstrip().startswith('<div id="live"')
 
     html = c.get("/routes").text
     assert "unix.example.com" in html and "app:80" in html and "1 recent failures" in html
+    assert 'id="site-unix.example.com"' in html
     assert "localhost:2019" in html
 
     html = c.get("/fail2ban").text
     assert "sshd" in html and "permanent" in html and "203.0.113.5" in html
+    assert 'id="jail-sshd"' in html
     assert "mariadb.service" in html  # public with no jail
     assert 'aria-current="page" href="/fail2ban"' in html
 
