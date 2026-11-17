@@ -170,16 +170,37 @@ def cmd_collect_once(args, cfg) -> int:
 
 
 def cmd_set_upload_token(args, cfg) -> int:
-    token = getpass.getpass("Token from the hub: ").strip()
-    if len(token) < 32:
+    """Save the upload token: typed at a prompt, or piped in so it never
+    shows on screen, e.g. ssh hub 'daemonsight hub add-host web1 --quiet' |
+    sudo daemonsight set-upload-token --url https://hub/api/v1/ingest"""
+    from .collector.upload import UploadError, check_url
+    if args.url:
+        try:
+            check_url(args.url)
+        except UploadError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+    if sys.stdin.isatty():
+        token = getpass.getpass("Token from the hub: ").strip()
+    else:
+        token = sys.stdin.readline().strip()
+    if len(token) < 32 or not token.isascii() or any(c.isspace() for c in token):
         print("That doesn't look like a hub token (run 'daemonsight hub add-host' on the hub).", file=sys.stderr)
         return 1
     _write_private(Path(cfg.upload.token_file), token, group=False)
-    print(f"Saved to {cfg.upload.token_file}.")
-    if not cfg.upload.url:
-        print("Set url under [upload] in the config, then: sudo systemctl restart daemonsight-collector")
-    else:
-        print("Restart the collector: sudo systemctl restart daemonsight-collector")
+    print(f"Token saved to {cfg.upload.token_file}.")
+    if args.url:
+        path = config.config_path(args.config)
+        try:
+            config.set_upload_url(path, args.url)
+        except (ValueError, OSError) as exc:
+            print(f"Couldn't set the url in {path}: {exc}", file=sys.stderr)
+            return 1
+        print(f"Set [upload] url in {path}.")
+    elif not cfg.upload.url:
+        print("Set url under [upload] in the config (or rerun with --url).")
+    print(f"This host uploads as {cfg.host_id!r}; the hub's name for it must match.")
+    print("Restart the collector: sudo systemctl restart daemonsight-collector")
     return 0
 
 
@@ -195,15 +216,15 @@ def cmd_hub(args, cfg) -> int:
         except ValueError as exc:
             print(exc, file=sys.stderr)
             return 1
+        if args.quiet:
+            print(token)
+            return 0
         print(f"Token for {args.name}. It is shown once; the hub keeps only its hash.\n")
         print(f"  {token}\n")
         print(f"On {args.name}, with DaemonSight installed:")
-        print("  1. sudo daemonsight set-upload-token        (paste the token)")
-        print("  2. In /etc/daemonsight/config.toml:")
-        print("       [upload]")
-        print('       url = "https://<this hub>/api/v1/ingest"')
-        print(f'     and make sure host_id is "{args.name}".')
-        print("  3. sudo systemctl restart daemonsight-collector")
+        print("  1. sudo daemonsight set-upload-token --url https://<this hub>/api/v1/ingest")
+        print("     (paste the token), and make sure host_id in its config is", repr(args.name))
+        print("  2. sudo systemctl restart daemonsight-collector")
     elif args.hub_command == "list":
         rows = conn.execute("SELECT * FROM hosts ORDER BY id").fetchall()
         if not rows:
@@ -232,7 +253,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("init", help="create the session secret and database")
     once = sub.add_parser("collect-once", help="run sources once and print JSON")
     once.add_argument("source", nargs="*", help="limit to these sources")
-    sub.add_parser("set-upload-token", help="save the token this host uses to upload to a hub (root)")
+    tok = sub.add_parser("set-upload-token", help="save the token this host uses to upload to a hub (root)")
+    tok.add_argument("--url", help="also set [upload] url in the config, e.g. https://hub.example.com/api/v1/ingest")
     bk = sub.add_parser("backup", help="write a backup of the database, config and secrets")
     bk.add_argument("--to", help="folder for the backup (default: [backup] dir)")
     rs = sub.add_parser("restore", help="restore a backup (stop the collector or hub first)")
@@ -242,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
     hubsub = hubp.add_subparsers(dest="hub_command", required=True)
     add = hubsub.add_parser("add-host", help="create a host and print its token")
     add.add_argument("name")
+    add.add_argument("--quiet", action="store_true", help="print only the token, for piping to set-upload-token")
     hubsub.add_parser("list", help="list hosts and when each last uploaded")
     rev = hubsub.add_parser("revoke", help="stop accepting a host's uploads")
     rev.add_argument("name")

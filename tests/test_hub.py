@@ -3,6 +3,7 @@
 import asyncio
 import gzip
 import json
+import os
 import time
 
 import httpx
@@ -234,3 +235,50 @@ def test_hub_prunes_old_metrics(hub_cfg):
     assert [r["title"] for r in db.recent_events(conn, "a")] == ["new"]
     db.prune(conn, now, 0, 0, 0)  # 0 keeps everything
     assert conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0] == 1
+
+
+# --- enrolling a host ---------------------------------------------------------
+
+def test_set_upload_url_keeps_the_file(tmp_path):
+    from daemonsight import config
+    p = tmp_path / "config.toml"
+    p.write_text('host_id = "web1"  # keep me\n\n[upload]\n# url = ""\ninterval = 30\n\n[web]\nport = 8466\n')
+    os.chmod(p, 0o640)
+    config.set_upload_url(p, "https://hub.example.com/api/v1/ingest")
+    text = p.read_text()
+    assert "# keep me" in text and 'url = "https://hub.example.com/api/v1/ingest"\ninterval = 30' in text
+    assert oct(p.stat().st_mode & 0o777) == "0o640"
+    c = config.load(p)
+    assert c.upload.url == "https://hub.example.com/api/v1/ingest" and c.web.port == 8466
+
+    q = tmp_path / "old.toml"
+    q.write_text('host_id = "web2"\n')
+    config.set_upload_url(q, "https://hub.example.com/api/v1/ingest")
+    assert config.load(q).upload.url.endswith("/ingest")
+    config.set_upload_url(q, "https://other.example.com/api/v1/ingest")  # replaces, no second line
+    assert q.read_text().count("url =") == 1
+    for bad in ('https://x/"; evil = 1', "https://x/ y"):
+        with pytest.raises(ValueError):
+            config.set_upload_url(q, bad)
+
+
+def test_enroll_by_pipe(hub_cfg, tmp_path, monkeypatch, capsys):
+    import io as _io
+    import sys as _sys
+    from daemonsight import cli
+    hub_toml = tmp_path / "hub.toml"
+    hub_toml.write_text(f'host_id = "hub"\ndata_dir = "{hub_cfg.data_dir}"\n[hub]\nenabled = true\n')
+    assert cli.main(["--config", str(hub_toml), "hub", "add-host", "web1", "--quiet"]) == 0
+    token = capsys.readouterr().out.strip()
+    assert len(token) >= 32 and "\n" not in token
+
+    host_toml = tmp_path / "host.toml"
+    host_toml.write_text(f'host_id = "web1"\ndata_dir = "{tmp_path / "hostdata"}"\n'
+                         f'[upload]\ntoken_file = "{tmp_path / "hub.token"}"\n')
+    monkeypatch.setattr(_sys, "stdin", _io.StringIO(token + "\n"))
+    assert cli.main(["--config", str(host_toml), "set-upload-token",
+                     "--url", "https://hub.example.com/api/v1/ingest"]) == 0
+    assert (tmp_path / "hub.token").read_text().strip() == token
+    assert token not in capsys.readouterr().out
+    monkeypatch.setattr(_sys, "stdin", _io.StringIO(token))
+    assert cli.main(["--config", str(host_toml), "set-upload-token", "--url", "http://hub.example.com/x"]) == 1

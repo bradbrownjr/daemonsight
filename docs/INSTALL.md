@@ -310,21 +310,27 @@ once; the hub keeps only its hash.
 docker exec -it daemonsight daemonsight hub add-host vps
 ```
 
-On the host, with DaemonSight installed:
+On the host, with DaemonSight installed, save the token and the hub's
+address. `--url` sets `[upload] url` in `/etc/daemonsight/config.toml` and
+leaves the rest of the file alone:
 
 ```bash
-sudo daemonsight set-upload-token
+sudo daemonsight set-upload-token --url https://upload.example.com/api/v1/ingest
 ```
 
-Paste the token at the prompt. Then add this to
-`/etc/daemonsight/config.toml`. The `host_id` line goes at the top of the
-file, above every `[section]`, and must match the name you gave the hub:
+Paste the token at the prompt. The host's `host_id` (its hostname unless the
+config sets one) must match the name you gave the hub; the command prints
+it.
 
-```toml
-host_id = "vps"
+If a machine can reach both the hub and the host, pipe the token across so
+it's never on screen or in a terminal's scrollback. `--quiet` prints only
+the token:
 
-[upload]
-url = "https://upload.example.com/api/v1/ingest"
+```bash
+ssh unraid docker exec daemonsight daemonsight hub add-host vps --quiet \
+  | ssh vps 'cat > ~/ds.token && chmod 600 ~/ds.token'
+# then on the host:
+sudo daemonsight set-upload-token --url https://upload.example.com/api/v1/ingest < ~/ds.token && rm ~/ds.token
 ```
 
 Then restart the collector:

@@ -7,6 +7,7 @@ then /etc/daemonsight/config.toml. A missing file means all defaults.
 from __future__ import annotations
 
 import os
+import re
 import socket
 import tomllib
 from dataclasses import dataclass, field, fields
@@ -177,3 +178,41 @@ def load(path: str | os.PathLike | None = None) -> Config:
     elif path:
         raise FileNotFoundError(candidate)
     return cfg
+
+
+_SECTION = re.compile(r"^\s*\[([^\[\]]+)\]\s*(#.*)?$")
+_URL_LINE = re.compile(r"^\s*#?\s*url\s*=")
+
+
+def set_upload_url(path: str | os.PathLike, url: str) -> None:
+    """Set url under [upload] in a config file, keeping its comments, owner
+    and mode. Replaces an existing (or commented-out) url line in [upload],
+    or adds the section at the end."""
+    if not re.fullmatch(r"[\x21-\x7e]+", url) or '"' in url or "\\" in url:
+        raise ValueError(f"not a usable URL: {url!r}")
+    path = Path(path)
+    lines = path.read_text().splitlines() if path.exists() else []
+    new = f'url = "{url}"'
+    start = next((i for i, l in enumerate(lines)
+                  if (m := _SECTION.match(l)) and m.group(1).strip() == "upload"), None)
+    if start is None:
+        lines += ["", "[upload]", new]
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if _SECTION.match(lines[i])), len(lines))
+        hit = next((i for i in range(start + 1, end) if _URL_LINE.match(lines[i])), None)
+        if hit is None:
+            lines.insert(start + 1, new)
+        else:
+            lines[hit] = new
+    text = "\n".join(lines) + "\n"
+    tomllib.loads(text)  # never leave a file that won't load
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+    if path.exists():
+        st = path.stat()
+        os.chmod(tmp, st.st_mode & 0o777)
+        if os.geteuid() == 0:
+            os.chown(tmp, st.st_uid, st.st_gid)
+    os.replace(tmp, path)
