@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import time
 
-from .. import db
+from .. import db, findings as rules
+from ..collector.sources.caddy import is_local
 from ..config import Config
 
 SEVERITY_BADGE = {
@@ -183,6 +184,20 @@ def overview(conn, cfg: Config) -> dict:
             down = sum(1 for c in cs if c["status"] != "running" and (c["exit_code"] or c["oom_killed"]))
             glance.append({"title": "Containers", "value": f"{running} running",
                            "alert": f"{down} down" if down else None})
+    cd = _snap_data(snaps, "caddy")
+    if cd is not None:
+        glance.append({"title": "Caddy sites", "value": f"{len(cd.get('sites', []))} sites",
+                       "alert": None, "note": f"admin API on {cd.get('admin', {}).get('listen')}"})
+    fb = _snap_data(snaps, "fail2ban")
+    if fb is not None:
+        js = fb.get("jails", [])
+        banned = sum(j["banned_now"] or 0 for j in js if isinstance(j.get("banned_now"), int))
+        glance.append({"title": "fail2ban", "value": f"{len(js)} jails", "alert": None,
+                       "note": f"{banned} addresses banned now"})
+    fw = _snap_data(snaps, "firewall")
+    if fw is not None:
+        glance.append({"title": "Firewall", "value": "Filtering inbound" if fw.get("filtering") else "No inbound filtering",
+                       "alert": None if fw.get("filtering") else "accepts everything", "note": None})
     pt = snaps.get("ports")
     if pt and pt.data:
         ls = pt.data["listeners"]
@@ -196,7 +211,8 @@ def overview(conn, cfg: Config) -> dict:
         "findings": findings_list(conn, host),
         "events": events_list(conn, host),
         "glance": glance,
-        "sources": {name: _source_state(snaps, name) for name in ("system", "systemd", "ports", "docker")},
+        "sources": {name: _source_state(snaps, name)
+                    for name in ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall")},
     }
 
 
@@ -292,3 +308,203 @@ def container_logs(conn, cfg: Config, name: str) -> dict | None:
         if c["name"] == name:
             return {"name": name, "lines": c["logs"], "collected": fmt_ago(snap.taken_at)}
     return None
+
+
+# --- phase 2 pages ---------------------------------------------------------
+
+FW_BADGE = {"open": "bg-red-lt", "unfiltered": "bg-orange-lt", "restricted": "bg-yellow-lt",
+            "blocked": "bg-green-lt", "unknown": "bg-secondary-lt"}
+FW_LABEL = {"open": "Allowed", "unfiltered": "No filtering", "restricted": "Restricted",
+            "blocked": "Blocked", "unknown": "Unknown"}
+
+
+def _snap_data(snaps: dict, name: str) -> dict | None:
+    s = snaps.get(name)
+    if s is None or not s.data or s.data.get("available") is False:
+        return None
+    return s.data
+
+
+def _secs(v) -> str:
+    if not isinstance(v, (int, float)):
+        return "—"
+    if v < 0:
+        return "permanent"
+    return fmt_duration(v)
+
+
+def _port_ranges(opened: list[dict]) -> list[str]:
+    out = []
+    for o in opened:
+        port = str(o["from"]) if o["from"] == o["to"] else f"{o['from']}-{o['to']}"
+        proto = "tcp+udp" if o["proto"] == "th" else o["proto"]
+        cond = f" ({', '.join(o['conditions'])})" if o["conditions"] else ""
+        out.append(f"{port}/{proto}{cond}")
+    return out
+
+
+def _jail_for(jails: list[dict], unit, process, extra) -> str | None:
+    for j in jails:
+        if rules.jail_covers(j, unit, process, extra):
+            return j["name"]
+    return None
+
+
+def exposure(conn, cfg: Config) -> dict:
+    snaps = db.get_snapshots(conn, cfg.host_id)
+    ports = _snap_data(snaps, "ports") or {}
+    pub = rules.host_is_public(ports)
+    f2b = _snap_data(snaps, "fail2ban")
+    jails = (f2b or {}).get("jails", [])
+    expected = set(cfg.exposure.expected_public)
+    public_keys = {(r["proto"], r["port"]) for r in rules.public_listeners(snaps, {"eph": _eph()})}
+    rows = []
+    for r in ports.get("listeners", []):
+        if r["scope"] == "loopback":
+            continue
+        where = rules.reach(r, pub)
+        fw = rules.firewall_state(snaps, r["proto"], r["port"])
+        owner = r.get("owner") or {}
+        unit = owner.get("id") if owner.get("kind") == "unit" else None
+        internet = (r["proto"], r["port"]) in public_keys
+        key = f"{r['port']}/{r['proto']}"
+        jail = _jail_for(jails, unit, r.get("process"), cfg.exposure.jail_covers) if internet else None
+        rows.append({
+            "port": key, "port_v": r["port"], "addresses": ", ".join(r["addresses"]),
+            "reach": {"internet": "Internet", "lan": "LAN"}.get(where, where),
+            "reach_badge": "bg-red-lt" if where == "internet" else "bg-secondary-lt",
+            "process": r.get("process") or "—", "owner": unit or "—",
+            "fw": FW_LABEL[fw["state"]], "fw_badge": FW_BADGE[fw["state"]], "fw_why": fw["why"],
+            "expected": ("Yes" if key in expected else "No") if internet else "—",
+            "jail": (jail or "None") if internet else "—", "jail_bad": internet and not jail,
+        })
+    docker = []
+    for c in (_snap_data(snaps, "docker") or {}).get("containers", []):
+        for p in c.get("ports", []):
+            wide = p["host_ip"] in ("0.0.0.0", "::", "")
+            docker.append({"container": c["name"], "status": c["status"],
+                           "published": f"{p['host_ip'] or '*'}:{p['host_port']}",
+                           "target": f"{p['container_port']}/{p['proto']}", "wide": wide})
+    fwdata = _snap_data(snaps, "firewall")
+    chains = [{"name": f"{c['family']} {c['table']} {c['chain']}", "policy": c["policy"],
+               "default": c["default"], "accept_all": c["accept_all"], "open": _port_ranges(c["open"])}
+              for c in (fwdata or {}).get("input", [])]
+    return {
+        "host": _host(cfg, snaps),
+        "public": pub,
+        "public_ips": [a["ip"] for a in ports.get("addresses", []) if a.get("scope") == "public"],
+        "listeners": rows, "docker": docker,
+        "firewall": {"chains": chains, "docker_nat": (fwdata or {}).get("docker_nat", False),
+                     "tables": (fwdata or {}).get("tables", [])},
+        "firewall_state": _source_state(snaps, "firewall"),
+        "ports_state": _source_state(snaps, "ports"),
+        "expected": sorted(expected),
+    }
+
+
+def _eph() -> tuple[int, int]:
+    try:
+        with open("/proc/sys/net/ipv4/ip_local_port_range") as fh:
+            lo, hi = fh.read().split()
+            return int(lo), int(hi)
+    except (OSError, ValueError):
+        return 32768, 60999
+
+
+def routes(conn, cfg: Config) -> dict:
+    import os
+    snaps = db.get_snapshots(conn, cfg.host_id)
+    caddy = _snap_data(snaps, "caddy")
+    ports = _snap_data(snaps, "ports") or {}
+    own = {a["ip"] for a in ports.get("addresses", [])}
+    listening = {(r["proto"], r["port"]) for r in ports.get("listeners", [])}
+    fails = {u["address"]: u for u in (caddy or {}).get("upstream_status", [])}
+    sites = []
+    for s in (caddy or {}).get("sites", []):
+        handlers = []
+        worst = "ok"
+        for h in s["handlers"]:
+            path = ", ".join(h["paths"]) if h["paths"] else ""
+            if h["kind"] == "proxy":
+                ups = []
+                for u in h["upstreams"]:
+                    state, note = "remote", "another host"
+                    if u["network"] == "unix" and u.get("path"):
+                        state, note = ("ok", "socket exists") if os.path.exists(u["path"]) else ("down", "no socket")
+                    elif u["network"] == "placeholder":
+                        state, note = "remote", "set per request"
+                    elif u["port"] and is_local(u["host"], own):
+                        state, note = (("ok", "listening") if ("tcp", u["port"]) in listening
+                                       else ("down", "nothing listening"))
+                    f = fails.get(u["text"])
+                    if f and (f.get("fails") or 0) > 0:
+                        state, note = "failing", f"{f['fails']} recent failures"
+                    if state in ("down", "failing"):
+                        worst = "down"
+                    ups.append({"text": u["text"], "state": state, "note": note})
+                if h.get("dynamic"):
+                    ups.append({"text": "dynamic upstreams", "state": "remote", "note": "resolved at runtime"})
+                handlers.append({"kind": "Proxy", "path": path, "upstreams": ups})
+            elif h["kind"] == "files":
+                handlers.append({"kind": "Files", "path": path, "detail": h.get("root") or "site root"})
+            elif h["kind"] == "redirect":
+                handlers.append({"kind": "Redirect", "path": path, "detail": h.get("target") or ""})
+            else:
+                handlers.append({"kind": "Respond", "path": path, "detail": str(h.get("status") or 200)})
+        sites.append({
+            "host": s["host"], "listen": ", ".join(s["listen"]),
+            "access": ("Only " + ", ".join(s["allow"])) if s["allow"] else "Anyone",
+            "access_badge": "bg-green-lt" if s["allow"] else "bg-secondary-lt",
+            "handlers": handlers, "state": worst,
+        })
+    admin = (caddy or {}).get("admin") or {}
+    return {
+        "host": _host(cfg, snaps),
+        "sites": sites,
+        "servers": (caddy or {}).get("servers", []),
+        "admin": {"listen": admin.get("listen"), "unix": str(admin.get("listen", "")).startswith("unix/"),
+                  "read_from": (caddy or {}).get("admin_address")},
+        "caddy_state": _source_state(snaps, "caddy"),
+        "down": sum(1 for s in sites if s["state"] != "ok"),
+    }
+
+
+def jails(conn, cfg: Config) -> dict:
+    snaps = db.get_snapshots(conn, cfg.host_id)
+    f2b = _snap_data(snaps, "fail2ban")
+    rows, bans = [], []
+    for j in (f2b or {}).get("jails", []):
+        if j["backend"] == "systemd":
+            watching = [{"text": m, "missing": False} for m in j["journalmatch"]] or [{"text": "journal", "missing": False}]
+        else:
+            watching = [{"text": lp["path"], "missing": not lp["exists"]} for lp in j["logpaths"]]
+        rows.append({
+            "name": j["name"], "backend": "journal" if j["backend"] == "systemd" else "files",
+            "watching": watching,
+            "failed_now": j["failed_now"], "failed_total": j["failed_total"],
+            "banned_now": j["banned_now"], "banned_total": j["banned_total"],
+            "bantime": _secs(j["bantime"]), "bantime_v": j["bantime"] if isinstance(j["bantime"], int) else "",
+            "findtime": _secs(j["findtime"]), "maxretry": j["maxretry"] if j["maxretry"] is not None else "—",
+            "actions": ", ".join(j["actions"]) or "—", "ignoreip": ", ".join(j["ignoreip"]),
+        })
+        for b in j["bans"]:
+            bans.append({"jail": j["name"], **b})
+    coverage = []
+    jl = (f2b or {}).get("jails", [])
+    seen = set()
+    for r in rules.public_listeners(snaps, {"eph": _eph()}):
+        owner = r.get("owner") or {}
+        unit = owner.get("id") if owner.get("kind") == "unit" else None
+        name = unit or r.get("process") or f"port {r['port']}"
+        if name in seen:
+            continue
+        seen.add(name)
+        jail = _jail_for(jl, unit, r.get("process"), cfg.exposure.jail_covers)
+        coverage.append({"service": name, "port": f"{r['port']}/{r['proto']}", "jail": jail})
+    return {
+        "host": _host(cfg, snaps),
+        "version": (f2b or {}).get("version"),
+        "jails": rows, "bans": bans, "coverage": coverage,
+        "f2b_state": _source_state(snaps, "fail2ban"),
+        "public_host": rules.host_is_public(_snap_data(snaps, "ports")),
+    }

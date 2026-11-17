@@ -34,10 +34,28 @@ class CollectorConfig:
     interval_systemd: int = 30
     interval_ports: int = 60
     interval_docker: int = 30
+    interval_caddy: int = 60
+    interval_fail2ban: int = 60
+    interval_firewall: int = 300
     docker_socket: str = "/var/run/docker.sock"
+    # Caddy's admin address as Caddy writes it: "localhost:2019" or
+    # "unix//run/caddy/admin.sock".
+    caddy_admin: str = "localhost:2019"
+    fail2ban_socket: str = "/var/run/fail2ban/fail2ban.sock"
+    nft: str = "nft"
     service_patterns: list[str] = field(default_factory=lambda: ["*.service"])
     log_tail_lines: int = 100
     metrics_retention_hours: int = 48
+
+
+@dataclass
+class ExposureConfig:
+    # Ports meant to be reachable from the internet. Anything else listening
+    # on a public address is a finding.
+    expected_public: list[str] = field(default_factory=lambda: ["22/tcp", "80/tcp", "443/tcp", "443/udp"])
+    # Extra jail -> systemd units links, for jails DaemonSight can't match by
+    # name, journal match or log path. Example: {"nginx-http-auth" = ["nginx.service"]}
+    jail_covers: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -54,6 +72,7 @@ class Config:
     web: WebConfig = field(default_factory=WebConfig)
     collector: CollectorConfig = field(default_factory=CollectorConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)
+    exposure: ExposureConfig = field(default_factory=ExposureConfig)
 
     @property
     def db_path(self) -> Path:

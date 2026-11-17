@@ -60,8 +60,8 @@ capabilities each source needs is listed under "To verify".
 | systemd services | D-Bus `org.freedesktop.systemd1.Manager.ListUnits`; per unit `ActiveState`, `SubState`, `ActiveEnterTimestamp`; per service `NRestarts`, `MemoryCurrent`, `CPUUsageNSec` | 30 s | systemd docs: read access is granted to all clients, so this source needs no privilege. [1] |
 | Listening ports | `psutil.net_connections()` (fd, family, type, laddr, raddr, status, pid), or `/proc/net/{tcp,tcp6,udp,udp6}` plus socket inodes | 60 s | PID → owner via `/proc/<pid>/cgroup`: a systemd unit, or `docker-<id>.scope` for a container. [2] |
 | Docker | Engine API on `/var/run/docker.sock`: container list, inspect (`State.Health`, `State.OOMKilled`, port bindings), logs, one-shot stats | 30 s | The client sends GET only. A socket proxy is needed only if the collector itself runs in a container; Tecnativa's blocks POST by default. [3] |
-| Caddy | `GET /config/` for servers and routes, `GET /reverse_proxy/upstreams` for `address`, `num_requests`, `fails` | 60 s | Default `localhost:2019`; also supports a Unix socket, which Caddy recommends. [4] |
-| fail2ban | `fail2ban-client status`, `status <jail>`, `get <jail> logpath / findtime / bantime / maxretry / failregex`, `get <jail> banip --with-time`, `banned` | 60 s | No JSON output, so the text is parsed. Tests pin the parser to the fail2ban versions in Debian 12 and 13. [5] |
+| Caddy | `GET /config/` for servers and routes, `GET /reverse_proxy/upstreams` for `address`, `num_requests`, `fails` | 60 s | Default `localhost:2019`; also supports a Unix socket, which Caddy recommends. On TCP the admin API checks the Host header (admin.go `checkHost`); on a Unix socket it doesn't. [4] |
+| fail2ban | The server's control socket (`/var/run/fail2ban/fail2ban.sock`): `status`, `status <jail>`, `get <jail> logpath / journalmatch / bantime / findtime / maxretry / ignoreip / actions`, `get <jail> banip --with-time` | 60 s | Pickled Python values framed by `<F2B_END_COMMAND>`, read with an unpickler that accepts builtins only. See "Answered in phase 2". [5] |
 | Firewall | `nft -j list ruleset` | 5 min | JSON schema in libnftables-json(5). [6] Docker's NAT chains are how DaemonSight spots published ports that skip the input chain. |
 | CVEs, host | `trivy rootfs --scanners vuln --format json /` with `--skip-dirs` for `/proc`, `/sys`, `/var/lib/docker` | 6 h | Without `--pkg-types os` it also finds language packages (Python venvs, `node_modules`) of apps on the host. [7][8] |
 | CVEs, images | `trivy image --format json <image>` for each running image | 6 h | Fields used: `VulnerabilityID`, `PkgName`, `InstalledVersion`, `FixedVersion`, `Status`, `Severity`. [8] |
@@ -83,7 +83,7 @@ DaemonSight knows when it first appeared and when it cleared.
 | `expose.unexpected` | A listener on a public address is not in the host's expected list | Critical if the firewall lets it through, else Medium |
 | `expose.docker_bypass` | A Docker port is published on 0.0.0.0 or :: | Critical |
 | `route.upstream_down` | A Caddy upstream's dial address has no listener | Medium |
-| `route.upstream_failing` | An upstream's `fails` is above zero and rising | Medium |
+| `route.upstream_failing` | An upstream's `fails` is above zero (Caddy only counts fails with passive health checks on) | Medium |
 | `jail.uncovered` | A public service (listener or Caddy host) has no jail reading its logs | High |
 | `jail.log_missing` | A jail's `logpath` does not exist | Medium |
 | `cve.fixable_exposed` | A fixable CVE sits in a package or image whose process owns a public listener or Caddy upstream | The CVE's severity, raised one level |
@@ -91,7 +91,7 @@ DaemonSight knows when it first appeared and when it cleared.
 | `svc.failed` | A unit is in `failed` | High |
 | `ctr.down` | A container exited non-zero, is unhealthy, or was OOM-killed | High |
 | `caddy.admin_tcp` | The admin API listens on TCP instead of a Unix socket | Low |
-| `tls.expiring` | A served certificate expires within 14 days | High |
+| `tls.expiring` | A served certificate expires within 14 days (phase 4) | High |
 | `sys.disk` / `sys.memory` | Above 90% for 15 minutes | Medium |
 
 A restart is a moment, not a state, so restarts of units and containers are
@@ -159,6 +159,7 @@ supports ntfy and SMTP email. Daily digest optional.
 
 1. Skeleton: config, SQLite, collector loop, system/systemd/ports/Docker sources, Overview and Services pages, login.
 2. Caddy, fail2ban, nftables sources. Exposure, Routes and fail2ban pages. The `expose`, `route` and `jail` rules.
+   2b. Remote sources: the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware) and the Unraid API (array, disks, containers, VMs). Each shows as its own host. See "Remote sources".
 3. Scanner unit, Trivy and debsecan. Vulnerabilities page. The `cve` rules.
 4. Alerts, recent-changes feed, history charts.
 5. `.deb` package and docs.
@@ -173,6 +174,64 @@ web UI lists the other hosts and pulls from them. The hub should sit on the
 home LAN and pull from the VPS, not the other way round, so a compromised VPS
 holds no credential or route into the LAN.
 
+## Remote sources (phase 2b)
+
+Appliances that can't run the collector are read over their own APIs by a
+collector on the LAN. Each one is stored under its own `host` id, so the UI
+shows it as another host, and the central view later picks it up the same way.
+Keys live in root-only files under `/etc/daemonsight/`, and the client sends
+only reads. Rows are marked unverified until they have run against your
+devices.
+
+### OPNsense
+
+OPNsense privileges cover a whole page, read and write alike; there is no
+read-only variant. The key therefore can change what these privileges cover,
+and DaemonSight's client is limited to GET in code. Use a dedicated user that
+has only these privileges (names from the firewall's own `ACL.xml` files):
+
+| Privilege | Endpoints read | Gives |
+|-----------|----------------|-------|
+| Services: Caddy | `/api/caddy/reverse_proxy/get`, `/api/caddy/service/status` | Sites and handlers: domain, upstream host/port/scheme, access list, health check settings. Cross-checks: a site pointing at a LAN host and port where nothing listens; an internet-facing site with no access list |
+| Firewall: NAT: Destination NAT | `/api/firewall/d_nat/search_rule` | Port forwards: which LAN host and port each WAN port reaches. Cross-checks: a forward to a host where nothing listens; a forward with no destination port, which catches every port of that protocol |
+| Firewall: Rules [new] | `/api/firewall/filter/search_rule` | Rules created through the API or the new UI. Cross-checks: floating pass-all rules, rules with no description |
+| System: Gateways | `/api/routes/gateway/status` | WAN gateway up/down, loss, latency |
+| VPN: WireGuard: Status | `/api/wireguard/service/show` | Each tunnel's peers and last handshake, so a peer that stops connecting or comes unlinked shows up |
+| Status: Interfaces | `/api/interfaces/overview/export` | Interface state and addresses |
+| Status: Services | `/api/core/service/search` | Which firewall services are running |
+| System: Firmware | `/api/core/firmware/status` | Pending updates and whether a reboot is needed (the GET form of this endpoint is unverified) |
+| Lobby: Dashboard | `/api/diagnostics/system/system_resources`, `system_disk`, `system_temperature` | CPU, memory, disk, temperatures |
+| Tailscale | `/api/tailscale/status/*` | Whether the subnet routes and exit node are still advertised |
+
+Legacy rules (the classic per-interface pages) are not in the new filter API;
+they need the config backup endpoint, which is effectively full access, so
+they are left out.
+
+### Unraid
+
+Unraid's API has a `VIEWER` role, "Read-only access to all resources" (enum
+`Role` in the API's generated schema), so this key is read-only on the
+server's side too. GraphQL over HTTPS with an `x-api-key` header. Introspection
+is usually off, so queries are written from the published schema
+(github.com/unraid/api, `api/generated-schema.graphql`).
+
+| Query | Gives |
+|-------|-------|
+| `array` | Array state, capacity, parity and cache disks, `parityCheckStatus` |
+| `array.disks` / `disks` | Per disk: status, temperature, read/write/error counts, `smartStatus`, spinning |
+| `parityHistory` | Last parity checks: date, duration, errors |
+| `docker.containers` | State, ports, auto-start, `isUpdateAvailable` |
+| `vms` | Each VM's state |
+| `notifications` | Unread warnings and alerts Unraid has raised |
+| `shares` | Per share: free, used, cache setting |
+| `upsDevices` | Battery and load, if a UPS is attached |
+| `metrics` | CPU, memory, temperature |
+
+New rules from these: disk errors or a failed SMART status, a disk above its
+temperature warning, parity check errors, array not started, a container with
+an update available, an unread Unraid alert, a WireGuard peer with no
+handshake in a set time, a gateway down, a port forward to nothing.
+
 ## Answered in phase 1
 
 - **psutil needs root for socket owners.** Run unprivileged on Debian 13 with psutil 7.2.2, `net_connections()` lists every listener but returns `pid=None` for sockets of other users.
@@ -182,11 +241,19 @@ holds no credential or route into the LAN.
 - **Web port** is 8466. 8090 is common and was already taken on beta.
 - **`expose.docker_bypass`** moved into phase 1: it needs only Docker data.
 
+## Answered in phase 2
+
+- **fail2ban: socket, not CLI text.** fail2ban 1.1.0's client and server exchange `pickle.dumps(value) + b"<F2B_END_COMMAND>"` (client/csocket.py, server/asyncserver.py); replies are `(0, result)` or `(1, exception)` (server/transmitter.py); `IPAddr.__reduce__` pickles addresses as `str` (server/ipdns.py). So results are builtins. The collector's unpickler accepts only builtin data types and exceptions, plus fail2ban's own exception names as empty stand-ins. Tested against a real `fail2ban-server` run unprivileged; the raw replies are kept in `tests/fixtures/fail2ban-1.1.0.json`. Debian 12's 1.0.2 uses the same transmitter commands but hasn't been tested.
+- **Caddy JSON** field names come from the v2.11.9 source (routes.go, subroute.go, reverseproxy.go, matchers.go, ip_matchers.go). Tests parse Caddy's own adapter test cases (`tests/fixtures/caddy/`), which pair a Caddyfile with the JSON Caddy produces.
+- **A wildcard bind is only "internet" when the host has a public address.** On a LAN host such as an LXC behind NAT, 0.0.0.0 means reachable from the LAN.
+
 ## To verify
 
 - Whether `nft list ruleset` needs `CAP_NET_ADMIN`. nft(8) doesn't say.
 - Which capabilities could replace full root for the collector (likely `CAP_DAC_READ_SEARCH`, `CAP_SYS_PTRACE`, `CAP_NET_ADMIN`, plus Docker socket access).
-- Whether to talk to the fail2ban socket directly instead of parsing `fail2ban-client` output.
+- The nftables summary against real `nft -j list ruleset` output (written from libnftables-json(5) only), including iptables-nft rulesets from Docker and ufw.
+- The Caddy source against the VPS's Caddy.
+- fail2ban 1.0.2 on Debian 12.
 - The Docker source on a real Docker host (alpha or the VPS).
 - The systemd sandboxing in `daemonsight-web.service` inside an unprivileged LXC.
 

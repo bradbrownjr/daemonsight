@@ -42,8 +42,9 @@
   <div class="container-xl pb-2 d-flex flex-wrap align-items-center gap-2">
   <nav aria-label="Sections">
     <ul class="nav nav-pills gap-1">
-      <li class="nav-item"><a class="nav-link{{ ' active' if page == 'overview' }}" {% if page == 'overview' %}aria-current="page"{% endif %} href="/">Overview</a></li>
-      <li class="nav-item"><a class="nav-link{{ ' active' if page == 'services' }}" {% if page == 'services' %}aria-current="page"{% endif %} href="/services">Services</a></li>
+      {% for key, href, label in [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('fail2ban', '/fail2ban', 'fail2ban')] %}
+      <li class="nav-item"><a class="nav-link{{ ' active' if page == key }}" {% if page == key %}aria-current="page"{% endif %} href="{{ href }}">{{ label }}</a></li>
+      {% endfor %}
     </ul>
   </nav>
   {% if v %}

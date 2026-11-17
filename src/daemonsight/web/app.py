@@ -167,6 +167,27 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
             ctx = views.services(conn, cfg, units) if conn else None
         return render(request, "partials/services.html", {"v": ctx})
 
+    # Pages with no options: a full page and a partial its poll refreshes.
+    def simple_page(page: str, builder) -> None:
+        async def full(request: Request):
+            require_login(request)
+            with reader() as conn:
+                ctx = builder(conn, cfg) if conn else None
+            return render(request, f"{page}.html", {"page": page, "v": ctx})
+
+        async def partial(request: Request):
+            require_login(request)
+            with reader() as conn:
+                ctx = builder(conn, cfg) if conn else None
+            return render(request, f"partials/{page}.html", {"v": ctx})
+
+        app.add_api_route(f"/{page}", full, methods=["GET"], response_class=HTMLResponse)
+        app.add_api_route(f"/partials/{page}", partial, methods=["GET"], response_class=HTMLResponse)
+
+    simple_page("exposure", views.exposure)
+    simple_page("routes", views.routes)
+    simple_page("fail2ban", views.jails)
+
     @app.get("/partials/logs/{name}", response_class=HTMLResponse)
     async def logs_partial(request: Request, name: str):
         require_login(request)

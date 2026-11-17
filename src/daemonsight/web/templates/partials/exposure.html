@@ -1,0 +1,102 @@
+<div id="live" hx-get="/partials/exposure" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<div class="alert {{ 'alert-warning' if v.public else 'alert-info' }} mb-4">
+  {% if v.public %}
+  This host has a public address ({{ v.public_ips|join(', ') }}), so anything bound to all interfaces can be reached from the internet unless the firewall blocks it.
+  Expected public ports: {{ v.expected|join(', ') }}.
+  {% else %}
+  This host has no public address of its own. Sockets bound to all interfaces are reachable from the LAN, and from the internet only through a port forward or a proxy such as Caddy.
+  {% endif %}
+</div>
+
+<section class="card mb-4" id="listeners" aria-labelledby="listen-title" data-section{% if not v.listeners %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="listen-title">Listeners not on loopback</h2>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.listeners|length }} total</div>
+  </div>
+  {% if v.ports_state.state not in ('ok',) and not v.listeners %}
+  <div class="card-body text-secondary">{{ v.ports_state.reason }}</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="exposure">
+      <thead><tr>
+        <th data-sort="num">Port</th><th data-sort="text">Bound to</th><th data-sort="text">Reach</th><th data-sort="text">Firewall</th><th data-sort="text">Process</th><th data-sort="text">Owner</th><th data-sort="text">Expected</th><th data-sort="text">Jail</th>
+      </tr></thead>
+      <tbody>
+        {% for r in v.listeners %}
+        <tr data-row>
+          <td class="font-monospace" data-v="{{ r.port_v }}">{{ r.port }}</td>
+          <td class="font-monospace">{{ r.addresses }}</td>
+          <td><span class="badge {{ r.reach_badge }}">{{ r.reach }}</span></td>
+          <td><span class="badge {{ r.fw_badge }}">{{ r.fw }}</span><div class="text-secondary small">{{ r.fw_why }}</div></td>
+          <td>{{ r.process }}</td>
+          <td>{{ r.owner }}</td>
+          <td>{{ r.expected }}</td>
+          <td>{% if r.jail_bad %}<span class="text-red">{{ r.jail }}</span>{% else %}{{ r.jail }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No listeners match the filter.</div>
+</section>
+
+<section class="card mb-4" id="firewall" aria-labelledby="fw-title" data-section{% if not v.firewall.chains %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="fw-title">Firewall input chains</h2>
+    <div class="card-actions text-secondary">nft -j list ruleset</div>
+  </div>
+  {% if v.firewall_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.firewall_state.reason }}</div>
+  {% elif not v.firewall.chains %}
+  <div class="card-body text-secondary">No base chain on the input hook, so nothing filters inbound traffic.</div>
+  {% else %}
+  <div class="list-group list-group-flush">
+    {% for c in v.firewall.chains %}
+    <div class="list-group-item" data-row>
+      <div class="d-flex flex-wrap gap-2 align-items-baseline">
+        <strong class="font-monospace">{{ c.name }}</strong>
+        <span class="badge {{ 'bg-green-lt' if c.default == 'drop' else 'bg-orange-lt' }}">default {{ c.default }}</span>
+        <span class="text-secondary">policy {{ c.policy }}</span>
+        {% if c.accept_all %}<span class="badge bg-red-lt">accepts everything</span>{% endif %}
+      </div>
+      <div class="mt-1 font-monospace small">{% for o in c.open %}<span class="me-3">{{ o }}</span>{% else %}<span class="text-secondary">No ports opened for new connections.</span>{% endfor %}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if v.firewall.docker_nat %}
+  <div class="card-body border-top text-secondary">Docker's nat chain is present: published container ports are forwarded before these input rules apply.</div>
+  {% endif %}
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No chains match the filter.</div>
+</section>
+
+<section class="card" id="docker-published" aria-labelledby="dp-title" data-section{% if not v.docker %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="dp-title">Docker published ports</h2>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.docker|length }} total</div>
+  </div>
+  {% if not v.docker %}
+  <div class="card-body text-secondary">No published container ports.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="docker-published">
+      <thead><tr><th data-sort="text">Container</th><th data-sort="text">State</th><th data-sort="text">Published on</th><th data-sort="text">To</th></tr></thead>
+      <tbody>
+        {% for d in v.docker %}
+        <tr data-row>
+          <td><strong>{{ d.container }}</strong></td>
+          <td>{{ d.status }}</td>
+          <td class="font-monospace {{ 'text-red' if d.wide }}">{{ d.published }}</td>
+          <td class="font-monospace">{{ d.target }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No ports match the filter.</div>
+</section>
+{% endif %}
+</div>

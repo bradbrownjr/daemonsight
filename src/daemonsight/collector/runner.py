@@ -11,7 +11,10 @@ import time
 from .. import db, findings
 from ..config import Config
 from .sources import Source, SourceUnavailable
+from .sources.caddy import CaddySource
 from .sources.docker import DockerSource
+from .sources.fail2ban import Fail2banSource
+from .sources.firewall import FirewallSource
 from .sources.ports import PortsSource
 from .sources.system import SystemSource
 from .sources.systemd import SystemdSource
@@ -26,6 +29,9 @@ def build_sources(cfg: Config) -> list[Source]:
         SystemdSource(c.interval_systemd, c.service_patterns),
         PortsSource(c.interval_ports),
         DockerSource(c.interval_docker, c.docker_socket, c.log_tail_lines),
+        CaddySource(c.interval_caddy, c.caddy_admin),
+        Fail2banSource(c.interval_fail2ban, c.fail2ban_socket),
+        FirewallSource(c.interval_firewall, c.nft),
     ]
 
 
@@ -98,6 +104,40 @@ def diff_events(source: str, prev: dict | None, cur: dict | None, eph: tuple[int
                 events.append({"kind": "ctr_stopped", "severity": "high",
                                "title": f"Container {c['name']} {c['status']}{why}",
                                "detail": f"Exit code {c['exit_code']}", "link": f"/services#ctr-{c['name']}"})
+    elif source == "caddy":
+        before = {x["host"] for x in prev.get("sites", [])}
+        after = {x["host"] for x in cur.get("sites", [])}
+        for h in sorted(after - before):
+            events.append({"kind": "route_new", "severity": "medium", "title": f"New Caddy site {h}",
+                           "detail": None, "link": "/routes"})
+        for h in sorted(before - after):
+            events.append({"kind": "route_gone", "severity": None, "title": f"Caddy site {h} removed",
+                           "detail": None, "link": "/routes"})
+    elif source == "fail2ban":
+        before = {j["name"]: j for j in prev.get("jails", [])}
+        for j in cur.get("jails", []):
+            old = before.get(j["name"])
+            if old is None:
+                events.append({"kind": "jail_new", "severity": None, "title": f"Jail {j['name']} started",
+                               "detail": None, "link": "/fail2ban"})
+                continue
+            if isinstance(j.get("banned_total"), int) and isinstance(old.get("banned_total"), int) \
+                    and j["banned_total"] > old["banned_total"]:
+                n = j["banned_total"] - old["banned_total"]
+                events.append({"kind": "ban", "severity": None,
+                               "title": f"{j['name']} banned {n} address{'es' if n > 1 else ''}",
+                               "detail": None, "link": "/fail2ban"})
+        for name in sorted(before.keys() - {j["name"] for j in cur.get("jails", [])}):
+            events.append({"kind": "jail_gone", "severity": "high", "title": f"Jail {name} stopped",
+                           "detail": None, "link": "/fail2ban"})
+    elif source == "firewall":
+        def shape(d):
+            return [(c["family"], c["table"], c["chain"], c["default"], c["accept_all"],
+                     sorted((o["proto"], o["from"], o["to"], tuple(o["conditions"])) for o in c["open"]))
+                    for c in d.get("input", [])]
+        if shape(prev) != shape(cur):
+            events.append({"kind": "firewall_changed", "severity": "medium",
+                           "title": "Firewall input rules changed", "detail": None, "link": "/exposure"})
     return events
 
 
@@ -135,7 +175,7 @@ class Collector:
         t = self.cfg.thresholds
         avg, n = db.metric_average(self.conn, self.host, "mem.percent", ts - t.memory_minutes * 60)
         expected = t.memory_minutes * 60 / max(self.cfg.collector.interval_system, 1)
-        ctx = {"mem_avg": avg if n >= expected * 0.8 else None}
+        ctx = {"mem_avg": avg if n >= expected * 0.8 else None, "eph": self.eph}
         current = findings.evaluate(snaps, self.cfg, ctx)
         for change, f in db.reconcile_findings(self.conn, self.host, ts, current):
             if change == "opened":

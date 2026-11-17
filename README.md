@@ -11,9 +11,10 @@
 
 ---
 
-**Status:** phase 1 of 5. The collector reads system health, systemd
-services, listening sockets and Docker; the web UI has Overview and Services
-pages. Caddy, fail2ban, the firewall and CVE scanning come next. See
+**Status:** phase 2 of 5. The collector reads system health, systemd
+services, listening sockets, Docker, Caddy, fail2ban and nftables. The web UI
+has Overview, Exposure, Routes, Services and fail2ban pages. Remote sources
+(OPNsense and Unraid APIs) and CVE scanning come next. See
 [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Install

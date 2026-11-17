@@ -27,11 +27,29 @@
 # interval_systemd = 30
 # interval_ports = 60
 # interval_docker = 30
+# interval_caddy = 60
+# interval_fail2ban = 60
+# interval_firewall = 300
 # docker_socket = "/var/run/docker.sock"
+# Caddy's admin address, written as Caddy writes it. A Unix socket is safer:
+# set `admin unix//run/caddy/admin.sock` in the Caddyfile and use the same here.
+# caddy_admin = "localhost:2019"
+# fail2ban_socket = "/var/run/fail2ban/fail2ban.sock"
+# nft = "nft"
 # service_patterns = ["*.service"]
 # Container log lines kept for the Logs view (secrets are masked).
 # log_tail_lines = 100
 # metrics_retention_hours = 48
+
+[exposure]
+# Ports meant to be reachable from the internet. Any other port listening on
+# a public address is a finding.
+# expected_public = ["22/tcp", "80/tcp", "443/tcp", "443/udp"]
+
+# Jails DaemonSight can't link to a service by name, journal match or log
+# path. Jail name = list of systemd units it protects.
+# [exposure.jail_covers]
+# nginx-http-auth = ["nginx.service"]
 
 [thresholds]
 # disk_percent = 90

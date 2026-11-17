@@ -1,0 +1,90 @@
+<div id="live" hx-get="/partials/fail2ban" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card mb-4" id="jails" aria-labelledby="jails-title" data-section{% if not v.jails %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="jails-title">Jails</h2>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.jails|length }} jails{% if v.version %} · fail2ban {{ v.version }}{% endif %}</div>
+  </div>
+  {% if v.f2b_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.f2b_state.reason }}</div>
+  {% elif not v.jails %}
+  <div class="card-body text-secondary">fail2ban is running with no jails.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="jails">
+      <thead><tr>
+        <th data-sort="text">Jail</th><th data-sort="text">Watches</th><th data-sort="num">Failed now</th><th data-sort="num">Banned now</th><th data-sort="num">Banned total</th><th data-sort="num">Ban time</th><th data-sort="num">Max retry</th><th data-sort="text">Actions</th>
+      </tr></thead>
+      <tbody>
+        {% for j in v.jails %}
+        <tr data-row>
+          <td><strong>{{ j.name }}</strong><div class="text-secondary small">{{ j.backend }}</div></td>
+          <td class="font-monospace small">{% for w in j.watching %}<div class="{{ 'text-red' if w.missing }}">{{ w.text }}{% if w.missing %} (missing){% endif %}</div>{% endfor %}</td>
+          <td>{{ j.failed_now }}<div class="text-secondary small">{{ j.failed_total }} total</div></td>
+          <td>{{ j.banned_now }}</td>
+          <td>{{ j.banned_total }}</td>
+          <td data-v="{{ j.bantime_v }}">{{ j.bantime }}<div class="text-secondary small">window {{ j.findtime }}</div></td>
+          <td>{{ j.maxretry }}</td>
+          <td class="small">{{ j.actions }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No jails match the filter.</div>
+</section>
+
+<section class="card mb-4" id="coverage" aria-labelledby="cov-title" data-section{% if not v.coverage %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="cov-title">Public services and their jails</h2>
+  </div>
+  {% if not v.coverage %}
+  <div class="card-body text-secondary">{% if v.public_host %}Nothing on this host is reachable from the internet.{% else %}This host has no public address, so no service is directly reachable from the internet.{% endif %}</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="coverage">
+      <thead><tr><th data-sort="text">Service</th><th data-sort="num">Port</th><th data-sort="text">Jail</th></tr></thead>
+      <tbody>
+        {% for c in v.coverage %}
+        <tr data-row>
+          <td><strong>{{ c.service }}</strong></td>
+          <td class="font-monospace" data-v="{{ c.port.split('/')[0] }}">{{ c.port }}</td>
+          <td>{% if c.jail %}{{ c.jail }}{% else %}<span class="text-red">None</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No services match the filter.</div>
+</section>
+
+<section class="card" id="bans" aria-labelledby="bans-title" data-section{% if not v.bans %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="bans-title">Banned now</h2>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.bans|length }} addresses</div>
+  </div>
+  {% if not v.bans %}
+  <div class="card-body text-secondary">No addresses are banned.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="bans">
+      <thead><tr><th data-sort="text">Address</th><th data-sort="text">Jail</th><th data-sort="text">Banned at</th><th data-sort="text">Until</th></tr></thead>
+      <tbody>
+        {% for b in v.bans %}
+        <tr data-row>
+          <td class="font-monospace">{{ b.ip }}</td>
+          <td>{{ b.jail }}</td>
+          <td>{{ b.banned_at or '—' }}</td>
+          <td>{{ b.until or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No addresses match the filter.</div>
+</section>
+{% endif %}
+</div>

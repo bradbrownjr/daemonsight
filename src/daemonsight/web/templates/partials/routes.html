@@ -1,0 +1,70 @@
+<div id="live" hx-get="/partials/routes" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card mb-4" id="sites" aria-labelledby="sites-title" data-section{% if not v.sites %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="sites-title">Caddy sites</h2>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.sites|length }} sites{% if v.down %} · <span class="text-red">{{ v.down }} with a problem</span>{% endif %}</div>
+  </div>
+  {% if v.caddy_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.caddy_state.reason }}</div>
+  {% elif not v.sites %}
+  <div class="card-body text-secondary">Caddy has no sites configured.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="sites">
+      <thead><tr><th data-sort="text">Site</th><th data-sort="text">Who can reach it</th><th data-sort="text">Handles</th><th data-sort="text">Listens on</th></tr></thead>
+      <tbody>
+        {% for s in v.sites %}
+        <tr data-row>
+          <td><strong>{{ s.host }}</strong></td>
+          <td><span class="badge {{ s.access_badge }}">{{ s.access }}</span></td>
+          <td>
+            {% for h in s.handlers %}
+            <div>
+              <span class="text-secondary">{{ h.kind }}{% if h.path %} {{ h.path }}{% endif %}</span>
+              {% if h.upstreams is defined %}
+                {% for u in h.upstreams %}
+                <span class="font-monospace ms-1 {{ 'text-red' if u.state in ('down', 'failing') }}">{{ u.text }}</span><span class="text-secondary small ms-1">({{ u.note }})</span>
+                {% endfor %}
+              {% else %}
+                <span class="font-monospace ms-1">{{ h.detail }}</span>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </td>
+          <td class="font-monospace">{{ s.listen }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No sites match the filter.</div>
+</section>
+
+{% if v.caddy_state.state == 'ok' %}
+<section class="card" id="caddy-admin" aria-labelledby="admin-title" data-section>
+  <div class="card-header"><h2 class="card-title" id="admin-title">Caddy admin API</h2></div>
+  <div class="card-body">
+    <div class="datagrid">
+      <div class="datagrid-item">
+        <div class="datagrid-title">Configured address</div>
+        <div class="datagrid-content font-monospace">{{ v.admin.listen }}{% if not v.admin.unix %} · <span class="text-orange">TCP</span>{% endif %}</div>
+      </div>
+      <div class="datagrid-item">
+        <div class="datagrid-title">Read from</div>
+        <div class="datagrid-content font-monospace">{{ v.admin.read_from }}</div>
+      </div>
+      {% for srv in v.servers %}
+      <div class="datagrid-item">
+        <div class="datagrid-title">Server {{ srv.name }}</div>
+        <div class="datagrid-content font-monospace">{{ srv.listen|join(', ') }}</div>
+        <div class="text-secondary small">{{ srv.routes }} routes · access log {{ 'on' if srv.access_log else 'off' }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+</div>

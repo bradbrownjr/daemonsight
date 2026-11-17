@@ -1,0 +1,169 @@
+{
+ "fail2ban": "1.1.0-8 (Debian 13)",
+ "note": "Raw pickled replies recorded from a real fail2ban-server run unprivileged with two jails: 'web' (file backend, two bans) and 'jrnl' (systemd backend).",
+ "exchanges": [
+  {
+   "cmd": [
+    "version"
+   ],
+   "reply_b64": "gAWVDQAAAAAAAABLAIwFMS4xLjCUhpQu"
+  },
+  {
+   "cmd": [
+    "status"
+   ],
+   "reply_b64": "gAWVOAAAAAAAAABLAF2UKIwOTnVtYmVyIG9mIGphaWyUSwKGlIwJSmFpbCBsaXN0lIwJanJubCwgd2VilIaUZYaULg=="
+  },
+  {
+   "cmd": [
+    "status",
+    "web"
+   ],
+   "reply_b64": "gAWVAAEAAAAAAABLAF2UKIwGRmlsdGVylF2UKIwQQ3VycmVudGx5IGZhaWxlZJRLAIaUjAxUb3RhbCBmYWlsZWSUSwCGlIwJRmlsZSBsaXN0lF2UjB8vdG1wL2NsYXVkZS0xMDAwL2RzLWYyYi93ZWIubG9nlGGGlGWGlIwHQWN0aW9uc5RdlCiMEEN1cnJlbnRseSBiYW5uZWSUSwKGlIwMVG90YWwgYmFubmVklEsChpSMDkJhbm5lZCBJUCBsaXN0lF2UKIwIYnVpbHRpbnOUjANzdHKUk5SMCzIwMy4wLjExMy41lIWUUpRoFowMMTk4LjUxLjEwMC43lIWUUpRlhpRlhpRlhpQu"
+  },
+  {
+   "cmd": [
+    "status",
+    "jrnl"
+   ],
+   "reply_b64": "gAWV0QAAAAAAAABLAF2UKIwGRmlsdGVylF2UKIwQQ3VycmVudGx5IGZhaWxlZJRLAIaUjAxUb3RhbCBmYWlsZWSUSwCGlIwPSm91cm5hbCBtYXRjaGVzlF2UjCZfU1lTVEVNRF9VTklUPXNzaC5zZXJ2aWNlICsgX0NPTU09c3NoZJRhhpRlhpSMB0FjdGlvbnOUXZQojBBDdXJyZW50bHkgYmFubmVklEsAhpSMDFRvdGFsIGJhbm5lZJRLAIaUjA5CYW5uZWQgSVAgbGlzdJRdlIaUZYaUZYaULg=="
+  },
+  {
+   "cmd": [
+    "get",
+    "web",
+    "logpath"
+   ],
+   "reply_b64": "gAWVKgAAAAAAAABLAF2UjB8vdG1wL2NsYXVkZS0xMDAwL2RzLWYyYi93ZWIubG9nlGGGlC4="
+  },
+  {
+   "cmd": [
+    "get",
+    "web",
+    "journalmatch"
+   ],
+   "reply_b64": "gAWVBwAAAAAAAABLAF2UhpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "web",
+    "bantime"
+   ],
+   "reply_b64": "gAWVCAAAAAAAAABLAE1YAoaULg=="
+  },
+  {
+   "cmd": [
+    "get",
+    "web",
+    "findtime"
+   ],
+   "reply_b64": "gAWVCAAAAAAAAABLAE1YAoaULg=="
+  },
+  {
+   "cmd": [
+    "get",
+    "web",
+    "maxretry"
+   ],
+   "reply_b64": "gAWVBwAAAAAAAABLAEsChpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "web",
+    "ignoreip"
+   ],
+   "reply_b64": "gAWVKwAAAAAAAABLAF2UjAhidWlsdGluc5SMA3N0cpSTlIwJMTI3LjAuMC4xlIWUUpRhhpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "web",
+    "actions"
+   ],
+   "reply_b64": "gAWVBwAAAAAAAABLAF2UhpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "jrnl",
+    "logpath"
+   ],
+   "reply_b64": "gAWVBwAAAAAAAABLAF2UhpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "jrnl",
+    "journalmatch"
+   ],
+   "reply_b64": "gAWVOAAAAAAAAABLAF2UKF2UjBlfU1lTVEVNRF9VTklUPXNzaC5zZXJ2aWNllGFdlIwKX0NPTU09c3NoZJRhZYaULg=="
+  },
+  {
+   "cmd": [
+    "get",
+    "jrnl",
+    "bantime"
+   ],
+   "reply_b64": "gAWVCAAAAAAAAABLAE1YAoaULg=="
+  },
+  {
+   "cmd": [
+    "get",
+    "jrnl",
+    "findtime"
+   ],
+   "reply_b64": "gAWVCAAAAAAAAABLAE1YAoaULg=="
+  },
+  {
+   "cmd": [
+    "get",
+    "jrnl",
+    "maxretry"
+   ],
+   "reply_b64": "gAWVBwAAAAAAAABLAEsDhpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "jrnl",
+    "ignoreip"
+   ],
+   "reply_b64": "gAWVBwAAAAAAAABLAF2UhpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "jrnl",
+    "actions"
+   ],
+   "reply_b64": "gAWVBwAAAAAAAABLAF2UhpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "web",
+    "banip",
+    "--with-time"
+   ],
+   "reply_b64": "gAWViAAAAAAAAABLAF2UKIw8MjAzLjAuMTEzLjUgCTIwMjYtMTEtMTcgMTg6NTg6MDkgKyA2MDAgPSAyMDI2LTExLTE3IDE5OjA4OjA5lIw9MTk4LjUxLjEwMC43IAkyMDI2LTExLTE3IDE4OjU4OjA5ICsgNjAwID0gMjAyNi0xMS0xNyAxOTowODowOZRlhpQu"
+  },
+  {
+   "cmd": [
+    "get",
+    "jrnl",
+    "banip",
+    "--with-time"
+   ],
+   "reply_b64": "gAWVBwAAAAAAAABLAF2UhpQu"
+  },
+  {
+   "cmd": [
+    "status",
+    "nope"
+   ],
+   "reply_b64": "gAWVPwAAAAAAAABLAYwTZmFpbDJiYW4uZXhjZXB0aW9uc5SMFFVua25vd25KYWlsRXhjZXB0aW9ulJOUjARub3BllIWUUpSGlC4="
+  }
+ ]
+}

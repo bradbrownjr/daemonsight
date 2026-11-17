@@ -66,6 +66,17 @@ def classify(ip: str) -> str:
     return "private"
 
 
+def host_addresses(ifaddrs=None) -> list[dict]:
+    """This host's own IP addresses, so a wildcard bind can be judged."""
+    out = []
+    for nic, addrs in (ifaddrs if ifaddrs is not None else psutil.net_if_addrs()).items():
+        for a in addrs:
+            if a.family in (socket.AF_INET, socket.AF_INET6):
+                ip = a.address.split("%", 1)[0]
+                out.append({"nic": nic, "ip": ip, "scope": classify(ip)})
+    return out
+
+
 SCOPE_RANK = {"all": 0, "public": 1, "private": 2, "unknown": 3, "loopback": 4}
 
 
@@ -119,4 +130,5 @@ class PortsSource(Source):
     async def collect(self) -> dict:
         listeners = group_listeners(psutil.net_connections("inet"))
         # Without root only our own sockets have PIDs (see module docstring).
-        return {"listeners": listeners, "owners_known": os.geteuid() == 0}
+        return {"listeners": listeners, "owners_known": os.geteuid() == 0,
+                "addresses": host_addresses()}
