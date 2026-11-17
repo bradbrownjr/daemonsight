@@ -53,6 +53,10 @@ class ExposureConfig:
     # Ports meant to be reachable from the internet. Anything else listening
     # on a public address is a finding.
     expected_public: list[str] = field(default_factory=lambda: ["22/tcp", "80/tcp", "443/tcp", "443/udp"])
+    # Ports a provider's firewall in front of this host lets in (a cloud
+    # firewall policy, for example). Empty means no such firewall is known.
+    # Ports outside it can't be reached from the internet whatever the host does.
+    upstream_allow: list[str] = field(default_factory=list)
     # Extra jail -> systemd units links, for jails DaemonSight can't match by
     # name, journal match or log path. Example: {"nginx-http-auth" = ["nginx.service"]}
     jail_covers: dict[str, list[str]] = field(default_factory=dict)

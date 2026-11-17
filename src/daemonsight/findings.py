@@ -193,12 +193,17 @@ def firewall_state(snaps, proto: str, port: int, addresses: list[str] | None = N
     return max(verdicts, key=lambda v: OPENNESS.get(v["state"], 0))
 
 
+def upstream_allows(cfg: Config, proto: str, port: int) -> bool:
+    allow = cfg.exposure.upstream_allow
+    return not allow or f"{port}/{proto}" in allow
+
+
 def expose_unexpected(snaps, cfg: Config, ctx) -> list[Finding]:
     expected = set(cfg.exposure.expected_public)
     out = []
     for r in public_listeners(snaps, ctx):
         key = f"{r['port']}/{r['proto']}"
-        if key in expected:
+        if key in expected or not upstream_allows(cfg, r["proto"], r["port"]):
             continue
         fw = firewall_state(snaps, r["proto"], r["port"], r["addresses"])
         who = r.get("process") or "an unknown process"
@@ -221,12 +226,27 @@ def expose_unexpected(snaps, cfg: Config, ctx) -> list[Finding]:
 def expose_forward_all(snaps, cfg, ctx) -> list[Finding]:
     data = _data(snaps, "firewall")
     out = []
+    allow = cfg.exposure.upstream_allow
     for f in (data or {}).get("forwards", []):
         count = sum(hi - lo + 1 for lo, hi in f["ranges"])
         if count <= 1000:
             continue
         proto = f["proto"].upper() if f["proto"] != "all" else "TCP and UDP"
         where = f" arriving {', '.join(f['conditions'])}" if f["conditions"] else ""
+        if allow:
+            # The provider firewall decides what actually arrives.
+            reach = sorted(int(p.split("/")[0]) for p in allow if "/" in p
+                           and p.split("/")[1] in (f["proto"], "tcp", "udp")
+                           and (f["proto"] == "all" or p.split("/")[1] == f["proto"])
+                           and any(lo <= int(p.split("/")[0]) <= hi for lo, hi in f["ranges"]))
+            out.append(Finding(
+                "expose.forward_all", f"{f['family']} {f['proto']} {f['to']}", "low",
+                f"{proto} forward to {f['to']} relies on the provider firewall",
+                f"The rule forwards {f['ports']}{where}. Only the ports the provider firewall allows arrive, "
+                f"so today that is {', '.join(map(str, reach)) or 'none'}. Any port added to the provider "
+                f"policy later goes to {f['to']} too. Listing those ports in the rule removes the dependence.",
+                "/exposure#forwards"))
+            continue
         out.append(Finding(
             "expose.forward_all", f"{f['family']} {f['proto']} {f['to']}", "high",
             (f"All {proto} ports except {f['ports'][len('all except '):]} are forwarded to {f['to']}"
@@ -251,8 +271,12 @@ def firewall_default_accept(snaps, cfg, ctx) -> list[Finding]:
         accepts = sorted({f"{o['from']}" for c in chains for o in c["open"]}, key=int)
         note = (f" The ACCEPT rules for {', '.join(accepts)} change nothing while the default is accept."
                 if accepts else "")
+        if cfg.exposure.upstream_allow:
+            note += (" A provider firewall in front of the host limits what arrives "
+                     f"({', '.join(cfg.exposure.upstream_allow)}), so this is a second line of defence missing.")
         out.append(Finding(
-            "firewall.default_accept", family, "medium", f"{label} input accepts all traffic by default",
+            "firewall.default_accept", family, "low" if cfg.exposure.upstream_allow else "medium",
+            f"{label} input accepts all traffic by default",
             f"This host has a public {label} address and no input chain drops by default, so every port "
             f"listening on it is reachable.{note} Set the policy to drop after accepting the ports you need.",
             "/exposure#firewall"))

@@ -364,6 +364,8 @@ def exposure(conn, cfg: Config) -> dict:
             continue
         where = rules.reach(r, pub)
         fw = rules.firewall_state(snaps, r["proto"], r["port"], r["addresses"])
+        if where == "internet" and not rules.upstream_allows(cfg, r["proto"], r["port"]):
+            fw = {"state": "blocked", "why": "Not in the provider firewall's allow list (exposure.upstream_allow)"}
         owner = r.get("owner") or {}
         unit = owner.get("id") if owner.get("kind") == "unit" else None
         internet = (r["proto"], r["port"]) in public_keys

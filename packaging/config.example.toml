@@ -46,6 +46,10 @@
 # a public address is a finding.
 # expected_public = ["22/tcp", "80/tcp", "443/tcp", "443/udp"]
 
+# Ports a provider firewall in front of the host allows (a cloud firewall
+# policy). Leave empty when there is none.
+# upstream_allow = ["22/tcp", "80/tcp", "443/tcp"]
+
 # Jails DaemonSight can't link to a service by name, journal match or log
 # path. Jail name = list of systemd units it protects.
 # [exposure.jail_covers]

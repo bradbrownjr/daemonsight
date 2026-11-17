@@ -235,6 +235,26 @@ temperature warning, parity check errors, array not started, a container with
 an update available, an unread Unraid alert, a WireGuard peer with no
 handshake in a set time, a gateway down, a port forward to nothing.
 
+### Provider firewalls
+
+Many VPS hosts sit behind a cloud firewall policy that the host can't see.
+`exposure.upstream_allow` lists the ports it lets in; findings about ports
+outside it are dropped, and forward and default-accept findings drop to Low.
+A candidate source to fill it automatically: the IONOS Cloud Server API
+(`https://cloudpanel-api.ionos.com/v1`, `X-TOKEN` header, `GET
+/firewall_policies`), unverified for VPS products.
+
+### Signs of a compromised host (planned)
+
+Provider alarms (CPU, network, disk) work even when an attacker stops the
+monitoring on the host; these rules say which process is responsible:
+
+- A process using most of a CPU for 30 minutes that no known unit or container owns
+- A running process whose executable is deleted, or lives in /tmp, /var/tmp or /dev/shm
+- Outbound connections to well-known mining pool ports (3333, 4444, 5555, 7777, 14444) or `stratum+tcp`
+- A new systemd unit, timer or cron entry
+- Outbound traffic or packet rate far above the host's own recent baseline
+
 ## Answered in phase 1
 
 - **psutil needs root for socket owners.** Run unprivileged on Debian 13 with psutil 7.2.2, `net_connections()` lists every listener but returns `pid=None` for sockets of other users.

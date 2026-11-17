@@ -452,3 +452,20 @@ def test_vps_findings(cfg):
     # 8001 bypasses Caddy when bound to 0.0.0.0; 3306 is forwarded away, so not local exposure.
     assert fs[("expose.unexpected", "8001/tcp")].severity == "critical"
     assert ("expose.unexpected", "3306/tcp") not in fs
+
+
+def test_upstream_firewall_lowers_vps_findings(cfg):
+    cfg.exposure.upstream_allow = ["22/tcp", "80/tcp", "443/tcp", "2083/tcp", "51820/udp",
+                                   "46100/udp", "46190/tcp", "8000/tcp"]
+    snaps = {
+        "firewall": snap("firewall", vps_firewall()),
+        "ports": snap("ports", {"listeners": [
+            listener(8001, unit="ectlogger.service", process="uvicorn", addresses=("0.0.0.0",))],
+            "owners_known": True, "addresses": [{"nic": "ens6", "ip": "203.0.113.10", "scope": "public"}]}),
+    }
+    fs = {(f.rule, f.key): f for f in findings.evaluate(snaps, cfg)}
+    fwd = fs[("expose.forward_all", "ip tcp 10.99.0.2")]
+    assert fwd.severity == "low" and "today that is 8000, 46190" in fwd.detail
+    assert "46100" in fs[("expose.forward_all", "ip udp 10.99.0.2")].detail
+    assert fs[("firewall.default_accept", "ip")].severity == "low"
+    assert ("expose.unexpected", "8001/tcp") not in fs  # the provider firewall doesn't let 8001 in
