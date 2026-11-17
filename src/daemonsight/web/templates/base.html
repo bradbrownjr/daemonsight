@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/static/vendor/tabler-themes.min.css">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/vendor/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
 {% block body %}
@@ -38,12 +39,23 @@
       </form>
     </div>
   </div>
-  <nav aria-label="Sections" class="container-xl pb-2">
+  <div class="container-xl pb-2 d-flex flex-wrap align-items-center gap-2">
+  <nav aria-label="Sections">
     <ul class="nav nav-pills gap-1">
       <li class="nav-item"><a class="nav-link{{ ' active' if page == 'overview' }}" {% if page == 'overview' %}aria-current="page"{% endif %} href="/">Overview</a></li>
       <li class="nav-item"><a class="nav-link{{ ' active' if page == 'services' }}" {% if page == 'services' %}aria-current="page"{% endif %} href="/services">Services</a></li>
     </ul>
   </nav>
+  {% if v %}
+  <div class="ds-js-only ms-auto d-flex flex-wrap align-items-center gap-3">
+    <input type="search" id="ds-filter" class="form-control form-control-sm ds-filter" placeholder="Filter rows" aria-label="Filter rows (press / to jump here)" autocomplete="off">
+    <label class="form-check form-switch m-0">
+      <input class="form-check-input" type="checkbox" id="ds-hide-empty">
+      <span class="form-check-label">Hide empty sections</span>
+    </label>
+  </div>
+  {% endif %}
+  </div>
 </header>
 <main class="container-xl py-4">
   {% if not v %}

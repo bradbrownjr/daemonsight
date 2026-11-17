@@ -114,3 +114,25 @@ def test_theme_toggle(seeded):
 
 def test_healthz_is_public(cfg):
     assert client(cfg).get("/healthz").text == "ok"
+
+
+def test_sort_and_filter_markup(seeded):
+    c = login(client(seeded))
+    r = c.get("/services?units=all")
+    html = r.text
+    assert '<script src="/static/app.js" defer></script>' in html
+    assert 'id="ds-filter"' in html and 'id="ds-hide-empty"' in html
+    assert 'data-table="units"' in html and 'data-table="containers"' in html
+    # Raw values for numeric sorts: unit CPU time in ns, empty when unknown.
+    assert 'data-v="12000000000"' in html
+    assert '<td data-v="">' in html
+    assert html.count("data-row") >= 3
+    # Containers and units have data; no sockets were collected.
+    assert 'id="ports" aria-labelledby="ports-title" data-section data-empty' in html
+    assert 'id="containers" aria-labelledby="ctr-title" data-section>' in html
+    # Overview: a finding row, and no events yet so that card is empty.
+    html = c.get("/").text
+    assert 'aria-labelledby="events-title" data-section data-empty' in html
+    assert "data-row" in html
+    r = c.get("/static/app.js")
+    assert r.status_code == 200 and "javascript" in r.headers["content-type"]

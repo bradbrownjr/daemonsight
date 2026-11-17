@@ -1,10 +1,10 @@
 <div id="live" hx-get="/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-swap="outerHTML" hx-select="#live-data" hx-target="#live-data">
 <div id="live-data">
 {% if v %}
-<section class="card mb-4" id="containers" aria-labelledby="ctr-title">
+<section class="card mb-4" id="containers" aria-labelledby="ctr-title" data-section{% if not v.containers %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="ctr-title">Containers</h2>
-    <div class="card-actions text-secondary">{{ v.containers|length }} total</div>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.containers|length }} total</div>
   </div>
   {% if v.docker_state.state == 'unavailable' %}
   <div class="card-body text-secondary">{{ v.docker_state.reason }}</div>
@@ -12,20 +12,20 @@
   <div class="card-body text-secondary">No containers.</div>
   {% else %}
   <div class="table-responsive">
-    <table class="table table-vcenter card-table">
+    <table class="table table-vcenter card-table" data-table="containers">
       <thead><tr>
-        <th>Name</th><th>Image</th><th>State</th><th>Health</th><th>Restarts</th><th>CPU</th><th>Memory</th><th>Published</th><th><span class="visually-hidden">Logs</span></th>
+        <th data-sort="text">Name</th><th data-sort="text">Image</th><th data-sort="text">State</th><th data-sort="text">Health</th><th data-sort="num">Restarts</th><th data-sort="num">CPU</th><th data-sort="num">Memory</th><th data-sort="text">Published</th><th><span class="visually-hidden">Logs</span></th>
       </tr></thead>
       <tbody>
         {% for c in v.containers %}
-        <tr id="ctr-{{ c.name }}">
+        <tr id="ctr-{{ c.name }}" data-row>
           <td><strong>{{ c.name }}</strong></td>
           <td class="font-monospace">{{ c.image }}</td>
           <td><span class="badge {{ c.status_badge }}">{{ c.status }}{{ c.exit }}</span>{% if c.oom %} <span class="badge bg-red-lt">OOM</span>{% endif %}</td>
           <td>{% if c.health_bad %}<span class="text-red">{{ c.health }}</span>{% else %}{{ c.health }}{% endif %}</td>
-          <td>{{ c.restarts }}<div class="text-secondary small">policy {{ c.policy }}</div></td>
-          <td>{{ c.cpu }}</td>
-          <td>{{ c.mem }}</td>
+          <td data-v="{{ c.restarts }}">{{ c.restarts }}<div class="text-secondary small">policy {{ c.policy }}</div></td>
+          <td data-v="{{ c.cpu_v }}">{{ c.cpu }}</td>
+          <td data-v="{{ c.mem_v }}">{{ c.mem }}</td>
           <td class="font-monospace">{% for p in c.ports %}<div class="{{ 'text-red' if p.wide }}">{{ p.text }}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
           <td><button type="button" class="btn btn-sm" hx-get="/partials/logs/{{ c.name|urlencode }}" hx-target="#logs" hx-swap="outerHTML" aria-label="Show logs for {{ c.name }}">Logs</button></td>
         </tr>
@@ -34,17 +34,18 @@
     </table>
   </div>
   {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No containers match the filter.</div>
 </section>
 {% endif %}
 </div>
 </div>
 
-<div class="card mb-4"><div id="logs" class="card-body text-secondary">Choose Logs on a container to see its last lines.</div></div>
+<div class="card mb-4" data-section{% if not (v and v.containers) %} data-empty{% endif %}><div id="logs" class="card-body text-secondary">Choose Logs on a container to see its last lines.</div></div>
 
 <div id="live-units" hx-get="/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-select="#units-data" hx-target="#units-data" hx-swap="outerHTML">
 <div id="units-data">
 {% if v %}
-<section class="card mb-4" id="units" aria-labelledby="units-title">
+<section class="card mb-4" id="units" aria-labelledby="units-title" data-section{% if v.systemd_state.state != 'ok' and not v.units %} data-empty{% endif %}>
   <div class="card-header flex-wrap gap-2">
     <h2 class="card-title" id="units-title">systemd services</h2>
     <div class="btn-group" role="group" aria-label="Filter units">
@@ -52,24 +53,24 @@
       <a class="btn btn-sm{{ ' active' if v.unit_filter == key }}" href="/services?units={{ key }}#units" {% if v.unit_filter == key %}aria-current="true"{% endif %}>{{ label }}{% if key == 'failed' and v.unit_counts.get('failed') %} <span class="badge bg-red text-red-fg ms-1">{{ v.unit_counts.failed }}</span>{% endif %}</a>
       {% endfor %}
     </div>
-    <div class="card-actions text-secondary">{{ v.unit_counts.get('active', 0) }} active · {{ v.unit_counts.get('failed', 0) }} failed</div>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.unit_counts.get('active', 0) }} active · {{ v.unit_counts.get('failed', 0) }} failed</div>
   </div>
   {% if v.systemd_state.state not in ('ok',) and not v.units %}
   <div class="card-body text-secondary">{{ v.systemd_state.reason }}</div>
   {% else %}
   <div class="table-responsive">
-    <table class="table table-vcenter card-table">
-      <thead><tr><th>Unit</th><th>Active</th><th>Sub</th><th>Since</th><th>Restarts</th><th>Memory</th><th>CPU time</th></tr></thead>
+    <table class="table table-vcenter card-table" data-table="units">
+      <thead><tr><th data-sort="text">Unit</th><th data-sort="text">Active</th><th data-sort="text">Sub</th><th data-sort="num">Since</th><th data-sort="num">Restarts</th><th data-sort="num">Memory</th><th data-sort="num">CPU time</th></tr></thead>
       <tbody>
         {% for u in v.units %}
-        <tr id="unit-{{ u.name }}">
+        <tr id="unit-{{ u.name }}" data-row>
           <td><strong>{{ u.name }}</strong><div class="text-secondary small">{{ u.description }}</div></td>
           <td><span class="badge {{ u.badge }}">{{ u.active }}</span></td>
           <td>{{ u.sub }}{% if u.result and u.result != 'success' %} <span class="text-secondary">({{ u.result }})</span>{% endif %}</td>
-          <td>{{ u.since }}</td>
-          <td>{{ u.restarts if u.restarts is not none else '—' }}</td>
-          <td>{{ u.memory }}</td>
-          <td>{{ u.cpu }}</td>
+          <td data-v="{{ u.since_v }}">{{ u.since }}</td>
+          <td data-v="{{ u.restarts_v }}">{{ u.restarts if u.restarts is not none else '—' }}</td>
+          <td data-v="{{ u.memory_v }}">{{ u.memory }}</td>
+          <td data-v="{{ u.cpu_v }}">{{ u.cpu }}</td>
         </tr>
         {% else %}
         <tr><td colspan="7" class="text-secondary">No units match.</td></tr>
@@ -78,23 +79,24 @@
     </table>
   </div>
   {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No units match the filter.</div>
 </section>
 
-<section class="card" id="ports" aria-labelledby="ports-title">
+<section class="card" id="ports" aria-labelledby="ports-title" data-section{% if not v.listeners %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="ports-title">Listening sockets</h2>
-    <div class="card-actions text-secondary">{{ v.listeners|length }} total</div>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.listeners|length }} total</div>
   </div>
   {% if not v.owners_known %}
   <div class="card-body border-bottom"><div class="alert alert-info m-0">The collector is not running as root, so it can't see which process owns sockets started by other users.</div></div>
   {% endif %}
   <div class="table-responsive">
-    <table class="table table-vcenter card-table">
-      <thead><tr><th>Port</th><th>Bound to</th><th>Reach</th><th>Process</th><th>Owner</th></tr></thead>
+    <table class="table table-vcenter card-table" data-table="ports">
+      <thead><tr><th data-sort="num">Port</th><th data-sort="text">Bound to</th><th data-sort="text">Reach</th><th data-sort="text">Process</th><th data-sort="text">Owner</th></tr></thead>
       <tbody>
         {% for r in v.listeners %}
-        <tr>
-          <td class="font-monospace">{{ r.port }}</td>
+        <tr data-row>
+          <td class="font-monospace" data-v="{{ r.port_v }}">{{ r.port }}</td>
           <td class="font-monospace">{{ r.addresses }}</td>
           <td><span class="badge {{ r.scope_badge }}">{{ r.scope }}</span></td>
           <td>{{ r.process }}</td>
@@ -104,6 +106,7 @@
       </tbody>
     </table>
   </div>
+  <div class="card-body text-secondary ds-nomatch">No sockets match the filter.</div>
 </section>
 {% endif %}
 </div>

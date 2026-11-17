@@ -11,6 +11,22 @@
 .ds-spark { display: block; width: 100%; height: 40px; color: var(--tblr-primary); }
 .ds-logs { margin: 0; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 .ds-login { max-width: 26rem; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+/* Page tools (app.js). Hidden when scripts don't run. */
+html:not(.ds-js) .ds-js-only { display: none !important; }
+.ds-filter { width: 14rem; max-width: 100%; }
+.ds-filtered { display: none !important; }
+.ds-hide-empty [data-section][data-empty],
+.ds-hide-empty [data-section][data-nomatch] { display: none !important; }
+.ds-nomatch { display: none; }
+[data-nomatch] .ds-nomatch { display: block; }
+[data-nomatch] .table-responsive,
+[data-nomatch] .list-group { display: none; }
+.ds-sort { all: unset; cursor: pointer; white-space: nowrap; }
+.ds-sort:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; border-radius: 2px; }
+.ds-sort::after { content: "\2195"; margin-left: .3em; opacity: .35; }
+th[aria-sort="ascending"] .ds-sort::after { content: "\25B2"; opacity: 1; }
+th[aria-sort="descending"] .ds-sort::after { content: "\25BC"; opacity: 1; }
+th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--tblr-primary); }
 /* Width classes for progress bars, pct-0 to pct-100. */
 .pct-0 { width: 0%; }
 .pct-1 { width: 1%; }

@@ -59,6 +59,11 @@ def fmt_ago(ts, now: float | None = None) -> str:
     return "just now" if delta < 5 else f"{fmt_duration(delta)} ago"
 
 
+def _sortval(value) -> str:
+    """Raw value for a table cell's data-v attribute; empty sorts last."""
+    return "" if value is None else str(value)
+
+
 def pct_class(value) -> str:
     """CSS class for a width percentage (the CSP forbids inline styles)."""
     if value is None:
@@ -220,6 +225,7 @@ def services(conn, cfg: Config, unit_filter: str = "active") -> dict:
                 "restarts": c["restart_count"], "policy": c["restart_policy"],
                 "cpu": f"{c['cpu_percent']:.1f}%" if c["cpu_percent"] is not None else "—",
                 "mem": fmt_bytes(c["memory"]),
+                "cpu_v": _sortval(c["cpu_percent"]), "mem_v": _sortval(c["memory"]),
                 "ports": [{"text": f"{p['host_ip']}:{p['host_port']}→{p['container_port']}/{p['proto']}",
                            "wide": p["host_ip"] in ("0.0.0.0", "::", "")} for p in c["ports"]],
             })
@@ -241,6 +247,9 @@ def services(conn, cfg: Config, unit_filter: str = "active") -> dict:
                 "restarts": u.get("restarts"), "memory": fmt_bytes(u.get("memory")),
                 "cpu": fmt_duration((u["cpu_ns"] or 0) / 1e9) if u.get("cpu_ns") is not None else "—",
                 "result": u.get("result"),
+                "since_v": _sortval(now - u["since"] if u.get("since") else None),
+                "memory_v": _sortval(u.get("memory")), "cpu_v": _sortval(u.get("cpu_ns")),
+                "restarts_v": _sortval(u.get("restarts")),
             })
 
     listeners = []
@@ -258,7 +267,7 @@ def services(conn, cfg: Config, unit_filter: str = "active") -> dict:
             else:
                 who = None
             listeners.append({
-                "port": f"{r['port']}/{r['proto']}", "addresses": ", ".join(r["addresses"]),
+                "port": f"{r['port']}/{r['proto']}", "port_v": r["port"], "addresses": ", ".join(r["addresses"]),
                 "scope": {"all": "All interfaces", "public": "Public", "private": "Private",
                           "loopback": "Loopback", "unknown": "Unknown"}[r["scope"]],
                 "scope_badge": {"all": "bg-orange-lt", "public": "bg-red-lt"}.get(r["scope"], "bg-secondary-lt"),

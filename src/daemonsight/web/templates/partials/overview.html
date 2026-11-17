@@ -55,10 +55,10 @@
 {% endif %}
 
 <div class="ds-cols">
-  <section class="card ds-main-col" aria-labelledby="findings-title">
+  <section class="card ds-main-col" aria-labelledby="findings-title" data-section{% if not v.findings %} data-empty{% endif %}>
     <div class="card-header">
       <h2 class="card-title" id="findings-title">Findings</h2>
-      <div class="card-actions text-secondary">{{ v.findings|length }} open</div>
+      <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.findings|length }} open</div>
     </div>
     {% if v.findings %}
     <div class="list-group list-group-flush">
@@ -72,15 +72,16 @@
         </div>
       {% endset %}
       {% if f.link %}
-      <a href="{{ f.link }}" class="list-group-item list-group-item-action d-flex gap-3 align-items-start">{{ inner }}</a>
+      <a href="{{ f.link }}" data-row class="list-group-item list-group-item-action d-flex gap-3 align-items-start">{{ inner }}</a>
       {% else %}
-      <div class="list-group-item d-flex gap-3 align-items-start">{{ inner }}</div>
+      <div data-row class="list-group-item d-flex gap-3 align-items-start">{{ inner }}</div>
       {% endif %}
       {% endfor %}
     </div>
     {% else %}
     <div class="card-body text-secondary">Nothing to report.</div>
     {% endif %}
+    <div class="card-body text-secondary ds-nomatch">No findings match the filter.</div>
   </section>
 
   <div class="ds-side-col">
@@ -105,12 +106,12 @@
       </div>
     </section>
 
-    <section class="card" aria-labelledby="events-title">
+    <section class="card" aria-labelledby="events-title" data-section{% if not v.events %} data-empty{% endif %}>
       <div class="card-header"><h2 class="card-title" id="events-title">Recent changes</h2></div>
       {% if v.events %}
       <div class="list-group list-group-flush">
         {% for e in v.events %}
-        <div class="list-group-item">
+        <div class="list-group-item" data-row>
           <div class="d-flex justify-content-between gap-2"><strong>{{ e.title }}</strong><span class="text-secondary text-nowrap">{{ e.ago }}</span></div>
           {% if e.detail %}<div class="text-secondary">{{ e.detail }}</div>{% endif %}
         </div>
@@ -119,6 +120,7 @@
       {% else %}
       <div class="card-body text-secondary">No changes recorded yet.</div>
       {% endif %}
+      <div class="card-body text-secondary ds-nomatch">No changes match the filter.</div>
     </section>
   </div>
 </div>
