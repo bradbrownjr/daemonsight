@@ -108,12 +108,26 @@ and the route's log settings. A config file can override the guess.
 ## Storage
 
 SQLite in WAL mode at `/var/lib/daemonsight/state.db`. The collector and
-scanner write; the web process opens it with `mode=ro`.
+scanner write; the web process opens it with `mode=ro`. On a hub, the hub's
+web process is the writer.
+
+`[retention]` sets how long rows stay: metric points 48 hours by default,
+events and resolved findings for good. The collector prunes its own host's
+rows hourly; the hub prunes every host's. Open findings are never pruned.
+
+Backups (`backup.py`): one owner-only `.tar.gz` with a consistent copy of
+the database (SQLite's online backup API, so the writer keeps running), the
+config, the password hash, the session secret and any upload token, plus a
+manifest. The collector or hub makes one every `[backup] interval_hours`
+(24) and keeps `keep` (7). `daemonsight restore` refuses while the writer
+holds `daemonsight.lock` in the data folder, checks the archive's names (it
+never extracts by path), the database's integrity and its schema version,
+and keeps every file it replaces as `<name>.before-restore`.
 
 - `snapshots`: source, taken_at, ok, error, data (JSON). The latest row per source is current state.
 - `findings`: rule, key, severity, first_seen, last_seen, resolved_at, details (JSON).
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down.
-- `metrics`: ts, name, value. 15-second points kept 48 hours, 5-minute averages kept 30 days.
+- `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
 
 ## Web UI
 

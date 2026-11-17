@@ -122,6 +122,11 @@ DaemonSight's own fail2ban page shows this jail like any other.
 | `/etc/daemonsight/config.toml` | root:daemonsight | 0640 |
 | `/etc/daemonsight/password`, `secret` | root:daemonsight | 0640 |
 | `/var/lib/daemonsight/` (database) | root:daemonsight | 2750 |
+| `/var/lib/daemonsight/backups/` | root | 0700, each backup 0600 |
+
+A backup holds the session secret and any upload token as well as the
+database, so keep copies as private as the server. Restoring one brings back
+the password and secret it was made with.
 
 ## Remote sources (planned)
 

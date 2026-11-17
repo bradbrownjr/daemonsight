@@ -227,5 +227,10 @@ def test_hub_prunes_old_metrics(hub_cfg):
     now = time.time()
     db.add_metrics(conn, "a", now - 49 * 3600, {"cpu.percent": 1})
     db.add_metrics(conn, "b", now - 3600, {"cpu.percent": 2})
-    hub.prune(conn, now, 48)
+    db.add_event(conn, "a", now - 40 * 86400, "port_new", "old")
+    db.add_event(conn, "a", now - 86400, "port_new", "new")
+    db.prune(conn, now, 48, 30, 0)
     assert [r[0] for r in conn.execute("SELECT host FROM metrics")] == ["b"]
+    assert [r["title"] for r in db.recent_events(conn, "a")] == ["new"]
+    db.prune(conn, now, 0, 0, 0)  # 0 keeps everything
+    assert conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0] == 1

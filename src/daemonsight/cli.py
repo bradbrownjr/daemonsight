@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import secrets
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -49,19 +50,77 @@ def _write_private(path: Path, text: str, group: bool = True) -> None:
 
 
 def cmd_collector(args, cfg) -> int:
+    from .backup import BackupError, hold
     from .collector.runner import Collector
     os.umask(0o027)
-    asyncio.run(Collector(cfg).run())
+    try:
+        with hold(cfg):
+            asyncio.run(Collector(cfg, config_file=config.config_path(args.config)).run())
+    except BackupError as exc:
+        print(f"Not starting: {exc}. Is the collector already running?", file=sys.stderr)
+        return 1
     return 0
 
 
 def cmd_web(args, cfg) -> int:
     import uvicorn
+    from .backup import BackupError, hold
     from .web.app import create_app
-    app = create_app(cfg)
-    uvicorn.run(app, host=cfg.web.listen, port=cfg.web.port, proxy_headers=True,
-                forwarded_allow_ips=",".join(cfg.web.trusted_proxies), server_header=False,
-                access_log=False)
+
+    def serve():
+        app = create_app(cfg, config_file=config.config_path(args.config) if cfg.hub.enabled else None)
+        uvicorn.run(app, host=cfg.web.listen, port=cfg.web.port, proxy_headers=True,
+                    forwarded_allow_ips=",".join(cfg.web.trusted_proxies), server_header=False,
+                    access_log=False)
+
+    if not cfg.hub.enabled:
+        serve()  # reads only; the collector holds the database
+        return 0
+    try:
+        with hold(cfg):
+            serve()
+    except BackupError as exc:
+        print(f"Not starting: {exc}. Is the hub already running?", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_backup(args, cfg) -> int:
+    from . import backup
+    try:
+        path = backup.create(cfg, config.config_path(args.config), Path(args.to) if args.to else None)
+    except (backup.BackupError, OSError, sqlite3.Error) as exc:
+        print(f"Backup failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Wrote {path}")
+    print("It holds the session secret and any upload token: keep it as private as the server.")
+    return 0
+
+
+def cmd_restore(args, cfg) -> int:
+    from . import backup
+    archive = Path(args.archive)
+    try:
+        m = backup.inspect(archive)
+    except backup.BackupError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    made = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(m.get("created", 0)))
+    print(f"Backup of {m.get('host')} from {made}, DaemonSight {m.get('version')}, holding "
+          f"{', '.join(m.get('files', []))}.")
+    if m.get("host") != cfg.host_id:
+        print(f"Note: this install's host_id is {cfg.host_id}, not {m.get('host')}.")
+    try:
+        done = backup.restore(cfg, archive, config.config_path(args.config), db_only=args.db_only)
+    except backup.BackupError as exc:
+        print(f"Not restored: {exc}.", file=sys.stderr)
+        if "holds" in str(exc):
+            print("Stop the collector (sudo systemctl stop daemonsight-collector) or the hub container "
+                  "first.", file=sys.stderr)
+        return 1
+    for line in done:
+        print(f"Restored {line}")
+    print("Each replaced file was kept as <name>.before-restore. Start the collector or hub again.")
     return 0
 
 
@@ -174,6 +233,11 @@ def main(argv: list[str] | None = None) -> int:
     once = sub.add_parser("collect-once", help="run sources once and print JSON")
     once.add_argument("source", nargs="*", help="limit to these sources")
     sub.add_parser("set-upload-token", help="save the token this host uses to upload to a hub (root)")
+    bk = sub.add_parser("backup", help="write a backup of the database, config and secrets")
+    bk.add_argument("--to", help="folder for the backup (default: [backup] dir)")
+    rs = sub.add_parser("restore", help="restore a backup (stop the collector or hub first)")
+    rs.add_argument("archive")
+    rs.add_argument("--db-only", action="store_true", help="restore only the database")
     hubp = sub.add_parser("hub", help="manage the hosts that upload to this hub")
     hubsub = hubp.add_subparsers(dest="hub_command", required=True)
     add = hubsub.add_parser("add-host", help="create a host and print its token")
@@ -194,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         "collector": cmd_collector, "web": cmd_web, "set-password": cmd_set_password,
         "init": cmd_init, "collect-once": cmd_collect_once,
         "set-upload-token": cmd_set_upload_token, "hub": cmd_hub,
+        "backup": cmd_backup, "restore": cmd_restore,
     }[args.command]
     return handler(args, cfg)
 

@@ -41,7 +41,7 @@ def _safe_next(value: str | None) -> str:
     return "/"
 
 
-def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
+def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | None = None) -> FastAPI:
     if secret is None:
         secret = Path(cfg.web.secret_file).read_text().strip()
     if len(secret) < 32:
@@ -51,7 +51,7 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app):
-        task = asyncio.create_task(_hub_chores(hub_conn, cfg)) if hub_conn is not None else None
+        task = asyncio.create_task(_hub_chores(hub_conn, cfg, config_file)) if hub_conn is not None else None
         yield
         if task:
             task.cancel()
@@ -241,17 +241,23 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
     return app
 
 
-async def _hub_chores(conn, cfg: Config) -> None:
-    """Every minute, flag hosts that stopped reporting. Every hour, drop
-    metrics older than metrics_retention_hours."""
+async def _hub_chores(conn, cfg: Config, config_file: Path | None) -> None:
+    """Every minute, flag hosts that stopped reporting. Every hour, apply
+    [retention] to every host's rows. Backups run on their own schedule."""
     last_prune = 0.0
     while True:
         now = time.time()
         try:
             hub.check_silent(conn, now)
             if now - last_prune > 3600:
-                hub.prune(conn, now, cfg.collector.metrics_retention_hours)
+                r = cfg.retention
+                db.prune(conn, now, cfg.metrics_hours, r.events_days, r.resolved_findings_days)
                 last_prune = now
+            if config_file is not None:
+                from .. import backup
+                path = await asyncio.to_thread(backup.scheduled, cfg, config_file)
+                if path:
+                    log.info("backup written to %s", path)
         except Exception:
             log.exception("hub housekeeping failed")
         await asyncio.sleep(60)

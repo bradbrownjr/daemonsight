@@ -7,9 +7,16 @@ data_dir = "/data"
 # Log lines, kept in the data folder so they outlive the container.
 log_file = "/data/daemonsight.log"
 
-[collector]
-# How long the hub keeps metric points (charts). Events and findings stay.
-metrics_retention_hours = 48
+[retention]
+# How long the hub keeps each host's history. 0 keeps it for good.
+metrics_hours = 48            # chart points, about one a second per host
+events_days = 0               # "Recent changes"
+resolved_findings_days = 0    # findings that have cleared
+
+[backup]
+# A backup of the database, config and secrets in /data/backups.
+interval_hours = 24           # 0 turns scheduled backups off
+keep = 7
 
 [web]
 # All addresses inside the container. Publish the port to a LAN address

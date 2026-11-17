@@ -137,6 +137,19 @@ them by hand:
 nginx-http-auth = ["nginx.service"]
 ```
 
+### How long history is kept
+
+```toml
+[retention]
+metrics_hours = 48            # chart points, about one a second per host
+events_days = 0               # "Recent changes"; 0 keeps them for good
+resolved_findings_days = 0    # findings that have cleared; open ones always stay
+```
+
+On a host the collector prunes its own rows every hour. On a hub, the hub's
+settings apply to every host, whatever each host keeps itself. Raw metric
+points add up: 48 hours is roughly 200,000 rows per host.
+
 ### Web UI links
 
 Each card has an (i) button saying where its data came from. To add a link to
@@ -150,6 +163,60 @@ caddy = "https://router.example.lan/ui/caddy/reverse_proxy"
 Sources: `system`, `systemd`, `ports`, `docker`, `caddy`, `fail2ban`,
 `firewall`.
 
+## Back up and restore
+
+A backup is one `.tar.gz` holding a consistent copy of the database (taken
+while the collector or hub keeps running), the config file, the password
+hash, the session secret and any upload token. Only its owner can read it.
+Keep copies as private as the server: the secret and token are live.
+
+**Scheduled:** the collector on a host, or the hub, writes one every 24
+hours to `backups` in the data folder and keeps the newest seven:
+
+```toml
+[backup]
+dir = ""             # default: <data_dir>/backups
+interval_hours = 24  # 0 turns scheduled backups off
+keep = 7
+```
+
+On Unraid that folder is inside appdata, so an appdata backup copies it off
+the server. On a host, copy `/var/lib/daemonsight/backups` somewhere else
+the same way you back up the rest of the server.
+
+**Now:**
+
+```bash
+sudo daemonsight backup                         # on a host
+docker exec daemonsight daemonsight backup      # on the hub
+```
+
+**Restore.** Stop the collector or the hub first; the restore refuses
+while either holds the database. It checks the archive and the database
+before replacing anything, and keeps each file it replaces as
+`<name>.before-restore`.
+
+On a host:
+
+```bash
+sudo systemctl stop daemonsight-collector
+sudo daemonsight restore /var/lib/daemonsight/backups/daemonsight-vps-20261117-030000.tar.gz
+sudo systemctl start daemonsight-collector
+sudo systemctl restart daemonsight-web
+```
+
+On the hub:
+
+```bash
+docker stop daemonsight
+docker run --rm -v /mnt/user/appdata/daemonsight:/data ghcr.io/bradbrownjr/daemonsight:edge \
+  restore /data/backups/daemonsight-hub-20261117-030000.tar.gz
+docker start daemonsight
+```
+
+Add `--db-only` to bring back the history but keep the current config,
+password and secret.
+
 ## Run a hub
 
 A hub is one more install that shows every host on one page. Each host
@@ -162,8 +229,9 @@ lists what protects it.
 The container runs as uid 10001 with a read-only filesystem, and keeps
 everything that changes in `/data`: its config, password, session secret,
 database (every host's history) and log file (`daemonsight.log`). All of it
-survives restarts, rebuilds and image updates. The hub keeps metric points
-for `metrics_retention_hours` (48) and events and findings for good.
+survives restarts, rebuilds and image updates. `[retention]` sets how
+long history stays, and the hub writes a backup to `/data/backups` every
+day (see "Back up and restore").
 
 Create the folder with the right owner first, then start the container. On
 Unraid, the template in `deploy/unraid/daemonsight.xml` sets the same

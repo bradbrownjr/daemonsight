@@ -143,8 +143,9 @@ def diff_events(source: str, prev: dict | None, cur: dict | None, eph: tuple[int
 
 
 class Collector:
-    def __init__(self, cfg: Config, sources: list[Source] | None = None):
+    def __init__(self, cfg: Config, sources: list[Source] | None = None, config_file=None):
         self.cfg = cfg
+        self.config_file = config_file
         self.host = cfg.host_id
         self.conn = db.connect_writer(cfg.db_path)
         self.sources = sources if sources is not None else build_sources(cfg)
@@ -168,7 +169,9 @@ class Collector:
                                      detail=e["detail"], link=e["link"])
             self._evaluate(ts)
             if ts - self._last_prune > 3600:
-                db.prune_metrics(self.conn, self.host, ts - self.cfg.collector.metrics_retention_hours * 3600)
+                r = self.cfg.retention
+                db.prune(self.conn, ts, self.cfg.metrics_hours, r.events_days, r.resolved_findings_days,
+                         host=self.host)
                 self._last_prune = ts
 
     def _evaluate(self, ts: float) -> None:
@@ -202,6 +205,8 @@ class Collector:
             loop.add_signal_handler(sig, stop.set)
         tasks = [asyncio.create_task(self._loop(s), name=f"source-{s.name}") for s in self.sources]
         log.info("collector started for host %s with %d sources", self.host, len(tasks))
+        if self.config_file is not None:
+            tasks.append(asyncio.create_task(_backups(self.cfg, self.config_file, stop), name="backup"))
         if self.cfg.upload.url:
             longest = max((s.interval for s in self.sources), default=60)
             uploader = Uploader(self.cfg, self.conn, self._lock, self.eph, longest)
@@ -214,3 +219,20 @@ class Collector:
             await s.close()
         self.conn.close()
         log.info("collector stopped")
+
+
+async def _backups(cfg: Config, config_file, stop: asyncio.Event) -> None:
+    """Make a backup whenever one is due ([backup] interval_hours), checking
+    every ten minutes. The copy runs in a thread, off the event loop."""
+    from .. import backup
+    while not stop.is_set():
+        try:
+            path = await asyncio.to_thread(backup.scheduled, cfg, config_file)
+            if path:
+                log.info("backup written to %s", path)
+        except Exception as exc:
+            log.warning("backup failed: %s", exc)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=600)
+        except asyncio.TimeoutError:
+            pass

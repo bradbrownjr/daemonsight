@@ -45,7 +45,8 @@ class CollectorConfig:
     nft: str = "nft"
     service_patterns: list[str] = field(default_factory=lambda: ["*.service"])
     log_tail_lines: int = 100
-    metrics_retention_hours: int = 48
+    # Old name for [retention] metrics_hours; still read when set.
+    metrics_retention_hours: int | None = None
 
 
 @dataclass
@@ -84,6 +85,23 @@ class HubConfig:
 
 
 @dataclass
+class RetentionConfig:
+    """How long the database keeps history: on a host its collector prunes,
+    on a hub the hub prunes every host's rows. 0 keeps for good."""
+    metrics_hours: int = 48          # chart points: about 1 a second per host
+    events_days: int = 0             # "Recent changes"
+    resolved_findings_days: int = 0  # findings that have cleared
+
+
+@dataclass
+class BackupConfig:
+    """Scheduled backups, made by the collector on a host and by the hub."""
+    dir: str = ""                    # default: <data_dir>/backups
+    interval_hours: int = 24         # 0 turns scheduled backups off
+    keep: int = 7
+
+
+@dataclass
 class Thresholds:
     disk_percent: float = 90.0
     memory_percent: float = 90.0
@@ -104,9 +122,20 @@ class Config:
     exposure: ExposureConfig = field(default_factory=ExposureConfig)
     upload: UploadConfig = field(default_factory=UploadConfig)
     hub: HubConfig = field(default_factory=HubConfig)
+    retention: RetentionConfig = field(default_factory=RetentionConfig)
+    backup: BackupConfig = field(default_factory=BackupConfig)
     # Web UIs to link from each source's panel, e.g. {caddy = "https://...",
     # fail2ban = "..."}; later also opnsense, unraid and ionos.
     links: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def metrics_hours(self) -> int:
+        old = self.collector.metrics_retention_hours
+        return old if old is not None else self.retention.metrics_hours
+
+    @property
+    def backup_dir(self) -> Path:
+        return Path(self.backup.dir) if self.backup.dir else Path(self.data_dir) / "backups"
 
     @property
     def db_path(self) -> Path:
@@ -127,9 +156,13 @@ def _apply(obj, values: dict, section: str) -> None:
             setattr(obj, key, value)
 
 
+def config_path(path: str | os.PathLike | None = None) -> Path:
+    return Path(path or os.environ.get("DAEMONSIGHT_CONFIG") or DEFAULT_PATH)
+
+
 def load(path: str | os.PathLike | None = None) -> Config:
     cfg = Config()
-    candidate = Path(path or os.environ.get("DAEMONSIGHT_CONFIG") or DEFAULT_PATH)
+    candidate = config_path(path)
     if candidate.exists():
         with candidate.open("rb") as fh:
             _apply(cfg, tomllib.load(fh), "")

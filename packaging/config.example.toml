@@ -43,7 +43,7 @@
 # service_patterns = ["*.service"]
 # Container log lines kept for the Logs view (secrets are masked).
 # log_tail_lines = 100
-# metrics_retention_hours = 48
+# metrics_retention_hours: old name for [retention] metrics_hours
 
 [exposure]
 # Ports meant to be reachable from the internet. Any other port listening on
@@ -69,6 +69,21 @@
 # disk_percent = 90
 # memory_percent = 90
 # memory_minutes = 15
+
+[retention]
+# How long this install keeps history. On a host the collector prunes its
+# own rows; on a hub the hub prunes every host's. 0 keeps it for good.
+# metrics_hours = 48            # chart points, about one a second
+# events_days = 0               # "Recent changes"
+# resolved_findings_days = 0    # findings that have cleared (open ones stay)
+
+[backup]
+# Scheduled backups (docs/INSTALL.md, "Back up and restore"): the database,
+# this file, the password, the session secret and any upload token, in one
+# owner-only .tar.gz. Made by the collector on a host and by the hub.
+# dir = ""                      # default: <data_dir>/backups
+# interval_hours = 24           # 0 turns scheduled backups off
+# keep = 7
 
 [upload]
 # Send everything this host collects to a hub (docs/INSTALL.md, "Run a hub").

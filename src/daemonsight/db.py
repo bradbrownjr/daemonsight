@@ -165,6 +165,21 @@ def prune_metrics(conn, host: str, before: float) -> None:
     conn.execute("DELETE FROM metrics WHERE host = ? AND ts < ?", (host, before))
 
 
+def prune(conn, now: float, metrics_hours: float, events_days: float, resolved_findings_days: float,
+          host: str | None = None) -> None:
+    """Apply the retention settings, for one host or (host=None, on a hub)
+    every host. A value of 0 keeps that kind of row for good. Open findings
+    are never pruned."""
+    where, args = ("host = ? AND ", [host]) if host is not None else ("", [])
+    if metrics_hours > 0:
+        conn.execute(f"DELETE FROM metrics WHERE {where}ts < ?", (*args, now - metrics_hours * 3600))
+    if events_days > 0:
+        conn.execute(f"DELETE FROM events WHERE {where}ts < ?", (*args, now - events_days * 86400))
+    if resolved_findings_days > 0:
+        conn.execute(f"DELETE FROM findings WHERE {where}resolved_at IS NOT NULL AND resolved_at < ?",
+                     (*args, now - resolved_findings_days * 86400))
+
+
 def add_event(conn, host: str, ts: float, kind: str, title: str, *, severity: str | None = None,
               detail: str | None = None, link: str | None = None) -> None:
     conn.execute(
