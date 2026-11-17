@@ -135,9 +135,9 @@ def diff_events(source: str, prev: dict | None, cur: dict | None, eph: tuple[int
             return [(c["family"], c["table"], c["chain"], c["default"], c["accept_all"],
                      sorted((o["proto"], o["from"], o["to"], tuple(o["conditions"])) for o in c["open"]))
                     for c in d.get("input", [])]
-        if shape(prev) != shape(cur):
+        if shape(prev) != shape(cur) or prev.get("forwards") != cur.get("forwards"):
             events.append({"kind": "firewall_changed", "severity": "medium",
-                           "title": "Firewall input rules changed", "detail": None, "link": "/exposure"})
+                           "title": "Firewall rules changed", "detail": None, "link": "/exposure"})
     return events
 
 

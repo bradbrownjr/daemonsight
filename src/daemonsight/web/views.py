@@ -313,9 +313,9 @@ def container_logs(conn, cfg: Config, name: str) -> dict | None:
 # --- phase 2 pages ---------------------------------------------------------
 
 FW_BADGE = {"open": "bg-red-lt", "unfiltered": "bg-orange-lt", "restricted": "bg-yellow-lt",
-            "blocked": "bg-green-lt", "unknown": "bg-secondary-lt"}
+            "blocked": "bg-green-lt", "unknown": "bg-secondary-lt", "forwarded": "bg-purple-lt"}
 FW_LABEL = {"open": "Allowed", "unfiltered": "No filtering", "restricted": "Restricted",
-            "blocked": "Blocked", "unknown": "Unknown"}
+            "blocked": "Blocked", "unknown": "Unknown", "forwarded": "Forwarded away"}
 
 
 def _snap_data(snaps: dict, name: str) -> dict | None:
@@ -363,7 +363,7 @@ def exposure(conn, cfg: Config) -> dict:
         if r["scope"] == "loopback":
             continue
         where = rules.reach(r, pub)
-        fw = rules.firewall_state(snaps, r["proto"], r["port"])
+        fw = rules.firewall_state(snaps, r["proto"], r["port"], r["addresses"])
         owner = r.get("owner") or {}
         unit = owner.get("id") if owner.get("kind") == "unit" else None
         internet = (r["proto"], r["port"]) in public_keys
@@ -395,7 +395,13 @@ def exposure(conn, cfg: Config) -> dict:
         "public_ips": [a["ip"] for a in ports.get("addresses", []) if a.get("scope") == "public"],
         "listeners": rows, "docker": docker,
         "firewall": {"chains": chains, "docker_nat": (fwdata or {}).get("docker_nat", False),
-                     "tables": (fwdata or {}).get("tables", [])},
+                     "tables": (fwdata or {}).get("tables", []), "backend": (fwdata or {}).get("backend"),
+                     "duplicates": (fwdata or {}).get("duplicates", 0),
+                     "forwards": [{"proto": f["proto"], "ports": f["ports"], "to": f["to"],
+                                   "family": "IPv6" if f["family"] == "ip6" else "IPv4",
+                                   "conditions": ", ".join(f["conditions"]), "copies": f["copies"],
+                                   "wide": sum(hi - lo + 1 for lo, hi in f["ranges"]) > 1000}
+                                  for f in (fwdata or {}).get("forwards", [])]},
         "firewall_state": _source_state(snaps, "firewall"),
         "ports_state": _source_state(snaps, "ports"),
         "expected": sorted(expected),

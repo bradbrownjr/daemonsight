@@ -387,3 +387,68 @@ def test_caddy_same_host_two_servers_vars_root_and_conditions():
     h = {x["kind"]: x for x in sites[1]["handlers"]}
     assert h["proxy"]["when"] == ["header_regexp"]
     assert h["files"]["root"] == "/srv/site/dist" and h["files"]["when"] == []
+
+
+# ---- iptables-save (shape of a real nf_tables-backend VPS) -------------------
+
+def vps_firewall():
+    from daemonsight.collector.sources.firewall import parse_iptables_save, summarize_parts
+    d = FIX / "iptables"
+    return summarize_parts([parse_iptables_save((d / "vps-v4.txt").read_text(), "ip"),
+                            parse_iptables_save((d / "vps-v6.txt").read_text(), "ip6")], "iptables-save")
+
+
+def test_iptables_save_summary():
+    fw = vps_firewall()
+    v4 = [c for c in fw["input"] if c["family"] == "ip"][0]
+    assert v4["policy"] == "accept" and v4["default"] == "accept"
+    assert {(o["proto"], o["from"]) for o in v4["open"]} == {("tcp", 80), ("tcp", 443), ("tcp", 8000)}
+    fwd = {f["proto"]: f for f in fw["forwards"]}
+    assert fwd["tcp"]["ports"] == "all except 22,80,443,2083,8001" and fwd["tcp"]["copies"] == 2
+    assert fwd["udp"]["ports"] == "all except 51820" and fwd["tcp"]["conditions"] == ["in ens6"]
+    assert fw["duplicates"] == 5 and fw["odd_names"] == ["$1"]
+    assert port_verdict(fw, "tcp", 3306)["state"] == "forwarded"
+    assert port_verdict(fw, "tcp", 8001)["state"] == "unfiltered"
+    assert port_verdict(fw, "tcp", 8001, "ip6")["state"] == "unfiltered"
+
+
+def test_iptables_drop_policy_with_fail2ban_chains():
+    from daemonsight.collector.sources.firewall import parse_iptables_save, summarize_parts
+    text = "\n".join([
+        "*filter", ":INPUT DROP [0:0]", ":f2b-sshd - [0:0]",
+        "-A INPUT -i lo -j ACCEPT",
+        "-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+        "-A INPUT -p tcp -m multiport --dports 22 -j f2b-sshd",
+        "-A INPUT -p tcp -m tcp --dport 22 -j ACCEPT",
+        "-A INPUT -s 10.0.0.0/8 -p tcp -m multiport --dports 8000:8999 -j ACCEPT",
+        "-A f2b-sshd -s 203.0.113.9/32 -j REJECT --reject-with icmp-port-unreachable",
+        "-A f2b-sshd -j RETURN", "COMMIT"])
+    fw = summarize_parts([parse_iptables_save(text, "ip")], "iptables-save")
+    assert fw["filtering"] and fw["duplicates"] == 0
+    assert port_verdict(fw, "tcp", 22)["state"] == "open"
+    assert port_verdict(fw, "tcp", 8443)["state"] == "restricted"
+    assert port_verdict(fw, "tcp", 9000)["state"] == "blocked"
+
+
+def test_vps_findings(cfg):
+    snaps = {
+        "firewall": snap("firewall", vps_firewall()),
+        "ports": snap("ports", {"listeners": [
+            listener(22, unit="ssh.service", process="sshd", addresses=("0.0.0.0", "::")),
+            listener(8001, unit="ectlogger.service", process="uvicorn", addresses=("0.0.0.0",)),
+            listener(3306, unit="mariadb.service", process="mariadbd", addresses=("0.0.0.0",)),
+        ], "owners_known": True, "addresses": [
+            {"nic": "ens6", "ip": "203.0.113.10", "scope": "public"},
+            {"nic": "ens6", "ip": "2001:db8::10", "scope": "public"}]}),
+    }
+    fs = {(f.rule, f.key): f for f in findings.evaluate(snaps, cfg)}
+    fwd = fs[("expose.forward_all", "ip tcp 10.99.0.2")]
+    assert fwd.severity == "high" and fwd.title.startswith("All TCP ports except 22,80,443,2083,8001")
+    assert ("expose.forward_all", "ip udp 10.99.0.2") in fs
+    assert fs[("firewall.default_accept", "ip")].severity == "medium"
+    assert "80, 443, 8000" in fs[("firewall.default_accept", "ip")].detail
+    assert ("firewall.default_accept", "ip6") in fs
+    assert "$1" in fs[("firewall.duplicate_rules", "dups")].detail
+    # 8001 bypasses Caddy when bound to 0.0.0.0; 3306 is forwarded away, so not local exposure.
+    assert fs[("expose.unexpected", "8001/tcp")].severity == "critical"
+    assert ("expose.unexpected", "3306/tcp") not in fs

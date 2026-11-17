@@ -45,7 +45,7 @@
 <section class="card mb-4" id="firewall" aria-labelledby="fw-title" data-section{% if not v.firewall.chains %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="fw-title">Firewall input chains</h2>
-    <div class="card-actions text-secondary">nft -j list ruleset</div>
+    <div class="card-actions text-secondary">{{ v.firewall.backend or '' }}{% if v.firewall.duplicates %} · <span class="text-orange">{{ v.firewall.duplicates }} duplicate rules</span>{% endif %}</div>
   </div>
   {% if v.firewall_state.state != 'ok' %}
   <div class="card-body text-secondary">{{ v.firewall_state.reason }}</div>
@@ -70,6 +70,35 @@
   {% endif %}
   {% endif %}
   <div class="card-body text-secondary ds-nomatch">No chains match the filter.</div>
+</section>
+
+<section class="card mb-4" id="forwards" aria-labelledby="fwd-title" data-section{% if not v.firewall.forwards %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="fwd-title">Port forwards (DNAT)</h2>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.firewall.forwards|length }} total</div>
+  </div>
+  {% if not v.firewall.forwards %}
+  <div class="card-body text-secondary">No port forwards.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="forwards">
+      <thead><tr><th data-sort="text">Family</th><th data-sort="text">Protocol</th><th data-sort="text">Ports</th><th data-sort="text">Sent to</th><th data-sort="text">When</th><th data-sort="num">Copies</th></tr></thead>
+      <tbody>
+        {% for f in v.firewall.forwards %}
+        <tr data-row>
+          <td>{{ f.family }}</td>
+          <td>{{ f.proto }}</td>
+          <td class="font-monospace {{ 'text-red' if f.wide }}">{{ f.ports }}</td>
+          <td class="font-monospace">{{ f.to }}</td>
+          <td class="small">{{ f.conditions or 'always' }}</td>
+          <td>{{ f.copies }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No forwards match the filter.</div>
 </section>
 
 <section class="card" id="docker-published" aria-labelledby="dp-title" data-section{% if not v.docker %} data-empty{% endif %}>

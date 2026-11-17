@@ -6,7 +6,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Root: reads other users' sockets, the Docker socket and (later) fail2ban and nftables.
+# Root: reads other users' sockets, the Docker and fail2ban sockets, and the
+# firewall (iptables-save and nft need CAP_NET_ADMIN).
 ExecStart=/opt/daemonsight/venv/bin/daemonsight collector
 UMask=0027
 Restart=on-failure

@@ -62,7 +62,7 @@ capabilities each source needs is listed under "To verify".
 | Docker | Engine API on `/var/run/docker.sock`: container list, inspect (`State.Health`, `State.OOMKilled`, port bindings), logs, one-shot stats | 30 s | The client sends GET only. A socket proxy is needed only if the collector itself runs in a container; Tecnativa's blocks POST by default. [3] |
 | Caddy | `GET /config/` for servers and routes, `GET /reverse_proxy/upstreams` for `address`, `num_requests`, `fails` | 60 s | Default `localhost:2019`; also supports a Unix socket, which Caddy recommends. On TCP the admin API checks the Host header (admin.go `checkHost`); on a Unix socket it doesn't. [4] |
 | fail2ban | The server's control socket (`/var/run/fail2ban/fail2ban.sock`): `status`, `status <jail>`, `get <jail> logpath / journalmatch / bantime / findtime / maxretry / ignoreip / actions`, `get <jail> banip --with-time` | 60 s | Pickled Python values framed by `<F2B_END_COMMAND>`, read with an unpickler that accepts builtins only. See "Answered in phase 2". [5] |
-| Firewall | `nft -j list ruleset` | 5 min | JSON schema in libnftables-json(5). [6] Docker's NAT chains are how DaemonSight spots published ports that skip the input chain. |
+| Firewall | `iptables-save` and `ip6tables-save` when installed; `nft -j list ruleset` for native nft tables | 5 min | Input chains (default verdict, ports accepted, following jumps) and DNAT forwards. With iptables' nf_tables backend, nft shows extension matches such as multiport only as opaque `xt` expressions, so iptables-save is read for those tables. [6] |
 | CVEs, host | `trivy rootfs --scanners vuln --format json /` with `--skip-dirs` for `/proc`, `/sys`, `/var/lib/docker` | 6 h | Without `--pkg-types os` it also finds language packages (Python venvs, `node_modules`) of apps on the host. [7][8] |
 | CVEs, images | `trivy image --format json <image>` for each running image | 6 h | Fields used: `VulnerabilityID`, `PkgName`, `InstalledVersion`, `FixedVersion`, `Status`, `Severity`. [8] |
 | CVEs, cross-check | `debsecan --suite <codename> --only-fixed --format detail` | 6 h | Debian's own view of fixable packages. Needs network access. [9] |
@@ -82,6 +82,9 @@ DaemonSight knows when it first appeared and when it cleared.
 |------|------------|----------|
 | `expose.unexpected` | A listener on a public address is not in the host's expected list | Critical if the firewall lets it through, else Medium |
 | `expose.docker_bypass` | A Docker port is published on 0.0.0.0 or :: | Critical |
+| `expose.forward_all` | A DNAT rule forwards more than 1000 ports (for example "all except 22, 80, 443") to another host | High |
+| `firewall.default_accept` | A host with a public address has no input chain that drops by default, per IPv4 and IPv6 | Medium |
+| `firewall.duplicate_rules` | The same rule appears more than once (a script adding rules on every run) | Low |
 | `route.upstream_down` | A Caddy upstream's dial address has no listener | Medium |
 | `route.upstream_failing` | An upstream's `fails` is above zero (Caddy only counts fails with passive health checks on) | Medium |
 | `jail.uncovered` | A public service (listener or Caddy host) has no jail reading its logs | High |
@@ -245,13 +248,14 @@ handshake in a set time, a gateway down, a port forward to nothing.
 
 - **fail2ban: socket, not CLI text.** fail2ban 1.1.0's client and server exchange `pickle.dumps(value) + b"<F2B_END_COMMAND>"` (client/csocket.py, server/asyncserver.py); replies are `(0, result)` or `(1, exception)` (server/transmitter.py); `IPAddr.__reduce__` pickles addresses as `str` (server/ipdns.py). So results are builtins. The collector's unpickler accepts only builtin data types and exceptions, plus fail2ban's own exception names as empty stand-ins. Tested against a real `fail2ban-server` run unprivileged; the raw replies are kept in `tests/fixtures/fail2ban-1.1.0.json`. Debian 12's 1.0.2 uses the same transmitter commands but hasn't been tested.
 - **Caddy JSON** field names come from the v2.11.9 source (routes.go, subroute.go, reverseproxy.go, matchers.go, ip_matchers.go). Tests parse Caddy's own adapter test cases (`tests/fixtures/caddy/`), which pair a Caddyfile with the JSON Caddy produces.
+- **iptables-save, not only nft.** A Debian 12 VPS with iptables 1.8.9 (nf_tables backend) had no `nft` binary at all. Its ruleset is read with `iptables-save`; the test fixture `tests/fixtures/iptables/vps-v4.txt` has the same shape with documentation addresses.
 - **A wildcard bind is only "internet" when the host has a public address.** On a LAN host such as an LXC behind NAT, 0.0.0.0 means reachable from the LAN.
 
 ## To verify
 
 - Whether `nft list ruleset` needs `CAP_NET_ADMIN`. nft(8) doesn't say.
 - Which capabilities could replace full root for the collector (likely `CAP_DAC_READ_SEARCH`, `CAP_SYS_PTRACE`, `CAP_NET_ADMIN`, plus Docker socket access).
-- The nftables summary against real `nft -j list ruleset` output (written from libnftables-json(5) only), including iptables-nft rulesets from Docker and ufw.
+- The nft JSON reader against real `nft -j list ruleset` output from a host with native nft tables (written from libnftables-json(5) only).
 - The Caddy source against the VPS's Caddy.
 - fail2ban 1.0.2 on Debian 12.
 - The Docker source on a real Docker host (alpha or the VPS).

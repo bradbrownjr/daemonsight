@@ -1,0 +1,21 @@
+# ip6tables-save from the same VPS: Docker chains left behind, input open.
+*filter
+:INPUT ACCEPT [950497:66534844]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [953836:66709384]
+:DOCKER - [0:0]
+:DOCKER-USER - [0:0]
+:DOCKER-FORWARD - [0:0]
+-A FORWARD -j DOCKER-USER
+-A FORWARD -j DOCKER-FORWARD
+-A DOCKER-USER -j RETURN
+COMMIT
+*nat
+:PREROUTING ACCEPT [0:0]
+:INPUT ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+:DOCKER - [0:0]
+-A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER
+-A OUTPUT ! -d ::1/128 -m addrtype --dst-type LOCAL -j DOCKER
+COMMIT

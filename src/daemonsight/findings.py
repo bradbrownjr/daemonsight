@@ -174,14 +174,23 @@ def public_listeners(snaps, ctx) -> list[dict]:
     return out
 
 
-def firewall_state(snaps, proto: str, port: int, ipv6: bool = False) -> dict:
+OPENNESS = {"open": 4, "unfiltered": 4, "unknown": 3, "restricted": 2, "blocked": 1, "forwarded": 0}
+
+
+def firewall_state(snaps, proto: str, port: int, addresses: list[str] | None = None) -> dict:
+    """The firewall's verdict for a listener, checking IPv6 too when the
+    listener binds an IPv6 address; the more open family wins."""
     from .collector.sources.firewall import port_verdict
     snap = snaps.get("firewall")
     if snap is None or not snap.data:
         return {"state": "unknown", "why": "Firewall not read yet"}
     if snap.data.get("available") is False:
-        return {"state": "unfiltered", "why": snap.data.get("reason") or "No nftables"}
-    return port_verdict(snap.data, proto, port, "ip6" if ipv6 else "ip")
+        return {"state": "unfiltered", "why": snap.data.get("reason") or "No firewall tools"}
+    families = ["ip"]
+    if any(":" in a for a in addresses or []):
+        families = ["ip6"] if all(":" in a for a in addresses) else ["ip", "ip6"]
+    verdicts = [port_verdict(snap.data, proto, port, f) for f in families]
+    return max(verdicts, key=lambda v: OPENNESS.get(v["state"], 0))
 
 
 def expose_unexpected(snaps, cfg: Config, ctx) -> list[Finding]:
@@ -191,8 +200,10 @@ def expose_unexpected(snaps, cfg: Config, ctx) -> list[Finding]:
         key = f"{r['port']}/{r['proto']}"
         if key in expected:
             continue
-        fw = firewall_state(snaps, r["proto"], r["port"])
+        fw = firewall_state(snaps, r["proto"], r["port"], r["addresses"])
         who = r.get("process") or "an unknown process"
+        if fw["state"] == "forwarded":
+            continue  # traffic to that port goes to another host; see expose.forward_all
         if fw["state"] in ("open", "unfiltered"):
             sev, verdict = "critical", "and the firewall lets it through"
         elif fw["state"] == "unknown":
@@ -205,6 +216,60 @@ def expose_unexpected(snaps, cfg: Config, ctx) -> list[Finding]:
             f"exposure.expected_public. Bind it to 127.0.0.1, or add it to the list if it is meant to be public.",
             "/exposure#listeners"))
     return out
+
+
+def expose_forward_all(snaps, cfg, ctx) -> list[Finding]:
+    data = _data(snaps, "firewall")
+    out = []
+    for f in (data or {}).get("forwards", []):
+        count = sum(hi - lo + 1 for lo, hi in f["ranges"])
+        if count <= 1000:
+            continue
+        proto = f["proto"].upper() if f["proto"] != "all" else "TCP and UDP"
+        where = f" arriving {', '.join(f['conditions'])}" if f["conditions"] else ""
+        out.append(Finding(
+            "expose.forward_all", f"{f['family']} {f['proto']} {f['to']}", "high",
+            (f"All {proto} ports except {f['ports'][len('all except '):]} are forwarded to {f['to']}"
+             if f["ports"].startswith("all except ") else f"{proto} ports {f['ports']} are forwarded to {f['to']}"),
+            f"Every {proto} port{where} except the ones listed goes to {f['to']} ({count} ports). Anything "
+            f"that host listens on, now or later, is reachable from the internet through this one. "
+            f"Forward only the ports it needs.", "/exposure#forwards"))
+    return out
+
+
+def firewall_default_accept(snaps, cfg, ctx) -> list[Finding]:
+    data, ports = _data(snaps, "firewall"), _data(snaps, "ports")
+    if not data or not ports:
+        return []
+    out = []
+    for family, label in (("ip", "IPv4"), ("ip6", "IPv6")):
+        has_public = any(a.get("scope") == "public" and (":" in a["ip"]) == (family == "ip6")
+                         for a in ports.get("addresses", []))
+        chains = [c for c in data.get("input", []) if c["family"] in (family, "inet")]
+        if not has_public or not chains or any(c["default"] == "drop" for c in chains):
+            continue
+        accepts = sorted({f"{o['from']}" for c in chains for o in c["open"]}, key=int)
+        note = (f" The ACCEPT rules for {', '.join(accepts)} change nothing while the default is accept."
+                if accepts else "")
+        out.append(Finding(
+            "firewall.default_accept", family, "medium", f"{label} input accepts all traffic by default",
+            f"This host has a public {label} address and no input chain drops by default, so every port "
+            f"listening on it is reachable.{note} Set the policy to drop after accepting the ports you need.",
+            "/exposure#firewall"))
+    return out
+
+
+def firewall_duplicates(snaps, cfg, ctx) -> list[Finding]:
+    data = _data(snaps, "firewall")
+    if not data or not data.get("duplicates"):
+        return []
+    odd = data.get("odd_names") or []
+    extra = (f" Some rules name the interface {', '.join(odd)} literally, which looks like a shell "
+             f"variable that was never filled in.") if odd else ""
+    return [Finding("firewall.duplicate_rules", "dups", "low",
+                    f"{data['duplicates']} firewall rules are duplicates",
+                    "The same rule appears more than once, usually because a script (a WireGuard PostUp, "
+                    "say) adds rules each time it runs without removing them." + extra, "/exposure#firewall")]
 
 
 def _local_listener(ports: dict, proto: str, port: int) -> bool:
@@ -320,7 +385,8 @@ def caddy_admin_tcp(snaps, cfg, ctx) -> list[Finding]:
 
 
 RULES = [svc_failed, ctr_down, expose_docker_bypass, sys_disk, sys_memory, source_errors,
-         expose_unexpected, route_upstream_down, route_upstream_failing, jail_uncovered,
+         expose_unexpected, expose_forward_all, firewall_default_accept, firewall_duplicates,
+         route_upstream_down, route_upstream_failing, jail_uncovered,
          jail_log_missing, caddy_admin_tcp]
 
 
