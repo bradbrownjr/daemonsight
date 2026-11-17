@@ -1,0 +1,39 @@
+# DaemonSight configuration. Every setting is optional; the values shown are
+# the defaults.
+
+# Name shown in the UI and stored with every record. Defaults to the hostname.
+# host_id = "vps1"
+
+# data_dir = "/var/lib/daemonsight"
+
+[web]
+# Keep this on loopback or a WireGuard address, never a public one.
+# listen = "127.0.0.1"
+# port = 8466
+
+# Proxies whose X-Forwarded-For is trusted, so logs and fail2ban see the real
+# client address. Caddy on the same host is 127.0.0.1.
+# trusted_proxies = ["127.0.0.1", "::1"]
+
+# Set true when the UI is only reached over HTTPS.
+# secure_cookies = false
+# session_hours = 12
+# password_file = "/etc/daemonsight/password"
+# secret_file = "/etc/daemonsight/secret"
+
+[collector]
+# Seconds between reads.
+# interval_system = 15
+# interval_systemd = 30
+# interval_ports = 60
+# interval_docker = 30
+# docker_socket = "/var/run/docker.sock"
+# service_patterns = ["*.service"]
+# Container log lines kept for the Logs view (secrets are masked).
+# log_tail_lines = 100
+# metrics_retention_hours = 48
+
+[thresholds]
+# disk_percent = 90
+# memory_percent = 90
+# memory_minutes = 15

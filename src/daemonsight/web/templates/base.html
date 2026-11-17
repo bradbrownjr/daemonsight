@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en" data-bs-theme="{{ theme }}" data-bs-theme-base="slate" data-bs-theme-primary="cyan">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0}'>
+  <title>{% block title %}DaemonSight{% endblock %}</title>
+  <link rel="icon" href="/static/favicon.ico">
+  <link rel="stylesheet" href="/static/vendor/tabler.min.css">
+  <link rel="stylesheet" href="/static/vendor/tabler-themes.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
+</head>
+<body>
+{% block body %}
+{% set host = v.host if v else None %}
+<header class="ds-header">
+  <div class="container-xl d-flex flex-wrap align-items-center gap-3 py-2">
+    <a href="/" class="ds-brand d-flex align-items-center gap-2 text-reset text-decoration-none">
+      <img src="/static/{{ 'logo-dark-256.png' if theme == 'dark' else 'logo-256.png' }}" alt="" width="36" height="36">
+      <span class="fw-bold fs-3">DaemonSight</span>
+    </a>
+    {% if host %}
+    <div class="ds-hostpill d-flex flex-wrap align-items-center gap-2">
+      <span class="status-dot {{ 'status-dot-animated status-green' if host.fresh else 'status-red' }}"></span>
+      <span class="fw-bold">{{ host.id }}</span>
+      <span class="text-secondary">{{ host.os or '' }}{% if host.uptime %} · up {{ host.uptime }}{% endif %}</span>
+    </div>
+    {% endif %}
+    <div class="ms-auto d-flex align-items-center gap-3">
+      {% if host %}<span class="text-secondary">{{ 'Collected ' ~ host.collected_ago if host.fresh else 'Collector not reporting · last ' ~ host.collected_ago }}</span>{% endif %}
+      <form method="post" action="/theme" class="m-0">
+        <input type="hidden" name="next" value="{{ path }}">
+        <button type="submit" class="btn btn-sm btn-ghost-secondary">{{ 'Light' if theme == 'dark' else 'Dark' }} mode</button>
+      </form>
+      <form method="post" action="/logout" class="m-0">
+        <button type="submit" class="btn btn-sm">Log out</button>
+      </form>
+    </div>
+  </div>
+  <nav aria-label="Sections" class="container-xl pb-2">
+    <ul class="nav nav-pills gap-1">
+      <li class="nav-item"><a class="nav-link{{ ' active' if page == 'overview' }}" {% if page == 'overview' %}aria-current="page"{% endif %} href="/">Overview</a></li>
+      <li class="nav-item"><a class="nav-link{{ ' active' if page == 'services' }}" {% if page == 'services' %}aria-current="page"{% endif %} href="/services">Services</a></li>
+    </ul>
+  </nav>
+</header>
+<main class="container-xl py-4">
+  {% if not v %}
+  <div class="alert alert-warning">No data yet. Start the collector: <code>systemctl start daemonsight-collector</code></div>
+  {% else %}
+  {% block content %}{% endblock %}
+  {% endif %}
+</main>
+<footer class="container-xl pb-4 text-secondary">DaemonSight {{ version }}</footer>
+{% endblock %}
+</body>
+</html>

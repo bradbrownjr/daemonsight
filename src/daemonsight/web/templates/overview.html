@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Overview · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }}{% if v.host.kernel %} · kernel {{ v.host.kernel }}{% endif %}{% if v.host.virt %} · {{ v.host.virt }}{% endif %}</div>
+  <h1 class="page-title">Overview</h1>
+</div>
+{% include "partials/overview.html" %}
+{% endblock %}

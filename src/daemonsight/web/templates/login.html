@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Log in · DaemonSight{% endblock %}
+{% block body %}
+<main class="ds-login container-tight py-6">
+  <div class="text-center mb-4">
+    <img src="/static/{{ 'logo-dark-256.png' if theme == 'dark' else 'logo-256.png' }}" alt="" width="96" height="96">
+    <h1 class="mt-2">DaemonSight</h1>
+  </div>
+  <div class="card card-md">
+    <div class="card-body">
+      {% if no_password %}
+      <div class="alert alert-warning mb-0">No password is set. On the server, run <code>sudo daemonsight set-password</code>.</div>
+      {% else %}
+      <form method="post" action="/login" autocomplete="off">
+        <input type="hidden" name="next" value="{{ next }}">
+        <div class="mb-3">
+          <label class="form-label" for="password">Password</label>
+          <input class="form-control{{ ' is-invalid' if error }}" type="password" id="password" name="password" required autofocus>
+          {% if error %}<div class="invalid-feedback">{{ error }}</div>{% endif %}
+        </div>
+        <button type="submit" class="btn btn-primary w-100">Log in</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</main>
+{% endblock %}

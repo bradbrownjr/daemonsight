@@ -1,0 +1,110 @@
+<div id="live" hx-get="/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-swap="outerHTML" hx-select="#live-data" hx-target="#live-data">
+<div id="live-data">
+{% if v %}
+<section class="card mb-4" id="containers" aria-labelledby="ctr-title">
+  <div class="card-header">
+    <h2 class="card-title" id="ctr-title">Containers</h2>
+    <div class="card-actions text-secondary">{{ v.containers|length }} total</div>
+  </div>
+  {% if v.docker_state.state == 'unavailable' %}
+  <div class="card-body text-secondary">{{ v.docker_state.reason }}</div>
+  {% elif not v.containers %}
+  <div class="card-body text-secondary">No containers.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr>
+        <th>Name</th><th>Image</th><th>State</th><th>Health</th><th>Restarts</th><th>CPU</th><th>Memory</th><th>Published</th><th><span class="visually-hidden">Logs</span></th>
+      </tr></thead>
+      <tbody>
+        {% for c in v.containers %}
+        <tr id="ctr-{{ c.name }}">
+          <td><strong>{{ c.name }}</strong></td>
+          <td class="font-monospace">{{ c.image }}</td>
+          <td><span class="badge {{ c.status_badge }}">{{ c.status }}{{ c.exit }}</span>{% if c.oom %} <span class="badge bg-red-lt">OOM</span>{% endif %}</td>
+          <td>{% if c.health_bad %}<span class="text-red">{{ c.health }}</span>{% else %}{{ c.health }}{% endif %}</td>
+          <td>{{ c.restarts }}<div class="text-secondary small">policy {{ c.policy }}</div></td>
+          <td>{{ c.cpu }}</td>
+          <td>{{ c.mem }}</td>
+          <td class="font-monospace">{% for p in c.ports %}<div class="{{ 'text-red' if p.wide }}">{{ p.text }}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
+          <td><button type="button" class="btn btn-sm" hx-get="/partials/logs/{{ c.name|urlencode }}" hx-target="#logs" hx-swap="outerHTML" aria-label="Show logs for {{ c.name }}">Logs</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+</div>
+</div>
+
+<div class="card mb-4"><div id="logs" class="card-body text-secondary">Choose Logs on a container to see its last lines.</div></div>
+
+<div id="live-units" hx-get="/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-select="#units-data" hx-target="#units-data" hx-swap="outerHTML">
+<div id="units-data">
+{% if v %}
+<section class="card mb-4" id="units" aria-labelledby="units-title">
+  <div class="card-header flex-wrap gap-2">
+    <h2 class="card-title" id="units-title">systemd services</h2>
+    <div class="btn-group" role="group" aria-label="Filter units">
+      {% for key, label in [('active', 'Active'), ('failed', 'Failed'), ('all', 'All')] %}
+      <a class="btn btn-sm{{ ' active' if v.unit_filter == key }}" href="/services?units={{ key }}#units" {% if v.unit_filter == key %}aria-current="true"{% endif %}>{{ label }}{% if key == 'failed' and v.unit_counts.get('failed') %} <span class="badge bg-red text-red-fg ms-1">{{ v.unit_counts.failed }}</span>{% endif %}</a>
+      {% endfor %}
+    </div>
+    <div class="card-actions text-secondary">{{ v.unit_counts.get('active', 0) }} active · {{ v.unit_counts.get('failed', 0) }} failed</div>
+  </div>
+  {% if v.systemd_state.state not in ('ok',) and not v.units %}
+  <div class="card-body text-secondary">{{ v.systemd_state.reason }}</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Unit</th><th>Active</th><th>Sub</th><th>Since</th><th>Restarts</th><th>Memory</th><th>CPU time</th></tr></thead>
+      <tbody>
+        {% for u in v.units %}
+        <tr id="unit-{{ u.name }}">
+          <td><strong>{{ u.name }}</strong><div class="text-secondary small">{{ u.description }}</div></td>
+          <td><span class="badge {{ u.badge }}">{{ u.active }}</span></td>
+          <td>{{ u.sub }}{% if u.result and u.result != 'success' %} <span class="text-secondary">({{ u.result }})</span>{% endif %}</td>
+          <td>{{ u.since }}</td>
+          <td>{{ u.restarts if u.restarts is not none else '—' }}</td>
+          <td>{{ u.memory }}</td>
+          <td>{{ u.cpu }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-secondary">No units match.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card" id="ports" aria-labelledby="ports-title">
+  <div class="card-header">
+    <h2 class="card-title" id="ports-title">Listening sockets</h2>
+    <div class="card-actions text-secondary">{{ v.listeners|length }} total</div>
+  </div>
+  {% if not v.owners_known %}
+  <div class="card-body border-bottom"><div class="alert alert-info m-0">The collector is not running as root, so it can't see which process owns sockets started by other users.</div></div>
+  {% endif %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Port</th><th>Bound to</th><th>Reach</th><th>Process</th><th>Owner</th></tr></thead>
+      <tbody>
+        {% for r in v.listeners %}
+        <tr>
+          <td class="font-monospace">{{ r.port }}</td>
+          <td class="font-monospace">{{ r.addresses }}</td>
+          <td><span class="badge {{ r.scope_badge }}">{{ r.scope }}</span></td>
+          <td>{{ r.process }}</td>
+          <td>{{ r.owner }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+</div>
+</div>

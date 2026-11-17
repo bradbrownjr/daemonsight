@@ -1,0 +1,12 @@
+<div id="logs" class="card-body border-top">
+  {% if logs %}
+  <div class="d-flex flex-wrap justify-content-between gap-2 mb-2">
+    <strong>Last lines · {{ logs.name }}</strong>
+    <span class="text-secondary">Collected {{ logs.collected }} · secrets masked</span>
+  </div>
+  <pre class="ds-logs">{% for line in logs.lines %}{{ line }}
+{% else %}(no output){% endfor %}</pre>
+  {% else %}
+  <div class="text-secondary">No logs for {{ name }}.</div>
+  {% endif %}
+</div>

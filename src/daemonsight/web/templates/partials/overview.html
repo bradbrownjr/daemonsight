@@ -1,0 +1,126 @@
+<div id="live" hx-get="/partials/overview" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+{% set t = v.tiles %}
+{% if t %}
+<section id="system" class="ds-tiles mb-4" aria-label="System health">
+  <div class="card card-sm"><div class="card-body">
+    <div class="subheader">CPU · {{ t.cpu.count }} vCPU</div>
+    <div class="d-flex align-items-baseline gap-2 mt-1">
+      <span class="h1 m-0">{{ '%.0f' % t.cpu.percent }}%</span>
+      <span class="text-secondary">load {{ t.cpu.load }}</span>
+    </div>
+    {% if t.cpu.spark %}
+    <svg class="ds-spark mt-2" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="2" points="{{ t.cpu.spark }}"></polyline></svg>
+    {% endif %}
+  </div></div>
+
+  <div class="card card-sm"><div class="card-body">
+    <div class="subheader">Memory</div>
+    <div class="d-flex align-items-baseline gap-2 mt-1">
+      <span class="h1 m-0">{{ '%.0f' % t.mem.percent }}%</span>
+      <span class="text-secondary">{{ t.mem.used }} of {{ t.mem.total }}</span>
+    </div>
+    <div class="progress progress-sm mt-3">
+      <div class="progress-bar {{ t.mem.level }} {{ t.mem.pct }}" role="progressbar" aria-label="Memory used {{ '%.0f' % t.mem.percent }}%"></div>
+    </div>
+  </div></div>
+
+  {% if t.disk %}
+  <div class="card card-sm"><div class="card-body">
+    <div class="subheader">Disk · {{ t.disk.mount }}</div>
+    <div class="d-flex align-items-baseline gap-2 mt-1">
+      <span class="h1 m-0">{{ '%.0f' % t.disk.percent }}%</span>
+      <span class="text-secondary">{{ t.disk.used }} of {{ t.disk.total }}</span>
+    </div>
+    <div class="progress progress-sm mt-3">
+      <div class="progress-bar {{ t.disk.level }} {{ t.disk.pct }}" role="progressbar" aria-label="Disk used {{ '%.0f' % t.disk.percent }}%"></div>
+    </div>
+    {% if t.disk.others %}<div class="text-secondary mt-2">{{ t.disk.others }} more filesystem{{ 's' if t.disk.others > 1 }}</div>{% endif %}
+  </div></div>
+  {% endif %}
+
+  {% if t.net %}
+  <div class="card card-sm"><div class="card-body">
+    <div class="subheader">Network · {{ t.net.nic }}</div>
+    <div class="d-flex align-items-baseline gap-2 mt-1">
+      <span class="h1 m-0">{{ t.net.rx }}</span>
+      <span class="text-secondary">in · {{ t.net.tx }} out</span>
+    </div>
+    {% if t.net.spark %}
+    <svg class="ds-spark mt-2" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="2" points="{{ t.net.spark }}"></polyline></svg>
+    {% endif %}
+  </div></div>
+  {% endif %}
+</section>
+{% endif %}
+
+<div class="ds-cols">
+  <section class="card ds-main-col" aria-labelledby="findings-title">
+    <div class="card-header">
+      <h2 class="card-title" id="findings-title">Findings</h2>
+      <div class="card-actions text-secondary">{{ v.findings|length }} open</div>
+    </div>
+    {% if v.findings %}
+    <div class="list-group list-group-flush">
+      {% for f in v.findings %}
+      {% set inner %}
+        <span class="badge ds-sev {{ f.badge }}">{{ f.label }}</span>
+        <div class="ds-min0">
+          <div class="fw-bold">{{ f.title }}</div>
+          <div class="text-secondary">{{ f.detail }}</div>
+          <div class="text-secondary small">Since {{ f.since }}</div>
+        </div>
+      {% endset %}
+      {% if f.link %}
+      <a href="{{ f.link }}" class="list-group-item list-group-item-action d-flex gap-3 align-items-start">{{ inner }}</a>
+      {% else %}
+      <div class="list-group-item d-flex gap-3 align-items-start">{{ inner }}</div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="card-body text-secondary">Nothing to report.</div>
+    {% endif %}
+  </section>
+
+  <div class="ds-side-col">
+    <section class="card" aria-labelledby="glance-title">
+      <div class="card-header"><h2 class="card-title" id="glance-title">At a glance</h2></div>
+      <div class="card-body">
+        <div class="datagrid">
+          {% for g in v.glance %}
+          <div class="datagrid-item">
+            <div class="datagrid-title">{{ g.title }}</div>
+            <div class="datagrid-content">{{ g.value }}{% if g.alert %} · <span class="text-red">{{ g.alert }}</span>{% endif %}</div>
+            {% if g.note %}<div class="text-secondary small">{{ g.note }}</div>{% endif %}
+          </div>
+          {% endfor %}
+          {% for name, s in v.sources.items() if s.state != 'ok' %}
+          <div class="datagrid-item">
+            <div class="datagrid-title">Source: {{ name }}</div>
+            <div class="datagrid-content text-secondary">{{ s.state }}{% if s.reason %} · {{ s.reason }}{% endif %}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="events-title">
+      <div class="card-header"><h2 class="card-title" id="events-title">Recent changes</h2></div>
+      {% if v.events %}
+      <div class="list-group list-group-flush">
+        {% for e in v.events %}
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between gap-2"><strong>{{ e.title }}</strong><span class="text-secondary text-nowrap">{{ e.ago }}</span></div>
+          {% if e.detail %}<div class="text-secondary">{{ e.detail }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="card-body text-secondary">No changes recorded yet.</div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endif %}
+</div>

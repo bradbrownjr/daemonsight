@@ -89,11 +89,14 @@ DaemonSight knows when it first appeared and when it cleared.
 | `cve.fixable_exposed` | A fixable CVE sits in a package or image whose process owns a public listener or Caddy upstream | The CVE's severity, raised one level |
 | `cve.fixable` | Any other fixable CVE | The CVE's severity |
 | `svc.failed` | A unit is in `failed` | High |
-| `svc.restarting` | `NRestarts` went up since the last snapshot | Medium |
 | `ctr.down` | A container exited non-zero, is unhealthy, or was OOM-killed | High |
 | `caddy.admin_tcp` | The admin API listens on TCP instead of a Unix socket | Low |
 | `tls.expiring` | A served certificate expires within 14 days | High |
 | `sys.disk` / `sys.memory` | Above 90% for 15 minutes | Medium |
+
+A restart is a moment, not a state, so restarts of units and containers are
+recorded as events under "Recent changes" rather than as findings. So are new
+and closed listeners.
 
 Linking a Caddy host to a jail can't be fully automatic, because Caddy can log
 per site or globally. DaemonSight guesses the link from each jail's `logpath`
@@ -149,7 +152,7 @@ supports ntfy and SMTP email. Daily digest optional.
 - `install.sh` for v1: creates a venv in `/opt/daemonsight`, the `daemonsight` user, the three units and `/etc/daemonsight/config.toml`. A `.deb` comes later.
 - Requires `fail2ban`, `nftables` and `debsecan` from Debian, and Trivy from Aqua's apt repo.
 - Testing order: beta LXC first (Claude Code runs there), then alpha, then the VPS.
-- VPS: the web process on `127.0.0.1:8090`, reached over WireGuard, or through Caddy with the hostname restricted to the WireGuard range.
+- VPS: the web process on `127.0.0.1:8466`, reached over WireGuard, or through Caddy with the hostname restricted to the WireGuard range.
 - LXC: the kernel belongs to the Unraid host, so kernel CVEs are skipped when `systemd-detect-virt` reports a container. An unprivileged LXC may not be able to read the nftables ruleset; that source then shows "unavailable" instead of failing.
 
 ## Phases
@@ -164,16 +167,22 @@ Later: a central view across hosts, actions (ban, unban, restart), CrowdSec,
 Podman, and an optional check from outside the host to confirm what's
 reachable from the internet.
 
-## To verify before building
+## Answered in phase 1
 
-These are still assumptions. None of the docs read so far answers them.
+- **psutil needs root for socket owners.** Run unprivileged on Debian 13 with psutil 7.2.2, `net_connections()` lists every listener but returns `pid=None` for sockets of other users.
+- **D-Bus library: dbus-fast 5.2.** Unprivileged `ListUnitsByPatterns` and `Properties.GetAll` work as the systemd docs say. The system bus rejects more than 128 pending replies per connection (`LimitsExceeded`, `max_replies_per_connection`), so property reads are capped at 32 in flight.
+- **Docker API** paths, the health states, the log frame format and the CPU formula are taken from the v1.47 OpenAPI spec. The collector uses the server's own `ApiVersion` from `GET /version`. Not yet run against a real Docker host.
+- **Read-only SQLite** works while the collector holds the database open; when it's stopped, the web falls back to `immutable=1`.
+- **Web port** is 8466. 8090 is common and was already taken on beta.
+- **`expose.docker_bypass`** moved into phase 1: it needs only Docker data.
 
-- Whether `psutil.net_connections()` needs root to return PIDs for other users' sockets. The psutil docs don't say.
+## To verify
+
 - Whether `nft list ruleset` needs `CAP_NET_ADMIN`. nft(8) doesn't say.
-- The exact Docker Engine API paths and fields for the API version on the VPS.
 - Which capabilities could replace full root for the collector (likely `CAP_DAC_READ_SEARCH`, `CAP_SYS_PTRACE`, `CAP_NET_ADMIN`, plus Docker socket access).
 - Whether to talk to the fail2ban socket directly instead of parsing `fail2ban-client` output.
-- The Python D-Bus client library. Not yet chosen.
+- The Docker source on a real Docker host (alpha or the VPS).
+- The systemd sandboxing in `daemonsight-web.service` inside an unprivileged LXC.
 
 ## Sources
 
