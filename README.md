@@ -71,6 +71,11 @@ these gaps.
 
 Targets: a Debian VPS running Caddy and Docker, and Debian LXC containers.
 
+## Security
+
+How DaemonSight protects the hosts it runs on, and how to report a
+vulnerability: [SECURITY.md](SECURITY.md).
+
 ## Design notes
 
 Full plan: [docs/DESIGN.md](docs/DESIGN.md). The UI is server-rendered with
