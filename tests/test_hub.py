@@ -220,3 +220,12 @@ def test_hub_pages(seeded, hub_cfg, token, tmp_path):  # noqa: F811
     assert c.get("/h/nobody/").status_code == 404
     assert c.get("/h/..%2Fetc/").status_code == 404
     assert c.get("/exposure").status_code == 404  # no single-host pages on a hub
+
+
+def test_hub_prunes_old_metrics(hub_cfg):
+    conn = db.connect_writer(hub_cfg.db_path)
+    now = time.time()
+    db.add_metrics(conn, "a", now - 49 * 3600, {"cpu.percent": 1})
+    db.add_metrics(conn, "b", now - 3600, {"cpu.percent": 2})
+    hub.prune(conn, now, 48)
+    assert [r[0] for r in conn.execute("SELECT host FROM metrics")] == ["b"]

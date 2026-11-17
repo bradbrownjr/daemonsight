@@ -185,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
     cfg = config.load(args.config)
+    if cfg.log_file and args.command in ("web", "collector"):
+        from logging.handlers import RotatingFileHandler
+        fh = RotatingFileHandler(cfg.log_file, maxBytes=5 * 2**20, backupCount=3)
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logging.getLogger().addHandler(fh)
     handler = {
         "collector": cmd_collector, "web": cmd_web, "set-password": cmd_set_password,
         "init": cmd_init, "collect-once": cmd_collect_once,

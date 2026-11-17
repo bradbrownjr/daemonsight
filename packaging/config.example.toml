@@ -6,6 +6,10 @@
 
 # data_dir = "/var/lib/daemonsight"
 
+# Also write log lines to this file (rotated at 5 MB, four files kept). The
+# journal has them already on a host; the hub container uses /data/daemonsight.log.
+# log_file = ""
+
 [web]
 # Keep this on loopback or a WireGuard address, never a public one.
 # listen = "127.0.0.1"

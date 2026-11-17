@@ -278,6 +278,12 @@ def _silent(conn, host: str, now: float, f: Finding | None) -> None:
         db.add_event(conn, host, now, "host_back", "Reporting again", link="/")
 
 
+def prune(conn, now: float, retention_hours: float) -> None:
+    """Drop metric points older than the retention, for every host. Events
+    and findings are kept."""
+    conn.execute("DELETE FROM metrics WHERE ts < ?", (now - retention_hours * 3600,))
+
+
 def check_silent(conn, now: float, default_interval: float = 60) -> None:
     """Open host.silent for every host that has missed three of its longest
     intervals, or never reported within ten minutes of being added."""

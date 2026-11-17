@@ -51,7 +51,7 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app):
-        task = asyncio.create_task(_watch_silent(hub_conn)) if hub_conn is not None else None
+        task = asyncio.create_task(_hub_chores(hub_conn, cfg)) if hub_conn is not None else None
         yield
         if task:
             task.cancel()
@@ -241,13 +241,19 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
     return app
 
 
-async def _watch_silent(conn) -> None:
-    """Every minute, flag hosts that stopped reporting."""
+async def _hub_chores(conn, cfg: Config) -> None:
+    """Every minute, flag hosts that stopped reporting. Every hour, drop
+    metrics older than metrics_retention_hours."""
+    last_prune = 0.0
     while True:
+        now = time.time()
         try:
-            hub.check_silent(conn, time.time())
+            hub.check_silent(conn, now)
+            if now - last_prune > 3600:
+                hub.prune(conn, now, cfg.collector.metrics_retention_hours)
+                last_prune = now
         except Exception:
-            log.exception("checking for silent hosts failed")
+            log.exception("hub housekeeping failed")
         await asyncio.sleep(60)
 
 

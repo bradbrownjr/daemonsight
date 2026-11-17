@@ -94,6 +94,10 @@ class Thresholds:
 class Config:
     host_id: str = field(default_factory=socket.gethostname)
     data_dir: str = "/var/lib/daemonsight"
+    # Also write the collector's and web UI's log lines to this file, kept
+    # to four files of 5 MB. On a host the journal already has them; the hub
+    # container sets /data/daemonsight.log so they outlive the container.
+    log_file: str = ""
     web: WebConfig = field(default_factory=WebConfig)
     collector: CollectorConfig = field(default_factory=CollectorConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)

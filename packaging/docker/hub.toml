@@ -4,6 +4,12 @@
 
 host_id = "hub"
 data_dir = "/data"
+# Log lines, kept in the data folder so they outlive the container.
+log_file = "/data/daemonsight.log"
+
+[collector]
+# How long the hub keeps metric points (charts). Events and findings stay.
+metrics_retention_hours = 48
 
 [web]
 # All addresses inside the container. Publish the port to a LAN address

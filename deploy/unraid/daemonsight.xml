@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>daemonsight</Name>
+  <Repository>ghcr.io/bradbrownjr/daemonsight:edge</Repository>
+  <Registry>https://github.com/bradbrownjr/daemonsight/pkgs/container/daemonsight</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/bradbrownjr/daemonsight/issues</Support>
+  <Project>https://github.com/bradbrownjr/daemonsight</Project>
+  <Overview>The DaemonSight hub: one page for every server running the DaemonSight collector. Each collector uploads to the hub over HTTPS; the hub never connects to them. Create the data folder and give it to uid 10001 first (chown 10001:10001). After the first start, set a password with: docker exec -it daemonsight daemonsight set-password. Settings are in config.toml in the data folder. Keep the port on your LAN; see docs/INSTALL.md, "Run a hub".</Overview>
+  <Category>Network:Management Security:</Category>
+  <WebUI>http://[IP]:[PORT:8466]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/bradbrownjr/daemonsight/HEAD/deploy/unraid/daemonsight.xml</TemplateURL>
+  <ExtraParams>--read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m --cap-drop ALL --security-opt no-new-privileges --restart unless-stopped</ExtraParams>
+  <Config Name="Web UI port" Target="8466" Default="8466" Mode="tcp" Description="The dashboard and the upload address. Keep it on your LAN, behind a reverse proxy." Type="Port" Display="always" Required="true" Mask="false">8466</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/daemonsight" Mode="rw" Description="Config, password, session secret and database. Must be writable by uid 10001." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/daemonsight</Config>
+</Container>

@@ -159,14 +159,22 @@ lists what protects it.
 
 ### Start the container
 
-The container runs as uid 10001 and keeps everything in `/data`: its
-config, password, session secret and database. Create that folder with the
-right owner first, then start the container. On Unraid:
+The container runs as uid 10001 with a read-only filesystem, and keeps
+everything that changes in `/data`: its config, password, session secret,
+database (every host's history) and log file (`daemonsight.log`). All of it
+survives restarts, rebuilds and image updates. The hub keeps metric points
+for `metrics_retention_hours` (48) and events and findings for good.
+
+Create the folder with the right owner first, then start the container. On
+Unraid, the template in `deploy/unraid/daemonsight.xml` sets the same
+options as this command:
 
 ```bash
 mkdir -p /mnt/user/appdata/daemonsight
 chown 10001:10001 /mnt/user/appdata/daemonsight
 docker run -d --name daemonsight --restart unless-stopped \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+  --cap-drop ALL --security-opt no-new-privileges \
   -p 8466:8466 \
   -v /mnt/user/appdata/daemonsight:/data \
   ghcr.io/bradbrownjr/daemonsight:edge
