@@ -19,28 +19,23 @@ has Overview, Exposure, Routes, Services and fail2ban pages. Remote sources
 
 ## Install
 
-Debian 12 or 13, Python 3.11 or newer, run as root:
+Debian 12 or 13, Python 3.11 or newer:
 
 ```bash
-apt install python3-venv
+sudo apt install git python3-venv
 git clone https://github.com/bradbrownjr/daemonsight.git
 cd daemonsight
-sudo ./install.sh              # collector and web UI
+sudo ./install.sh
 sudo daemonsight set-password
 sudo systemctl start daemonsight-web
 ```
 
-The UI listens on `127.0.0.1:8466`. Reach it over SSH
-(`ssh -L 8466:127.0.0.1:8466 host`), WireGuard, or Caddy.
+The UI listens on `127.0.0.1:8466`. Open it over SSH
+(`ssh -L 8466:127.0.0.1:8466 you@server`) or through a reverse proxy limited
+to your LAN. Update later with `sudo daemonsight-update`.
 
-- `sudo ./install.sh --collector` installs only the collector, for a host that
-  doesn't need its own UI.
-- `sudo ./install.sh --fail2ban` also installs a jail that bans addresses
-  failing the login.
-- `daemonsight collect-once` prints what each source sees, without storing it.
-
-Settings: `/etc/daemonsight/config.toml` (see
-[packaging/config.example.toml](packaging/config.example.toml)).
+[docs/INSTALL.md](docs/INSTALL.md) covers the install options, reverse
+proxies, which ports to list as public, updating, and removal.
 
 ## Why
 

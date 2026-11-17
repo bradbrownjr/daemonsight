@@ -13,7 +13,7 @@ import secrets
 import sys
 from pathlib import Path
 
-from . import __version__, config, db
+from . import config, db, full_version
 
 GROUP = "daemonsight"
 
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="daemonsight", description="DaemonSight server monitor")
     parser.add_argument("-c", "--config", help="config file (default /etc/daemonsight/config.toml)")
     parser.add_argument("-v", "--verbose", action="store_true")
-    parser.add_argument("--version", action="version", version=f"daemonsight {__version__}")
+    parser.add_argument("--version", action="version", version=f"daemonsight {full_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("collector", help="run the collector (root)")
     sub.add_parser("web", help="run the web UI")

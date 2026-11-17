@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Update DaemonSight from GitHub and reinstall it with the same options
+# (collector only, fail2ban jail) it was installed with.
+#
+#   sudo daemonsight-update          the latest commit on main
+#   sudo daemonsight-update <ref>    a branch, tag or commit, e.g. to go back
+#
+# The source is a root-owned clone in /opt/daemonsight/src, never a user's
+# checkout, so only what is on GitHub can be installed this way.
+set -euo pipefail
+
+REPO_URL=https://github.com/bradbrownjr/daemonsight.git
+PREFIX=/opt/daemonsight
+SRC=$PREFIX/src
+REF=${1:-main}
+
+[[ $EUID -eq 0 ]] || { echo "Run as root: sudo daemonsight-update" >&2; exit 1; }
+[[ $# -le 1 ]] || { echo "Usage: daemonsight-update [branch, tag or commit]" >&2; exit 2; }
+[[ $REF =~ ^[A-Za-z0-9._/-]+$ && $REF != -* ]] || { echo "Not a branch, tag or commit: $REF" >&2; exit 2; }
+command -v git >/dev/null || { echo "Install git first: apt install git" >&2; exit 1; }
+
+old=$(cat "$PREFIX/REVISION" 2>/dev/null || echo "unknown")
+
+if [[ ! -d $SRC/.git ]]; then
+  rm -rf "$SRC"
+  git clone --quiet "$REPO_URL" "$SRC"
+fi
+git -C "$SRC" fetch --quiet --force --tags origin
+# A branch follows GitHub; a tag or commit is used as it is.
+if git -C "$SRC" rev-parse --verify --quiet "refs/remotes/origin/$REF^{commit}" >/dev/null; then
+  target="origin/$REF"
+else
+  target="$REF"
+fi
+git -C "$SRC" -c advice.detachedHead=false checkout --quiet --force --detach "$target"
+git -C "$SRC" clean --quiet -fdx
+
+new=$(git -C "$SRC" rev-parse --short HEAD)
+echo "==> DaemonSight $old -> $new"
+git -C "$SRC" log --oneline --no-decorate "${old}..HEAD" 2>/dev/null | head -20 || true
+
+"$SRC/install.sh"
+
+echo
+for unit in daemonsight-collector daemonsight-web; do
+  if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+    printf '%-24s %s\n' "$unit" "$(systemctl is-active "$unit" || true)"
+  fi
+done

@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import __version__, db
+from .. import db, full_version
 from ..config import Config
 from . import views
 from .auth import PasswordStore, RateLimiter
@@ -63,7 +63,7 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
-    templates.env.globals["version"] = __version__
+    templates.env.globals["version"] = full_version()
 
     passwords = PasswordStore(cfg.web.password_file)
     limiter = RateLimiter()

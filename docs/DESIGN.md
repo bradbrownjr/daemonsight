@@ -166,9 +166,10 @@ supports ntfy and SMTP email. Daily digest optional.
 
 ## Install and deploy
 
-- `install.sh` for v1: creates a venv in `/opt/daemonsight`, the `daemonsight` user, the three units and `/etc/daemonsight/config.toml`. A `.deb` comes later.
+- `install.sh` for v1: creates a venv in `/opt/daemonsight`, the `daemonsight` user, the units and `/etc/daemonsight/config.toml`, and records its options in `/etc/daemonsight/install.options`. A `.deb` comes later.
+- `daemonsight-update` (in `/usr/local/sbin`) updates from GitHub into a root-owned clone and reruns `install.sh` with the recorded options. Installing only from GitHub, never a user's checkout, is what makes a password-less sudo rule for it reasonable on a development server. See [INSTALL.md](INSTALL.md#update).
 - Requires `fail2ban`, `nftables` and `debsecan` from Debian, and Trivy from Aqua's apt repo.
-- Testing order: beta LXC first (Claude Code runs there), then alpha, then the VPS.
+- Testing order: beta LXC first (Claude Code runs there and updates it with `sudo daemonsight-update` after each push), then alpha, then the VPS.
 - VPS: the web process on `127.0.0.1:8466`, reached over WireGuard, or through Caddy with the hostname restricted to the WireGuard range.
 - LXC: the kernel belongs to the Unraid host, so kernel CVEs are skipped when `systemd-detect-virt` reports a container. An unprivileged LXC may not be able to read the nftables ruleset; that source then shows "unavailable" instead of failing.
 
