@@ -167,6 +167,12 @@ Later: a central view across hosts, actions (ban, unban, restart), CrowdSec,
 Podman, and an optional check from outside the host to confirm what's
 reachable from the internet.
 
+Central view plan: every install, full or `--collector`, can serve its
+snapshots read-only on a tunnel address with a per-host token. One install's
+web UI lists the other hosts and pulls from them. The hub should sit on the
+home LAN and pull from the VPS, not the other way round, so a compromised VPS
+holds no credential or route into the LAN.
+
 ## Answered in phase 1
 
 - **psutil needs root for socket owners.** Run unprivileged on Debian 13 with psutil 7.2.2, `net_connections()` lists every listener but returns `pid=None` for sockets of other users.

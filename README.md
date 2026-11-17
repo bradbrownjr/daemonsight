@@ -32,7 +32,7 @@ sudo systemctl start daemonsight-web
 The UI listens on `127.0.0.1:8466`. Reach it over SSH
 (`ssh -L 8466:127.0.0.1:8466 host`), WireGuard, or Caddy.
 
-- `sudo ./install.sh --no-web` installs only the collector, for a host that
+- `sudo ./install.sh --collector` installs only the collector, for a host that
   doesn't need its own UI.
 - `sudo ./install.sh --fail2ban` also installs a jail that bans addresses
   failing the login.

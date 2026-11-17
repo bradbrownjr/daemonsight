@@ -2,7 +2,7 @@
 # Install or upgrade DaemonSight on Debian 12 or 13. Run as root from the repo.
 #
 #   sudo ./install.sh              collector + web UI
-#   sudo ./install.sh --no-web     collector only (agent)
+#   sudo ./install.sh --collector  collector only, no web UI
 #   sudo ./install.sh --fail2ban   also install the login jail for fail2ban
 set -euo pipefail
 
@@ -15,7 +15,7 @@ WITH_F2B=0
 
 for arg in "$@"; do
   case "$arg" in
-    --no-web) WITH_WEB=0 ;;
+    --collector) WITH_WEB=0 ;;
     --fail2ban) WITH_F2B=1 ;;
     -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
