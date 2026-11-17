@@ -358,3 +358,32 @@ def test_phase2_pages_render(cfg):
 
     html = c.get("/").text
     assert "Caddy sites" in html and "1 addresses banned now" in html
+
+
+def test_caddy_same_host_two_servers_vars_root_and_conditions():
+    # Shapes seen on a real VPS config (Caddy 2.x): one host on two servers, a
+    # "root" directive (vars handler) read by a later file_server, and a
+    # header_regexp route that only applies to some clients.
+    def site(host_list, routes):
+        return {"match": [{"host": host_list}], "terminal": True,
+                "handle": [{"handler": "subroute", "routes": routes}]}
+    cfg = {"apps": {"http": {"servers": {
+        "srv0": {"listen": [":2083"], "routes": [site(["example.com"], [
+            {"match": [{"path": ["/hook/*"]}], "handle": [{"handler": "static_response", "status_code": 301,
+                                                          "headers": {"Location": ["https://elsewhere.example:2083"]}}]}])]},
+        "srv1": {"listen": [":443"], "routes": [site(["example.com"], [
+            {"group": "g1", "match": [{"path": ["/news/*"], "header_regexp": {"User-Agent": {"pattern": "bot"}}}],
+             "handle": [{"handler": "subroute", "routes": [
+                 {"handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "localhost:8011"}]}]}]}]},
+            {"group": "g1", "handle": [{"handler": "subroute", "routes": [
+                {"handle": [{"handler": "vars", "root": "/srv/site/dist"}]},
+                {"match": [{"file": {"try_files": ["{http.request.uri.path}", "/index.html"]}}],
+                 "handle": [{"handler": "rewrite", "uri": "{http.matchers.file.relative}"}]},
+                {"handle": [{"handler": "file_server"}]}]}]},
+        ])]},
+    }}}}
+    sites = parse_config(cfg)["sites"]
+    assert [(s["host"], s["listen"]) for s in sites] == [("example.com", [":2083"]), ("example.com", [":443"])]
+    h = {x["kind"]: x for x in sites[1]["handlers"]}
+    assert h["proxy"]["when"] == ["header_regexp"]
+    assert h["files"]["root"] == "/srv/site/dist" and h["files"]["when"] == []

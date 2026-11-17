@@ -425,6 +425,8 @@ def routes(conn, cfg: Config) -> dict:
         worst = "ok"
         for h in s["handlers"]:
             path = ", ".join(h["paths"]) if h["paths"] else ""
+            if h.get("when"):
+                path += (" " if path else "") + "(only requests matching " + ", ".join(h["when"]) + ")"
             if h["kind"] == "proxy":
                 ups = []
                 for u in h["upstreams"]:

@@ -82,10 +82,14 @@ def _read_match(match: list | None) -> tuple[list[str], list[str], list[str], li
     Matcher sets are OR'd; fields within a set are AND'd. For a summary that's
     enough: collect everything any set names.
     """
-    hosts, paths, allow, deny = [], [], [], []
+    hosts, paths, allow, deny, other = [], [], [], [], []
     for ms in match or []:
         if not isinstance(ms, dict):
             continue
+        # Matchers that narrow which requests a handler sees (a header or
+        # method test, say), shown so a bot-only route doesn't look general.
+        # "file" only tests whether a file exists, so it isn't one.
+        other += [k for k in ms if k not in ("host", "path", "not", "file", *IP_MATCHERS) and k not in other]
         hosts += [h for h in ms.get("host", []) if isinstance(h, str)]
         paths += [p for p in ms.get("path", []) if isinstance(p, str)]
         for _, r in _ranges(ms):
@@ -94,7 +98,7 @@ def _read_match(match: list | None) -> tuple[list[str], list[str], list[str], li
             if isinstance(inner, dict):
                 for _, r in _ranges(inner):
                     deny += r
-    return hosts, paths, allow, deny
+    return hosts, paths, allow, deny, other
 
 
 def _is_block(handlers: list) -> bool:
@@ -110,17 +114,25 @@ def _is_block(handlers: list) -> bool:
 
 
 def _walk(routes: list, ctx: dict, out: list) -> None:
+    # The Caddyfile's "root" directive becomes a vars handler that later
+    # routes in the same list read, so it carries forward like this.
+    root = ctx.get("root")
     for route in routes or []:
         if not isinstance(route, dict):
             continue
-        hosts, paths, allow, deny = _read_match(route.get("match"))
+        hosts, paths, allow, deny, other = _read_match(route.get("match"))
         handlers = route.get("handle") or []
+        for h in handlers:
+            if isinstance(h, dict) and h.get("handler") == "vars" and isinstance(h.get("root"), str):
+                root = h["root"]
         here = {
             "hosts": hosts or ctx["hosts"],
             "paths": paths or ctx["paths"],
             "allow": ctx["allow"] + allow,
+            "when": ctx.get("when", []) + other,
             "server": ctx["server"],
             "listen": ctx["listen"],
+            "root": root,
         }
         # "@outside not remote_ip 10.0.0.0/8; abort @outside" restricts the
         # whole site to the ranges it doesn't refuse.
@@ -140,7 +152,7 @@ def _walk(routes: list, ctx: dict, out: list) -> None:
                 out.append({**here, "kind": "proxy", "upstreams": ups,
                             "dynamic": bool(h.get("dynamic_upstreams")), "site_allow": ctx["site_allow"]})
             elif kind == "file_server":
-                out.append({**here, "kind": "files", "root": h.get("root"), "upstreams": [],
+                out.append({**here, "kind": "files", "root": h.get("root") or root, "upstreams": [],
                             "site_allow": ctx["site_allow"]})
             elif kind == "static_response":
                 headers = h.get("headers") or {}
@@ -166,15 +178,17 @@ def parse_config(config: dict) -> dict:
         })
         _walk(srv.get("routes"), {"hosts": [], "paths": [], "allow": [], "server": name,
                                   "listen": listen, "site_allow": []}, entries)
-    sites: dict[str, dict] = {}
+    # One site per (server, host): the same name can be served on two ports.
+    sites: dict[tuple[str, str], dict] = {}
     for e in entries:
         for host in e["hosts"] or ["*"]:
-            site = sites.setdefault(host, {"host": host, "server": e["server"], "listen": e["listen"],
-                                           "handlers": [], "allow": []})
+            site = sites.setdefault((e["server"], host), {"host": host, "server": e["server"],
+                                                          "listen": e["listen"], "handlers": [], "allow": []})
             allow = sorted(set(e["allow"] + e["site_allow"]))
             site["handlers"].append({"paths": e["paths"], "kind": e["kind"],
                                      "upstreams": e["upstreams"], "dynamic": e.get("dynamic", False),
-                                     "root": e.get("root"), "target": e.get("target"),
+                                     "root": e.get("root") if e["kind"] == "files" else None,
+                                     "target": e.get("target"), "when": e.get("when", []),
                                      "status": e.get("status"), "allow": allow})
             for r in allow:
                 if r not in site["allow"]:
@@ -182,7 +196,7 @@ def parse_config(config: dict) -> dict:
     return {
         "admin": {"listen": admin.get("listen") or "localhost:2019", "disabled": bool(admin.get("disabled"))},
         "servers": servers,
-        "sites": sorted(sites.values(), key=lambda s: s["host"]),
+        "sites": sorted(sites.values(), key=lambda s: (s["host"], s["server"])),
     }
 
 
