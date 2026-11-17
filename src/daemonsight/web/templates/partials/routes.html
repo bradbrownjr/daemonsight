@@ -1,8 +1,10 @@
+{% from "_macros.html" import src, src_button, src_panel %}
 <div id="live" hx-get="/partials/routes" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
+{{ src_panel("src-caddy", v.src.caddy) }}
 <section class="card mb-4" id="sites" aria-labelledby="sites-title" data-section{% if not v.sites %} data-empty{% endif %}>
   <div class="card-header">
-    <h2 class="card-title" id="sites-title">Caddy sites</h2>
+    <h2 class="card-title" id="sites-title">Caddy sites</h2>{{ src_button("src-caddy", "Caddy") }}
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.sites|length }} sites{% if v.down %} · <span class="text-red">{{ v.down }} with a problem</span>{% endif %}</div>
   </div>
   {% if v.caddy_state.state != 'ok' %}
@@ -16,7 +18,7 @@
       <tbody>
         {% for s in v.sites %}
         <tr data-row>
-          <td><strong>{{ s.host }}</strong></td>
+          <td><strong>{{ s.host }}</strong>{{ src("src-s-" ~ loop.index, s.src) }}</td>
           <td><span class="badge {{ s.access_badge }}">{{ s.access }}</span></td>
           <td>
             {% for h in s.handlers %}
@@ -44,7 +46,7 @@
 
 {% if v.caddy_state.state == 'ok' %}
 <section class="card" id="caddy-admin" aria-labelledby="admin-title" data-section>
-  <div class="card-header"><h2 class="card-title" id="admin-title">Caddy admin API</h2></div>
+  <div class="card-header"><h2 class="card-title" id="admin-title">Caddy admin API</h2>{{ src_button("src-caddy", "Caddy") }}</div>
   <div class="card-body">
     <div class="datagrid">
       <div class="datagrid-item">

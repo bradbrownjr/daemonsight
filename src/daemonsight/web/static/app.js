@@ -97,13 +97,52 @@
     sortTable(table);
   }
 
+  // A row's searchable text, without the hidden source panel inside it.
+  function rowText(row) {
+    if (row._dsText === undefined) {
+      var copy = row.cloneNode(true);
+      each(copy.querySelectorAll("[popover]"), function (p) { p.remove(); });
+      row._dsText = copy.textContent.toLowerCase();
+    }
+    return row._dsText;
+  }
+
+  function popoverOpen() {
+    try { return document.querySelector(":popover-open") !== null; } catch (e) { return false; }
+  }
+
+  function copyText(button) {
+    var code = button.parentNode.querySelector(".ds-copy-text");
+    if (!code) return;
+    var done = function () {
+      button.textContent = "Copied";
+      setTimeout(function () { button.textContent = "Copy"; }, 1500);
+    };
+    var fallback = function () {
+      // Plain HTTP on a LAN address has no Clipboard API: select the text instead.
+      var range = document.createRange();
+      range.selectNodeContents(code);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      try { if (document.execCommand("copy")) { done(); return; } } catch (e) { /* not allowed */ }
+      button.textContent = "Selected";
+      setTimeout(function () { button.textContent = "Copy"; }, 1500);
+    };
+    if (window.isSecureContext && navigator.clipboard) {
+      navigator.clipboard.writeText(code.textContent).then(done, fallback);
+    } else {
+      fallback();
+    }
+  }
+
   function applyFilter() {
     var terms = filterInput ? filterInput.value.toLowerCase().split(/\s+/).filter(Boolean) : [];
     each(document.querySelectorAll("[data-section]"), function (section) {
       var rows = section.querySelectorAll("[data-row]");
       var shown = 0;
       each(rows, function (row) {
-        var text = row.textContent.toLowerCase();
+        var text = rowText(row);
         var match = terms.every(function (t) { return text.indexOf(t) !== -1; });
         row.classList.toggle("ds-filtered", !match);
         if (match) shown += 1;
@@ -129,6 +168,9 @@
   }
 
   document.documentElement.classList.add("ds-js");
+  if (!Object.prototype.hasOwnProperty.call(HTMLElement.prototype, "popover")) {
+    document.documentElement.classList.add("ds-no-popover");
+  }
   setHideEmpty(store.get("hideEmpty") === true);
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -156,6 +198,19 @@
       filterInput.focus();
     });
     document.addEventListener("click", onSortClick);
+    document.addEventListener("click", function (e) {
+      var copy = e.target.closest(".ds-copy");
+      if (copy) { copyText(copy); return; }
+      // Following a link to another place closes the panel it was in.
+      var link = e.target.closest(".ds-pop-link");
+      var pop = link && link.closest("[popover]");
+      if (pop && pop.hidePopover) { try { pop.hidePopover(); } catch (err) { /* already closed */ } }
+    });
+    // Hold the 30-second refresh while a panel is open, or the swap would close it.
+    document.body.addEventListener("htmx:beforeRequest", function (e) {
+      var elt = e.detail && e.detail.elt;
+      if (elt && /every/.test(elt.getAttribute("hx-trigger") || "") && popoverOpen()) e.preventDefault();
+    });
     document.body.addEventListener("htmx:afterSettle", applyAll);
     applyAll();
   });

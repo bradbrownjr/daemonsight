@@ -1,0 +1,36 @@
+{# Source panels: a small button that opens a native popover saying where a
+   card or row came from. src() renders both; src_button() and src_panel()
+   let several buttons share one panel. #}
+
+{% macro src_button(id, title) -%}
+<button type="button" class="ds-src-btn" popovertarget="{{ id }}" title="Where this comes from" aria-label="Where this comes from: {{ title }}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M12 9h.01"/><path d="M11 12h1v4h1"/></svg></button>
+{%- endmacro %}
+
+{% macro src_panel(id, s) -%}
+<div popover id="{{ id }}" class="ds-pop card" aria-label="{{ s.title }}">
+  <div class="card-header">
+    <h3 class="card-title">{{ s.title }}</h3>
+    <div class="card-actions"><button type="button" class="btn-close" popovertarget="{{ id }}" popovertargetaction="hide" aria-label="Close"></button></div>
+  </div>
+  <div class="card-body">
+    {% if s.read %}<div class="subheader">Read from</div><p>{{ s.read }}</p>{% endif %}
+    {% if s.entries %}
+    <div class="subheader">Check it yourself</div>
+    <dl class="ds-src-list">
+      {% for e in s.entries %}
+      <dt>{{ e.label }}</dt>
+      <dd>
+        {% if e.kind in ('cmd', 'file') %}<code class="ds-copy-text">{{ e.value }}</code><button type="button" class="btn btn-sm ds-copy">Copy</button>
+        {% elif e.kind == 'link' %}<a href="{{ e.href }}" class="ds-pop-link">{{ e.text }}</a>
+        {% else %}<a href="{{ e.href }}" target="_blank" rel="noopener noreferrer">{{ e.text }}</a>{% endif %}
+      </dd>
+      {% endfor %}
+    </dl>
+    {% endif %}
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro src(id, s) -%}
+{{ src_button(id, s.title) }}{{ src_panel(id, s) }}
+{%- endmacro %}

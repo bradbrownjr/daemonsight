@@ -113,6 +113,9 @@ def summarize(inspect: dict, stats: dict | None, logs: list[str]) -> dict:
         "name": inspect.get("Name", "").lstrip("/"),
         "image": config.get("Image"),
         "project": labels.get("com.docker.compose.project"),
+        # Set by Docker Compose (docker/compose pkg/api/labels.go).
+        "compose_dir": labels.get("com.docker.compose.project.working_dir"),
+        "compose_files": [f for f in (labels.get("com.docker.compose.project.config_files") or "").split(",") if f],
         "status": state.get("Status"),
         "exit_code": state.get("ExitCode"),
         "oom_killed": bool(state.get("OOMKilled")),

@@ -6,6 +6,7 @@ import time
 
 from .. import db, findings as rules
 from ..collector.sources.caddy import is_local
+from . import provenance as prov
 from ..config import Config
 
 SEVERITY_BADGE = {
@@ -131,7 +132,7 @@ def findings_list(conn, host: str) -> list[dict]:
     for r in db.open_findings(conn, host):
         label, cls = SEVERITY_BADGE.get(r["severity"], (r["severity"], "bg-secondary-lt"))
         out.append({"title": r["title"], "detail": r["detail"], "link": r["link"], "label": label,
-                    "badge": cls, "since": fmt_ago(r["first_seen"])})
+                    "badge": cls, "since": fmt_ago(r["first_seen"]), "src": prov.finding(r["rule"], r["link"])})
     return out
 
 
@@ -193,7 +194,7 @@ def overview(conn, cfg: Config) -> dict:
         js = fb.get("jails", [])
         banned = sum(j["banned_now"] or 0 for j in js if isinstance(j.get("banned_now"), int))
         glance.append({"title": "fail2ban", "value": f"{len(js)} jails", "alert": None,
-                       "note": f"{banned} addresses banned now"})
+                       "note": f"{banned} {'address' if banned == 1 else 'addresses'} banned"})
     fw = _snap_data(snaps, "firewall")
     if fw is not None:
         glance.append({"title": "Firewall", "value": "Filtering inbound" if fw.get("filtering") else "No inbound filtering",
@@ -213,6 +214,7 @@ def overview(conn, cfg: Config) -> dict:
         "glance": glance,
         "sources": {name: _source_state(snaps, name)
                     for name in ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall")},
+        "src": {name: prov.section(name, cfg) for name in ("system", "findings", "events")},
     }
 
 
@@ -232,7 +234,7 @@ def services(conn, cfg: Config, unit_filter: str = "active") -> dict:
             running = c["status"] == "running"
             bad = (not running and (c["exit_code"] or c["oom_killed"])) or c["health"] == "unhealthy"
             containers.append({
-                "name": c["name"], "image": c["image"], "status": c["status"],
+                "name": c["name"], "image": c["image"], "status": c["status"], "src": prov.container(c),
                 "status_badge": "bg-green-lt" if running else ("bg-red text-red-fg" if bad else "bg-secondary-lt"),
                 "exit": f" ({c['exit_code']})" if not running and c["exit_code"] is not None else "",
                 "oom": c["oom_killed"],
@@ -259,6 +261,7 @@ def services(conn, cfg: Config, unit_filter: str = "active") -> dict:
             badge = {"active": "bg-green-lt", "failed": "bg-red text-red-fg"}.get(u["active"], "bg-secondary-lt")
             units.append({
                 "name": u["name"], "description": u["description"], "active": u["active"], "sub": u["sub"],
+                "src": prov.unit(u),
                 "badge": badge, "since": fmt_duration(now - u["since"]) if u.get("since") else "—",
                 "restarts": u.get("restarts"), "memory": fmt_bytes(u.get("memory")),
                 "cpu": fmt_duration((u["cpu_ns"] or 0) / 1e9) if u.get("cpu_ns") is not None else "—",
@@ -288,6 +291,7 @@ def services(conn, cfg: Config, unit_filter: str = "active") -> dict:
                           "loopback": "Loopback", "unknown": "Unknown"}[r["scope"]],
                 "scope_badge": {"all": "bg-orange-lt", "public": "bg-red-lt"}.get(r["scope"], "bg-secondary-lt"),
                 "process": r.get("process") or "—", "owner": who or "—",
+                "src": prov.listener(r, names),
             })
 
     return {
@@ -297,6 +301,7 @@ def services(conn, cfg: Config, unit_filter: str = "active") -> dict:
         "systemd_state": _source_state(snaps, "systemd"),
         "listeners": listeners, "owners_known": owners_known,
         "ports_state": _source_state(snaps, "ports"),
+        "src": {name: prov.section(name, cfg) for name in ("docker", "systemd", "ports")},
     }
 
 
@@ -358,6 +363,7 @@ def exposure(conn, cfg: Config) -> dict:
     jails = (f2b or {}).get("jails", [])
     expected = set(cfg.exposure.expected_public)
     public_keys = {(r["proto"], r["port"]) for r in rules.public_listeners(snaps, {"eph": _eph()})}
+    ctr_names = {c["id"]: c["name"] for c in (_snap_data(snaps, "docker") or {}).get("containers", [])}
     rows = []
     for r in ports.get("listeners", []):
         if r["scope"] == "loopback":
@@ -379,17 +385,19 @@ def exposure(conn, cfg: Config) -> dict:
             "fw": FW_LABEL[fw["state"]], "fw_badge": FW_BADGE[fw["state"]], "fw_why": fw["why"],
             "expected": ("Yes" if key in expected else "No") if internet else "—",
             "jail": (jail or "None") if internet else "—", "jail_bad": internet and not jail,
+            "anchor": f"port-{r['port']}-{r['proto']}", "src": prov.listener(r, ctr_names),
         })
     docker = []
     for c in (_snap_data(snaps, "docker") or {}).get("containers", []):
         for p in c.get("ports", []):
             wide = p["host_ip"] in ("0.0.0.0", "::", "")
-            docker.append({"container": c["name"], "status": c["status"],
+            docker.append({"container": c["name"], "status": c["status"], "src": prov.container(c),
                            "published": f"{p['host_ip'] or '*'}:{p['host_port']}",
                            "target": f"{p['container_port']}/{p['proto']}", "wide": wide})
     fwdata = _snap_data(snaps, "firewall")
     chains = [{"name": f"{c['family']} {c['table']} {c['chain']}", "policy": c["policy"],
-               "default": c["default"], "accept_all": c["accept_all"], "open": _port_ranges(c["open"])}
+               "default": c["default"], "accept_all": c["accept_all"], "open": _port_ranges(c["open"]),
+               "src": prov.chain(c)}
               for c in (fwdata or {}).get("input", [])]
     return {
         "host": _host(cfg, snaps),
@@ -402,11 +410,14 @@ def exposure(conn, cfg: Config) -> dict:
                      "forwards": [{"proto": f["proto"], "ports": f["ports"], "to": f["to"],
                                    "family": "IPv6" if f["family"] == "ip6" else "IPv4",
                                    "conditions": ", ".join(f["conditions"]), "copies": f["copies"],
-                                   "wide": sum(hi - lo + 1 for lo, hi in f["ranges"]) > 1000}
+                                   "wide": sum(hi - lo + 1 for lo, hi in f["ranges"]) > 1000,
+                                   "src": prov.forward({**f, "family_raw": f["family"]})}
                                   for f in (fwdata or {}).get("forwards", [])]},
         "firewall_state": _source_state(snaps, "firewall"),
         "ports_state": _source_state(snaps, "ports"),
         "expected": sorted(expected),
+        "upstream": cfg.exposure.upstream_allow,
+        "src": {name: prov.section(name, cfg) for name in ("ports", "firewall", "docker")},
     }
 
 
@@ -466,6 +477,7 @@ def routes(conn, cfg: Config) -> dict:
             "access": ("Only " + ", ".join(s["allow"])) if s["allow"] else "Anyone",
             "access_badge": "bg-green-lt" if s["allow"] else "bg-secondary-lt",
             "handlers": handlers, "state": worst,
+            "src": prov.caddy_site(s, (caddy or {}).get("admin_address")),
         })
     admin = (caddy or {}).get("admin") or {}
     return {
@@ -476,6 +488,7 @@ def routes(conn, cfg: Config) -> dict:
                   "read_from": (caddy or {}).get("admin_address")},
         "caddy_state": _source_state(snaps, "caddy"),
         "down": sum(1 for s in sites if s["state"] != "ok"),
+        "src": {"caddy": prov.section("caddy", cfg, {"admin": (caddy or {}).get("admin_address")})},
     }
 
 
@@ -496,6 +509,7 @@ def jails(conn, cfg: Config) -> dict:
             "bantime": _secs(j["bantime"]), "bantime_v": j["bantime"] if isinstance(j["bantime"], int) else "",
             "findtime": _secs(j["findtime"]), "maxretry": j["maxretry"] if j["maxretry"] is not None else "—",
             "actions": ", ".join(j["actions"]) or "—", "ignoreip": ", ".join(j["ignoreip"]),
+            "src": prov.jail(j),
         })
         for b in j["bans"]:
             bans.append({"jail": j["name"], **b})
@@ -510,11 +524,13 @@ def jails(conn, cfg: Config) -> dict:
             continue
         seen.add(name)
         jail = _jail_for(jl, unit, r.get("process"), cfg.exposure.jail_covers)
-        coverage.append({"service": name, "port": f"{r['port']}/{r['proto']}", "jail": jail})
+        coverage.append({"service": name, "port": f"{r['port']}/{r['proto']}", "jail": jail,
+                         "src": prov.listener(r)})
     return {
         "host": _host(cfg, snaps),
         "version": (f2b or {}).get("version"),
         "jails": rows, "bans": bans, "coverage": coverage,
         "f2b_state": _source_state(snaps, "fail2ban"),
         "public_host": rules.host_is_public(_snap_data(snaps, "ports")),
+        "src": {"fail2ban": prov.section("fail2ban", cfg), "ports": prov.section("ports", cfg)},
     }

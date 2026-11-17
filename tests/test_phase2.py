@@ -345,7 +345,7 @@ def test_phase2_pages_render(cfg):
     html = c.get("/exposure").text
     assert "203.0.113.10" in html and "3306/tcp" in html
     assert "Blocked" in html and "inet filter input" in html
-    assert c.get("/partials/exposure").text.startswith('<div id="live"')
+    assert c.get("/partials/exposure").text.lstrip().startswith('<div id="live"')
 
     html = c.get("/routes").text
     assert "unix.example.com" in html and "app:80" in html and "1 recent failures" in html
@@ -357,7 +357,12 @@ def test_phase2_pages_render(cfg):
     assert 'aria-current="page" href="/fail2ban"' in html
 
     html = c.get("/").text
-    assert "Caddy sites" in html and "1 addresses banned now" in html
+    assert "Caddy sites" in html and "1 address banned" in html
+
+    from .test_provenance import check_panels
+    for page in ("/", "/exposure", "/routes", "/services", "/fail2ban"):
+        assert check_panels(c.get(page).text) > 0, page
+    assert "journalctl _SYSTEMD_UNIT=ssh.service" in c.get("/fail2ban").text
 
 
 def test_caddy_same_host_two_servers_vars_root_and_conditions():
@@ -465,7 +470,7 @@ def test_upstream_firewall_lowers_vps_findings(cfg):
     }
     fs = {(f.rule, f.key): f for f in findings.evaluate(snaps, cfg)}
     fwd = fs[("expose.forward_all", "ip tcp 10.99.0.2")]
-    assert fwd.severity == "low" and "today that is 8000, 46190" in fwd.detail
+    assert fwd.severity == "low" and "lets in 8000, 46190" in fwd.detail
     assert "46100" in fs[("expose.forward_all", "ip udp 10.99.0.2")].detail
     assert fs[("firewall.default_accept", "ip")].severity == "low"
     assert ("expose.unexpected", "8001/tcp") not in fs  # the provider firewall doesn't let 8001 in

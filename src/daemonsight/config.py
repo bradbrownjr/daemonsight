@@ -77,6 +77,9 @@ class Config:
     collector: CollectorConfig = field(default_factory=CollectorConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)
     exposure: ExposureConfig = field(default_factory=ExposureConfig)
+    # Web UIs to link from each source's panel, e.g. {caddy = "https://...",
+    # fail2ban = "..."}; later also opnsense, unraid and ionos.
+    links: dict[str, str] = field(default_factory=dict)
 
     @property
     def db_path(self) -> Path:

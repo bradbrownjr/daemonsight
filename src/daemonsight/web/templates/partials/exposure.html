@@ -1,9 +1,12 @@
+{% from "_macros.html" import src, src_button, src_panel %}
 <div id="live" hx-get="/partials/exposure" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
+{{ src_panel("src-firewall", v.src.firewall) }}
 <div class="alert {{ 'alert-warning' if v.public else 'alert-info' }} mb-4">
   {% if v.public %}
   This host has a public address ({{ v.public_ips|join(', ') }}), so anything bound to all interfaces can be reached from the internet unless the firewall blocks it.
   Expected public ports: {{ v.expected|join(', ') }}.
+  {% if v.upstream %}A provider firewall in front of it lets in {{ v.upstream|join(', ') }}.{% endif %}
   {% else %}
   This host has no public address of its own. Sockets bound to all interfaces are reachable from the LAN, and from the internet only through a port forward or a proxy such as Caddy.
   {% endif %}
@@ -11,7 +14,7 @@
 
 <section class="card mb-4" id="listeners" aria-labelledby="listen-title" data-section{% if not v.listeners %} data-empty{% endif %}>
   <div class="card-header">
-    <h2 class="card-title" id="listen-title">Listeners not on loopback</h2>
+    <h2 class="card-title" id="listen-title">Listeners not on loopback</h2>{{ src("src-ports", v.src.ports) }}
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.listeners|length }} total</div>
   </div>
   {% if v.ports_state.state not in ('ok',) and not v.listeners %}
@@ -24,8 +27,8 @@
       </tr></thead>
       <tbody>
         {% for r in v.listeners %}
-        <tr data-row>
-          <td class="font-monospace" data-v="{{ r.port_v }}">{{ r.port }}</td>
+        <tr data-row id="{{ r.anchor }}">
+          <td class="font-monospace" data-v="{{ r.port_v }}">{{ r.port }}{{ src("src-l-" ~ loop.index, r.src) }}</td>
           <td class="font-monospace">{{ r.addresses }}</td>
           <td><span class="badge {{ r.reach_badge }}">{{ r.reach }}</span></td>
           <td><span class="badge {{ r.fw_badge }}">{{ r.fw }}</span><div class="text-secondary small">{{ r.fw_why }}</div></td>
@@ -44,19 +47,19 @@
 
 <section class="card mb-4" id="firewall" aria-labelledby="fw-title" data-section{% if not v.firewall.chains %} data-empty{% endif %}>
   <div class="card-header">
-    <h2 class="card-title" id="fw-title">Firewall input chains</h2>
+    <h2 class="card-title" id="fw-title">Firewall input chains</h2>{{ src_button("src-firewall", "Firewall") }}
     <div class="card-actions text-secondary">{{ v.firewall.backend or '' }}{% if v.firewall.duplicates %} · <span class="text-orange">{{ v.firewall.duplicates }} duplicate rules</span>{% endif %}</div>
   </div>
   {% if v.firewall_state.state != 'ok' %}
   <div class="card-body text-secondary">{{ v.firewall_state.reason }}</div>
   {% elif not v.firewall.chains %}
-  <div class="card-body text-secondary">No base chain on the input hook, so nothing filters inbound traffic.</div>
+  <div class="card-body text-secondary">No input chain, so nothing filters inbound traffic.</div>
   {% else %}
   <div class="list-group list-group-flush">
     {% for c in v.firewall.chains %}
     <div class="list-group-item" data-row>
       <div class="d-flex flex-wrap gap-2 align-items-baseline">
-        <strong class="font-monospace">{{ c.name }}</strong>
+        <strong class="font-monospace">{{ c.name }}</strong>{{ src("src-ch-" ~ loop.index, c.src) }}
         <span class="badge {{ 'bg-green-lt' if c.default == 'drop' else 'bg-orange-lt' }}">default {{ c.default }}</span>
         <span class="text-secondary">policy {{ c.policy }}</span>
         {% if c.accept_all %}<span class="badge bg-red-lt">accepts everything</span>{% endif %}
@@ -74,7 +77,7 @@
 
 <section class="card mb-4" id="forwards" aria-labelledby="fwd-title" data-section{% if not v.firewall.forwards %} data-empty{% endif %}>
   <div class="card-header">
-    <h2 class="card-title" id="fwd-title">Port forwards (DNAT)</h2>
+    <h2 class="card-title" id="fwd-title">Port forwards (DNAT)</h2>{{ src_button("src-firewall", "Firewall") }}
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.firewall.forwards|length }} total</div>
   </div>
   {% if not v.firewall.forwards %}
@@ -89,7 +92,7 @@
           <td>{{ f.family }}</td>
           <td>{{ f.proto }}</td>
           <td class="font-monospace {{ 'text-red' if f.wide }}">{{ f.ports }}</td>
-          <td class="font-monospace">{{ f.to }}</td>
+          <td class="font-monospace">{{ f.to }}{{ src("src-f-" ~ loop.index, f.src) }}</td>
           <td class="small">{{ f.conditions or 'always' }}</td>
           <td>{{ f.copies }}</td>
         </tr>
@@ -103,7 +106,7 @@
 
 <section class="card" id="docker-published" aria-labelledby="dp-title" data-section{% if not v.docker %} data-empty{% endif %}>
   <div class="card-header">
-    <h2 class="card-title" id="dp-title">Docker published ports</h2>
+    <h2 class="card-title" id="dp-title">Docker published ports</h2>{{ src("src-docker", v.src.docker) }}
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.docker|length }} total</div>
   </div>
   {% if not v.docker %}
@@ -115,9 +118,9 @@
       <tbody>
         {% for d in v.docker %}
         <tr data-row>
-          <td><strong>{{ d.container }}</strong></td>
+          <td><strong>{{ d.container }}</strong>{{ src("src-d-" ~ loop.index, d.src) }}</td>
           <td>{{ d.status }}</td>
-          <td class="font-monospace {{ 'text-red' if d.wide }}">{{ d.published }}</td>
+          <td class="font-monospace">{% if d.wide %}<span class="text-red">{{ d.published }}</span> <span class="badge bg-red-lt">all interfaces</span>{% else %}{{ d.published }}{% endif %}</td>
           <td class="font-monospace">{{ d.target }}</td>
         </tr>
         {% endfor %}

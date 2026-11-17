@@ -51,6 +51,9 @@ def merge_props(unit: dict, unit_props: dict, service_props: dict) -> dict:
         "main_pid": _num(service_props.get("MainPID")) or None,
         "result": service_props.get("Result"),
         "cgroup": service_props.get("ControlGroup") or None,
+        # Where the unit is defined (org.freedesktop.systemd1(5), Unit interface).
+        "fragment": unit_props.get("FragmentPath") or None,
+        "dropins": list(unit_props.get("DropInPaths") or []),
     })
     return unit
 

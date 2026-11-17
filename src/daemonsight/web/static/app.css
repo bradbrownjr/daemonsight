@@ -27,6 +27,27 @@ html:not(.ds-js) .ds-js-only { display: none !important; }
 th[aria-sort="ascending"] .ds-sort::after { content: "\25B2"; opacity: 1; }
 th[aria-sort="descending"] .ds-sort::after { content: "\25BC"; opacity: 1; }
 th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--tblr-primary); }
+tr:target > td { background: var(--tblr-primary-lt); }
+/* Source panels (_macros.html). Native popovers; hidden where unsupported. */
+.ds-no-popover .ds-src-btn { display: none; }
+.ds-src-btn { all: unset; cursor: pointer; display: inline-flex; vertical-align: -3px; margin-left: .35rem;
+  color: var(--tblr-secondary); border-radius: 50%; }
+.ds-src-btn:hover { color: var(--tblr-primary); }
+.ds-src-btn:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; }
+/* .card sets display and position, which would beat the browser's popover rules. */
+.ds-pop:not(:popover-open) { display: none; }
+.ds-pop { position: fixed; inset: 0; height: fit-content;
+  width: min(38rem, calc(100vw - 32px)); max-height: 80vh; overflow: auto; padding: 0; margin: auto;
+  border: 1px solid var(--tblr-border-color); color: var(--tblr-body-color); text-transform: none;
+  font-weight: normal; letter-spacing: normal; text-align: left; white-space: normal; }
+.ds-pop::backdrop { background: rgba(0, 0, 0, .35); }
+.ds-pop .card-title { font-family: inherit; }
+.ds-src-list { display: grid; grid-template-columns: minmax(7rem, auto) 1fr; gap: .4rem .75rem; margin: .25rem 0 0; }
+.ds-src-list dt { font-weight: 600; }
+.ds-src-list dd { margin: 0; display: flex; gap: .5rem; align-items: flex-start; min-width: 0; }
+.ds-copy-text { white-space: pre-wrap; overflow-wrap: anywhere; flex: 1 1 auto; min-width: 0; }
+.ds-copy { flex: 0 0 auto; }
+@media (max-width: 480px) { .ds-src-list { grid-template-columns: 1fr; } .ds-src-list dt { margin-top: .4rem; } }
 /* Width classes for progress bars, pct-0 to pct-100. */
 .pct-0 { width: 0%; }
 .pct-1 { width: 1%; }

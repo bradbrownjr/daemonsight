@@ -141,6 +141,20 @@ there is no custom CSS to maintain.
 Pages: Overview, Exposure, Caddy routes, Services and containers, fail2ban,
 Vulnerabilities.
 
+Source panels: every card and most rows have an (i) button. It opens a panel
+with two parts. "Read from" says how DaemonSight got the data (the D-Bus call,
+the API path, the socket command). "Check it yourself" lists the unit file and
+drop-ins, the Compose folder and files, a jail's log paths, and read-only
+commands to copy (`systemctl status`, `journalctl -u`, `docker logs`,
+`fail2ban-client status`, `iptables -S`, `ss -ltnp`). Some entries link to the
+row that owns the item: a port links to its unit or container. A `[links]`
+table in the config adds a web UI link per source, such as the OPNsense Caddy
+page. The panels are native HTML popovers, so they need no script library and
+work under the CSP. The 30-second refresh waits while one is open. The unit
+file comes from the `FragmentPath` and `DropInPaths` properties [1]; the
+Compose folder and files come from the labels Compose sets on each container
+(`com.docker.compose.project.working_dir`, `...config_files`) [10].
+
 Access: the web process binds to 127.0.0.1 (behind Caddy) or to the WireGuard
 address, never to a public address. It also has its own login (one admin
 password, argon2 hash, session cookie), so a Caddy mistake doesn't expose it.
@@ -176,6 +190,18 @@ snapshots read-only on a tunnel address with a per-host token. One install's
 web UI lists the other hosts and pulls from them. The hub should sit on the
 home LAN and pull from the VPS, not the other way round, so a compromised VPS
 holds no credential or route into the LAN.
+
+Hub as a container image: publish the web UI as an image on GitHub Container
+Registry (`ghcr.io/bradbrownjr/daemonsight`), built by GitHub Actions on each
+release tag. The hub runs on a home server such as Unraid and pulls from
+collectors installed natively on each Linux host (LXC, VPS). Collectors stay
+native: they need root, the host's D-Bus, `/proc` and netlink, which a
+container would only get by giving up its isolation. The hub container needs
+none of that. It keeps its own SQLite file on a volume, runs as a non-root
+user, and reaches each collector over a private tunnel (WireGuard or
+Tailscale). The remote sources in phase 2b (OPNsense, Unraid) fit the hub
+too, since they are API calls from the LAN. That gives one page for the whole
+home and VPS setup. An Unraid template can come later.
 
 ## Remote sources (phase 2b)
 
@@ -292,3 +318,4 @@ monitoring on the host; these rules say which process is responsible:
 7. Trivy OS package scanning: https://trivy.dev/v0.43/docs/scanner/vulnerability/os
 8. Trivy rootfs and JSON reporting: https://trivy.dev/docs/latest/target/rootfs/ and https://trivy.dev/docs/latest/configuration/reporting/
 9. debsecan(1), Debian 12: https://manpages.debian.org/bookworm/debsecan/debsecan.1.en.html
+10. Docker Compose labels: https://github.com/docker/compose/blob/main/pkg/api/labels.go

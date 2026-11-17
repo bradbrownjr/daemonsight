@@ -1,9 +1,10 @@
+{% from "_macros.html" import src, src_button, src_panel %}
 <div id="live" hx-get="/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-swap="outerHTML" hx-select="#live-data" hx-target="#live-data">
 <div id="live-data">
 {% if v %}
 <section class="card mb-4" id="containers" aria-labelledby="ctr-title" data-section{% if not v.containers %} data-empty{% endif %}>
   <div class="card-header">
-    <h2 class="card-title" id="ctr-title">Containers</h2>
+    <h2 class="card-title" id="ctr-title">Containers</h2>{{ src("src-docker", v.src.docker) }}
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.containers|length }} total</div>
   </div>
   {% if v.docker_state.state == 'unavailable' %}
@@ -19,14 +20,14 @@
       <tbody>
         {% for c in v.containers %}
         <tr id="ctr-{{ c.name }}" data-row>
-          <td><strong>{{ c.name }}</strong></td>
+          <td><strong>{{ c.name }}</strong>{{ src("src-c-" ~ loop.index, c.src) }}</td>
           <td class="font-monospace">{{ c.image }}</td>
           <td><span class="badge {{ c.status_badge }}">{{ c.status }}{{ c.exit }}</span>{% if c.oom %} <span class="badge bg-red-lt">OOM</span>{% endif %}</td>
           <td>{% if c.health_bad %}<span class="text-red">{{ c.health }}</span>{% else %}{{ c.health }}{% endif %}</td>
           <td data-v="{{ c.restarts }}">{{ c.restarts }}<div class="text-secondary small">policy {{ c.policy }}</div></td>
           <td data-v="{{ c.cpu_v }}">{{ c.cpu }}</td>
           <td data-v="{{ c.mem_v }}">{{ c.mem }}</td>
-          <td class="font-monospace">{% for p in c.ports %}<div class="{{ 'text-red' if p.wide }}">{{ p.text }}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
+          <td class="font-monospace">{% for p in c.ports %}<div>{% if p.wide %}<span class="text-red">{{ p.text }}</span> <span class="badge bg-red-lt">all interfaces</span>{% else %}{{ p.text }}{% endif %}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
           <td><button type="button" class="btn btn-sm" hx-get="/partials/logs/{{ c.name|urlencode }}" hx-target="#logs" hx-swap="outerHTML" aria-label="Show logs for {{ c.name }}">Logs</button></td>
         </tr>
         {% endfor %}
@@ -47,7 +48,7 @@
 {% if v %}
 <section class="card mb-4" id="units" aria-labelledby="units-title" data-section{% if v.systemd_state.state != 'ok' and not v.units %} data-empty{% endif %}>
   <div class="card-header flex-wrap gap-2">
-    <h2 class="card-title" id="units-title">systemd services</h2>
+    <h2 class="card-title" id="units-title">systemd services</h2>{{ src("src-systemd", v.src.systemd) }}
     <div class="btn-group" role="group" aria-label="Filter units">
       {% for key, label in [('active', 'Active'), ('failed', 'Failed'), ('all', 'All')] %}
       <a class="btn btn-sm{{ ' active' if v.unit_filter == key }}" href="/services?units={{ key }}#units" {% if v.unit_filter == key %}aria-current="true"{% endif %}>{{ label }}{% if key == 'failed' and v.unit_counts.get('failed') %} <span class="badge bg-red text-red-fg ms-1">{{ v.unit_counts.failed }}</span>{% endif %}</a>
@@ -64,7 +65,7 @@
       <tbody>
         {% for u in v.units %}
         <tr id="unit-{{ u.name }}" data-row>
-          <td><strong>{{ u.name }}</strong><div class="text-secondary small">{{ u.description }}</div></td>
+          <td><strong>{{ u.name }}</strong>{{ src("src-u-" ~ loop.index, u.src) }}<div class="text-secondary small">{{ u.description }}</div></td>
           <td><span class="badge {{ u.badge }}">{{ u.active }}</span></td>
           <td>{{ u.sub }}{% if u.result and u.result != 'success' %} <span class="text-secondary">({{ u.result }})</span>{% endif %}</td>
           <td data-v="{{ u.since_v }}">{{ u.since }}</td>
@@ -84,7 +85,7 @@
 
 <section class="card" id="ports" aria-labelledby="ports-title" data-section{% if not v.listeners %} data-empty{% endif %}>
   <div class="card-header">
-    <h2 class="card-title" id="ports-title">Listening sockets</h2>
+    <h2 class="card-title" id="ports-title">Listening sockets</h2>{{ src("src-ports", v.src.ports) }}
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.listeners|length }} total</div>
   </div>
   {% if not v.owners_known %}
@@ -95,8 +96,8 @@
       <thead><tr><th data-sort="num">Port</th><th data-sort="text">Bound to</th><th data-sort="text">Reach</th><th data-sort="text">Process</th><th data-sort="text">Owner</th></tr></thead>
       <tbody>
         {% for r in v.listeners %}
-        <tr data-row>
-          <td class="font-monospace" data-v="{{ r.port_v }}">{{ r.port }}</td>
+        <tr id="port-{{ r.port|replace('/', '-') }}" data-row>
+          <td class="font-monospace" data-v="{{ r.port_v }}">{{ r.port }}{{ src("src-p-" ~ loop.index, r.src) }}</td>
           <td class="font-monospace">{{ r.addresses }}</td>
           <td><span class="badge {{ r.scope_badge }}">{{ r.scope }}</span></td>
           <td>{{ r.process }}</td>

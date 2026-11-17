@@ -242,9 +242,9 @@ def expose_forward_all(snaps, cfg, ctx) -> list[Finding]:
             out.append(Finding(
                 "expose.forward_all", f"{f['family']} {f['proto']} {f['to']}", "low",
                 f"{proto} forward to {f['to']} relies on the provider firewall",
-                f"The rule forwards {f['ports']}{where}. Only the ports the provider firewall allows arrive, "
-                f"so today that is {', '.join(map(str, reach)) or 'none'}. Any port added to the provider "
-                f"policy later goes to {f['to']} too. Listing those ports in the rule removes the dependence.",
+                f"The rule forwards {f['ports']}{where}. The provider firewall lets in "
+                f"{', '.join(map(str, reach)) or 'none of them'}. A port added to the provider policy later "
+                f"goes to {f['to']} as well. Listing the ports in the rule removes that dependence.",
                 "/exposure#forwards"))
             continue
         out.append(Finding(
@@ -272,8 +272,9 @@ def firewall_default_accept(snaps, cfg, ctx) -> list[Finding]:
         note = (f" The ACCEPT rules for {', '.join(accepts)} change nothing while the default is accept."
                 if accepts else "")
         if cfg.exposure.upstream_allow:
-            note += (" A provider firewall in front of the host limits what arrives "
-                     f"({', '.join(cfg.exposure.upstream_allow)}), so this is a second line of defence missing.")
+            note += (" The provider firewall in front of the host lets in "
+                     f"{', '.join(cfg.exposure.upstream_allow)}. If that policy changes, nothing on the host "
+                     "backs it up.")
         out.append(Finding(
             "firewall.default_accept", family, "low" if cfg.exposure.upstream_allow else "medium",
             f"{label} input accepts all traffic by default",
@@ -292,8 +293,8 @@ def firewall_duplicates(snaps, cfg, ctx) -> list[Finding]:
              f"variable that was never filled in.") if odd else ""
     return [Finding("firewall.duplicate_rules", "dups", "low",
                     f"{data['duplicates']} firewall rules are duplicates",
-                    "The same rule appears more than once, usually because a script (a WireGuard PostUp, "
-                    "say) adds rules each time it runs without removing them." + extra, "/exposure#firewall")]
+                    "The same rule appears more than once. A script that adds rules each time it runs and "
+                    "never removes them, such as a WireGuard PostUp, leaves this behind." + extra, "/exposure#firewall")]
 
 
 def _local_listener(ports: dict, proto: str, port: int) -> bool:
@@ -323,8 +324,8 @@ def route_upstream_down(snaps, cfg, ctx) -> list[Finding]:
                     out.append(Finding(
                         "route.upstream_down", f"{site['host']} {u['text']}", "medium",
                         f"{site['host']}: nothing listens on {u['text']}",
-                        "Caddy proxies this site to an address on this host where no service is listening, "
-                        "so visitors get a 502.", "/routes"))
+                        f"Caddy proxies this site to {u['text']}, and nothing on this host listens there. "
+                        "Visitors get a 502 error.", "/routes"))
     return out
 
 
@@ -391,7 +392,7 @@ def jail_log_missing(snaps, cfg, ctx) -> list[Finding]:
             if not lp["exists"]:
                 out.append(Finding("jail.log_missing", f"{j['name']} {lp['path']}", "medium",
                                    f"Jail {j['name']} watches a missing file",
-                                   f"{lp['path']} does not exist, so the jail sees nothing there.", "/fail2ban"))
+                                   f"{lp['path']} does not exist.", "/fail2ban"))
     return out
 
 

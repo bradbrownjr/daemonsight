@@ -55,6 +55,12 @@
 # [exposure.jail_covers]
 # nginx-http-auth = ["nginx.service"]
 
+# Web UIs to link from each source's (i) panel, keyed by source name:
+# system, systemd, ports, docker, caddy, fail2ban, firewall.
+# [links]
+# caddy = "https://router.example.lan/ui/caddy/reverse_proxy"
+# firewall = "https://cloud-panel.example.com/"
+
 [thresholds]
 # disk_percent = 90
 # memory_percent = 90
