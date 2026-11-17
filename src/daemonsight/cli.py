@@ -22,6 +22,8 @@ GROUP = "daemonsight"
 def _setup_logging(verbose: bool) -> None:
     logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO,
                         format="%(levelname)s %(name)s: %(message)s")
+    # httpx logs every request at INFO: one line per upload.
+    logging.getLogger("httpx").setLevel(logging.DEBUG if verbose else logging.WARNING)
 
 
 def _group_id() -> int | None:

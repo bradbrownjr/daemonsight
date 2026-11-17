@@ -1,0 +1,24 @@
+# DaemonSight hub settings. The container copies this file to
+# /data/config.toml on its first start; edit that copy and restart the
+# container. Every setting is in packaging/config.example.toml.
+
+host_id = "hub"
+data_dir = "/data"
+
+[web]
+# All addresses inside the container. Publish the port to a LAN address
+# only (docker run -p 192.168.1.20:8466:8466), never to the internet.
+listen = "0.0.0.0"
+port = 8466
+password_file = "/data/password"
+secret_file = "/data/secret"
+
+# Your reverse proxy's address, so the login's rate limit and the upload
+# log see each visitor's own address instead of the proxy's.
+# trusted_proxies = ["192.168.1.1"]
+
+# Set true once the hub is only reached over HTTPS.
+# secure_cookies = true
+
+[hub]
+enabled = true

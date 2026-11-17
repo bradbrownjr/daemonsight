@@ -32,7 +32,9 @@ socket, the fail2ban socket and the firewall needs it.
   | Ports, system | psutil, which reads `/proc` |
 
 - **No commands from anywhere.** The collector takes no input from the web UI
-  or the network. Actions such as ban or restart would need their own design.
+  or the network. Its one outbound connection is the upload to a hub, when
+  `[upload]` is set, and it reads nothing from the reply but a sequence
+  number. Actions such as ban or restart would need their own design.
 - **fail2ban replies are unpickled safely.** fail2ban's socket speaks Python
   pickle. The collector's unpickler accepts builtin data types and exception
   names only, so a reply can't run code.
@@ -134,31 +136,45 @@ APIs.
 - **Read requests only.** The client sends no request that changes
   anything.
 
-## The hub (planned)
+## The hub
 
-One install will show every host. Collectors push to it over HTTPS, the way
-RMM and Wazuh agents report in. Nothing connects to a collector, so no host
-needs a VPN or an open inbound port for DaemonSight. The full design is in
-[docs/DESIGN.md](docs/DESIGN.md), "Hub (planned)".
+One install, the hub, shows every host. Collectors push to it over HTTPS,
+the way RMM and Wazuh agents report in. Nothing connects to a collector, so no
+host needs a VPN or an open inbound port for DaemonSight. The design is in
+[docs/DESIGN.md](docs/DESIGN.md), "Hub".
 
 - **One token per host.** It can only write that host's data and gives no
   access to the hub's network or to other hosts. The hub stores only a
-  SHA-256 of each token and compares in constant time. Deleting a token
-  revokes the host.
+  SHA-256 of each token. `daemonsight hub revoke <host>` deletes it. On the
+  host, `daemonsight set-upload-token` saves it readable by root only.
+- **HTTPS only.** The collector refuses an upload address that isn't
+  `https://` (except a hub on the same machine) and always checks the hub's
+  certificate, with no setting to turn that off.
 - **No replays.** Each upload has a sequence number that must go up.
-- **Every upload is checked:** JSON only, a size limit, a schema check per
-  source, and a rate limit per token. Refused uploads are logged with the
-  sender's address.
-- **TLS is always verified.** The collector checks the hub's certificate
-  against the system CA store, with no setting to turn that off.
+- **Every upload is checked before anything is stored:**
+  - gzip or plain JSON only, at most 8 MiB as sent and 48 MiB unpacked
+  - every field's type and length, the shape of each source's data, and no
+    unknown fields
+  - links must be paths on the hub's own site
+  - a collector can't open or close the hub's own `host.*` findings
+  - ten bad tokens from one address in five minutes block that address,
+    and one host may upload at most 120 times a minute
+- **Refusals are logged** as `Refused upload from <address>: <reason>`.
+  The fail2ban filter counts only bad tokens.
 - **The hub never sends commands.** Its reply carries only the last sequence
   number it accepted.
-- **The dashboard stays LAN-only.** Uploads from outside get their own
-  hostname at the proxy, open only to each remote collector's fixed address.
-- **The container runs as a non-root user,** with its database on a volume
-  and its config mounted read-only.
-- **Silence is a finding.** A host that misses three collect intervals raises
-  `host.silent`.
+- **The container runs as a non-root user** (uid 10001). Its config,
+  password, session secret and database are in its `/data` volume.
+- **Silence is a finding.** A host that misses three of its longest
+  intervals raises `host.silent`.
+
+Your part on the hub:
+
+- Publish the container's port to a LAN address only.
+- Keep the dashboard behind a LAN-only access list at the proxy.
+- Give uploads from outside their own hostname, open only to each remote
+  collector's fixed address and only for `/api/v1/ingest`.
+- Set `web.trusted_proxies` to the proxy's address.
 
 ## What DaemonSight can't protect against
 

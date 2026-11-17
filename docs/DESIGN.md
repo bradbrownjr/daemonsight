@@ -17,7 +17,7 @@ Targets for v1:
 
 - Log storage or shipping. DaemonSight reads logs to answer specific questions; it is not a SIEM.
 - Changing the host. v1 is read-only: no bans, restarts or firewall edits.
-- More than one host per install. Each host runs its own copy. The hub comes later (see "Hub (planned)").
+- A hub that ships as anything but a container. A collector-and-web install can't also be a hub.
 - Podman, Kubernetes, nginx, Apache, iptables-legacy.
 
 ## Architecture
@@ -178,17 +178,18 @@ supports ntfy and SMTP email. Daily digest optional.
 1. Skeleton: config, SQLite, collector loop, system/systemd/ports/Docker sources, Overview and Services pages, login.
 2. Caddy, fail2ban, nftables sources. Exposure, Routes and fail2ban pages. The `expose`, `route` and `jail` rules.
    2b. Remote sources: the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware) and the Unraid API (array, disks, containers, VMs). Each shows as its own host. See "Remote sources".
+   2c. The hub: collectors upload to one install that shows every host. See "Hub". Done.
 3. Scanner unit, Trivy and debsecan. Vulnerabilities page. The `cve` rules.
 4. Alerts, recent-changes feed, history charts.
 5. `.deb` package and docs.
 
-Later: the hub (a central view across hosts), actions (ban, unban, restart), CrowdSec,
+Later: actions (ban, unban, restart), CrowdSec,
 Podman, and an optional check from outside the host to confirm what's
 reachable from the internet.
 
-See "Hub (planned)" for the central view.
+See "Hub" for the central view.
 
-## Hub (planned)
+## Hub
 
 One install acts as the hub and shows every host. Collectors push to it over
 HTTPS, the way RMM agents and Wazuh agents report in: a Wazuh agent opens the
@@ -211,34 +212,67 @@ what that address accepts.
 
 ### Upload
 
-The collector setting `[hub]` has `url` and `token_file` (root-only, under
-`/etc/daemonsight/`). After each collect cycle the collector sends one
-`POST` with `Authorization: Bearer <token>` and a gzipped JSON body:
-`host`, `seq`, `sent_at`, and the snapshots, events, metrics and open
-findings since the last upload the hub accepted.
+A collector with a URL under `[upload]` runs an uploader beside its sources
+(`collector/upload.py`). Every `interval` seconds (30) it sends one `POST` to
+`/api/v1/ingest` with `Authorization: Bearer <token>` and a gzipped JSON body:
+`host`, `seq`, `sent_at`, its version, its longest interval, its own
+`[exposure]` and `[links]` settings and ephemeral port range, the snapshots
+that changed, the metrics and events the hub hasn't confirmed (up to 20,000
+and 1,000 a time; the rest follows a second later), and its open findings.
 
-- **Tokens:** 32 random bytes, created on the hub with one command per host.
-  The hub stores only a SHA-256 of each token, paired with one host id, and
-  compares in constant time. A body whose `host` doesn't match its token's
-  host is refused. Revoking a host deletes its token.
-- **Order:** `seq` must be higher than the last one accepted for that host.
-  The reply carries the last accepted `seq`, and the collector resends from
-  there. A replayed or out-of-order upload is refused.
-- **Checks:** JSON only, a size limit (set from real snapshot sizes), a schema
-  check per source, and a rate limit per token. Anything a host sends is
-  untrusted; the pages already escape all text.
-- **TLS:** the collector verifies the hub's certificate against the system
-  CA store and has no setting to turn that off.
-- **No commands:** the reply never carries instructions. Actions (ban, unban,
-  restart) would need their own design.
+- **Cursors** follow write order: the last snapshot sent per source, the
+  last metric row, the last event id. They move only when the hub answers
+  200, so a down hub loses nothing. Timestamps can't be cursors: a source
+  stamps its reading when it starts and writes it when it finishes, so a
+  slow source can write an older time after a fast one wrote a newer one.
+- **Resending is harmless.** If the hub stored an upload but the reply was
+  lost, the collector sends the same data again. Snapshots only move
+  forward, metric points with the same time and name are replaced, and
+  events are keyed by their id on the collector (`events.src_id`).
+- **Tokens:** 32 random bytes from `daemonsight hub add-host`. The hub
+  stores only a SHA-256 of each token, paired with one host id, and looks
+  tokens up by that hash. A body whose `host` doesn't match its token's
+  host is refused. `hub revoke` deletes the token; `--purge` also deletes
+  the host's data. On the collector, `set-upload-token` writes the token
+  root-only (0600).
+- **Order:** `seq` is the collector's clock in milliseconds and must be
+  higher than the last one accepted, so a reinstalled collector still
+  counts up. An older one gets 409 with the hub's last `seq`, and the
+  collector jumps past it.
+- **Checks:** gzip or plain JSON only; 8 MiB before unpacking and 48 MiB
+  after (a small gzip can unpack to gigabytes); a pydantic schema that sets
+  the type and length of every field (`hub.py`); the top-level shape of
+  each source's data; links only as paths on the site; no `host.*` findings
+  from a collector; NaN and Infinity refused. Ten bad tokens from one address
+  in five minutes block that address; one host may upload 120 times a minute.
+- **TLS:** `[upload] url` must be `https://`, except to a hub on the same
+  machine, and the certificate is checked against the system CA store with
+  no setting to turn that off.
+- **No commands:** the reply is `{"last_seq": n}` and nothing else. Actions
+  (ban, unban, restart) would need their own design.
 - **Findings:** each collector works out its own findings with its own
-  `[exposure]` settings and sends them. The hub adds `host.silent` (High) when
-  a host misses three of its longest collect intervals, and notes clock skew
-  over five minutes between `sent_at` and the time of arrival.
+  `[exposure]` settings and sends them. The hub adds `host.silent` (High)
+  when a host misses three of its longest intervals, or never reports within
+  ten minutes of being added, and `host.clock_skew` (Low) when `sent_at` is
+  more than five minutes off the hub's clock.
+- **Logging:** every refusal is logged as `Refused upload from <address>:
+  <reason>`. The fail2ban filter counts only the bad-token ones, so a
+  collector that sends one malformed upload isn't banned.
 
 A compromised host can still send false data about itself. That is true of
 any agent, push or pull. `host.silent` and a provider's own alarms (CPU,
 traffic) are the checks it can't forge.
+
+### Pages
+
+On a hub, `/` lists the hosts: state, last upload, open findings by
+severity, system, version and the address it uploads from. Each host's pages
+are the usual ones under `/h/<host>/`, built with that host's own settings
+from its last upload, so its Exposure page uses its own `expected_public`
+and `upstream_allow`. A single-host install keeps its URLs.
+
+The hub's web process is the database writer (it stores uploads); on a host
+the web process stays read-only.
 
 ### Reverse proxy
 
@@ -246,17 +280,23 @@ The hub's web UI and its upload route share one port, behind Caddy:
 
 - The dashboard keeps a LAN-only access list.
 - Uploads from outside use their own hostname, with an access list limited
-  to each remote collector's fixed address.
-- Collectors on the LAN post to the hub's LAN address.
+  to each remote collector's fixed address, proxying only
+  `/api/v1/ingest`.
+- Set `web.trusted_proxies` to the proxy's address.
 
 ### Container image
 
 The hub ships as an image on GitHub Container Registry
-(`ghcr.io/bradbrownjr/daemonsight`), built by GitHub Actions on each release
-tag. It runs as a non-root user, with its SQLite on a volume and its config
-mounted read-only, and suits a home server such as Unraid. The remote sources
-in phase 2b (OPNsense, Unraid) run in the hub too, since they are API calls
-from the LAN. An Unraid template can come later.
+(`ghcr.io/bradbrownjr/daemonsight`), built by `.github/workflows/image.yml`
+after the tests pass: `edge` and `sha-<commit>` from every push to `main`,
+the version and `latest` from a `v*` tag. amd64 only for now. The base image
+and every action are pinned to a digest or commit.
+
+It runs as uid 10001 with everything in `/data`: the config (written from
+`packaging/docker/hub.toml` on first start), the password, the session
+secret and the database. The remote sources in phase 2b (OPNsense, Unraid)
+will run in the hub, since they are API calls from the LAN. An Unraid
+template can come later.
 
 Collectors stay native packages on each Linux host (LXC, VPS). They need root,
 the host's D-Bus, `/proc` and netlink, which a container would only get by

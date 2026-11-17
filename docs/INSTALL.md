@@ -1,7 +1,7 @@
 # Install, configure and update
 
-DaemonSight runs on Debian 12 or 13 with Python 3.11 or newer. Every command
-here runs on the server being watched.
+DaemonSight runs on Debian 12 or 13 with Python 3.11 or newer. Commands run
+on the server being watched, except under "Run a hub".
 
 ## Install
 
@@ -149,6 +149,130 @@ caddy = "https://router.example.lan/ui/caddy/reverse_proxy"
 
 Sources: `system`, `systemd`, `ports`, `docker`, `caddy`, `fail2ban`,
 `firewall`.
+
+## Run a hub
+
+A hub is one more install that shows every host on one page. Each host
+keeps its collector and uploads to the hub over HTTPS; nothing connects to
+the hosts. The hub runs as a container. [SECURITY.md](../SECURITY.md#the-hub)
+lists what protects it.
+
+### Start the container
+
+The container runs as uid 10001 and keeps everything in `/data`: its
+config, password, session secret and database. Create that folder with the
+right owner first, then start the container. On Unraid:
+
+```bash
+mkdir -p /mnt/user/appdata/daemonsight
+chown 10001:10001 /mnt/user/appdata/daemonsight
+docker run -d --name daemonsight --restart unless-stopped \
+  -p 8466:8466 \
+  -v /mnt/user/appdata/daemonsight:/data \
+  ghcr.io/bradbrownjr/daemonsight:edge
+docker exec -it daemonsight daemonsight set-password
+```
+
+`edge` follows `main`. Once releases are tagged, use a version such as
+`:0.2.0`, or `:latest` for the newest release. Update with `docker pull` and
+a new container; the data stays in `/data`.
+
+On its first start the container writes `/data/config.toml`. Edit it to set
+your reverse proxy's address, then restart the container:
+
+```toml
+[web]
+trusted_proxies = ["192.168.1.1"]
+secure_cookies = true
+```
+
+Map port 8466 on a LAN address only. The page and the upload route share
+that port.
+
+### Put it behind a reverse proxy
+
+Give the dashboard a name only your LAN can reach. If a host outside your
+LAN uploads, give it a second name that accepts only that host's address and
+only the upload path. In Caddy:
+
+```
+daemonsight.example.lan {
+	@inside remote_ip 192.168.0.0/16
+	handle @inside {
+		reverse_proxy 192.168.1.20:8466
+	}
+	respond 403
+}
+
+upload.example.com {
+	@vps {
+		remote_ip 203.0.113.10
+		path /api/v1/ingest
+	}
+	handle @vps {
+		reverse_proxy 192.168.1.20:8466
+	}
+	respond 403
+}
+```
+
+Hosts on the LAN upload through the dashboard's name. Uploads need HTTPS, so
+both names need certificates.
+
+### Add a host
+
+On the hub, create the host and copy the token it prints. The token is shown
+once; the hub keeps only its hash.
+
+```bash
+docker exec -it daemonsight daemonsight hub add-host vps
+```
+
+On the host, with DaemonSight installed:
+
+```bash
+sudo daemonsight set-upload-token
+```
+
+Paste the token at the prompt. Then add this to
+`/etc/daemonsight/config.toml`. The `host_id` line goes at the top of the
+file, above every `[section]`, and must match the name you gave the hub:
+
+```toml
+host_id = "vps"
+
+[upload]
+url = "https://upload.example.com/api/v1/ingest"
+```
+
+Then restart the collector:
+
+```bash
+sudo systemctl restart daemonsight-collector
+journalctl -u daemonsight-collector -n 20
+```
+
+Within a minute the host shows as "Reporting" on the hub's Hosts page.
+The host's own web UI keeps working; stop it with
+`sudo systemctl disable --now daemonsight-web` if the hub is all you need.
+
+### Hosts that stop reporting
+
+A host that misses three of its longest intervals gets a "Stopped
+reporting" finding, and one added but never heard from gets "Never
+reported" after ten minutes. A host whose clock is more than five minutes
+off the hub's gets "Clock is off".
+
+When the hub is down, each collector keeps its data and sends the backlog
+once the hub is back.
+
+### Remove a host
+
+```bash
+docker exec daemonsight daemonsight hub list
+docker exec daemonsight daemonsight hub revoke vps            # its token stops working
+docker exec daemonsight daemonsight hub revoke vps --purge    # and its data is deleted
+```
 
 ## Update
 

@@ -2,7 +2,7 @@
 <section class="card" id="hosts" aria-labelledby="hosts-title" data-section{% if not v.hosts %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="hosts-title">Hosts</h2>
-    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.hosts|length }} hosts · {{ v.reporting }} reporting</div>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.hosts|length }} host{{ "s" if v.hosts|length != 1 }} · {{ v.reporting }} reporting</div>
   </div>
   {% if not v.hosts %}
   <div class="card-body">

@@ -12,10 +12,11 @@
 ---
 
 **Status:** phase 2 of 5. The collector reads system health, systemd
-services, listening sockets, Docker, Caddy, fail2ban and nftables. The web UI
-has Overview, Exposure, Routes, Services and fail2ban pages. Remote sources
-(OPNsense and Unraid APIs) and CVE scanning come next. See
-[docs/DESIGN.md](docs/DESIGN.md).
+services, listening sockets, Docker, Caddy, fail2ban and the firewall. The
+web UI has Overview, Exposure, Routes, Services and fail2ban pages. A hub,
+shipped as a container, shows every host on one page; each host's collector
+uploads to it over HTTPS. Remote sources (OPNsense and Unraid APIs) and CVE
+scanning come next. See [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Install
 
@@ -35,7 +36,7 @@ The UI listens on `127.0.0.1:8466`. Open it over SSH
 to your LAN. Update later with `sudo daemonsight-update`.
 
 [docs/INSTALL.md](docs/INSTALL.md) covers the install options, reverse
-proxies, which ports to list as public, updating, and removal.
+proxies, which ports to list as public, running a hub, updating, and removal.
 
 ## Why
 

@@ -65,3 +65,16 @@
 # disk_percent = 90
 # memory_percent = 90
 # memory_minutes = 15
+
+[upload]
+# Send everything this host collects to a hub (docs/INSTALL.md, "Run a hub").
+# The hub's name for this host must match host_id at the top of this file.
+# url = "https://upload.example.com/api/v1/ingest"
+# token_file = "/etc/daemonsight/hub.token"   # written by: sudo daemonsight set-upload-token
+# interval = 30
+
+[hub]
+# Only on the hub (the container sets this). Receives uploads from collectors.
+# enabled = false
+# max_upload_mb = 8       # largest upload as sent
+# max_unpacked_mb = 48    # and once unpacked
