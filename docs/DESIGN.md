@@ -17,7 +17,7 @@ Targets for v1:
 
 - Log storage or shipping. DaemonSight reads logs to answer specific questions; it is not a SIEM.
 - Changing the host. v1 is read-only: no bans, restarts or firewall edits.
-- More than one host per install. Each host runs its own copy. A central view comes later.
+- More than one host per install. Each host runs its own copy. The hub comes later (see "Hub (planned)").
 - Podman, Kubernetes, nginx, Apache, iptables-legacy.
 
 ## Architecture
@@ -181,33 +181,91 @@ supports ntfy and SMTP email. Daily digest optional.
 4. Alerts, recent-changes feed, history charts.
 5. `.deb` package and docs.
 
-Later: a central view across hosts, actions (ban, unban, restart), CrowdSec,
+Later: the hub (a central view across hosts), actions (ban, unban, restart), CrowdSec,
 Podman, and an optional check from outside the host to confirm what's
 reachable from the internet.
 
-Central view plan: every install, full or `--collector`, can serve its
-snapshots read-only on a tunnel address with a per-host token. One install's
-web UI lists the other hosts and pulls from them. The hub should sit on the
-home LAN and pull from the VPS, not the other way round, so a compromised VPS
-holds no credential or route into the LAN.
+See "Hub (planned)" for the central view.
 
-Hub as a container image: publish the web UI as an image on GitHub Container
-Registry (`ghcr.io/bradbrownjr/daemonsight`), built by GitHub Actions on each
-release tag. The hub runs on a home server such as Unraid and pulls from
-collectors installed natively on each Linux host (LXC, VPS). Collectors stay
-native: they need root, the host's D-Bus, `/proc` and netlink, which a
-container would only get by giving up its isolation. The hub container needs
-none of that. It keeps its own SQLite file on a volume, runs as a non-root
-user, and reaches each collector over a private tunnel (WireGuard or
-Tailscale). The remote sources in phase 2b (OPNsense, Unraid) fit the hub
-too, since they are API calls from the LAN. That gives one page for the whole
-home and VPS setup. An Unraid template can come later.
+## Hub (planned)
+
+One install acts as the hub and shows every host. Collectors push to it over
+HTTPS, the way RMM agents and Wazuh agents report in: a Wazuh agent opens the
+connection to its server on TCP 1514 and enrolls on TCP 1515, which gives it
+its own key [11]. Nothing connects to a collector.
+
+Why push, not pull:
+
+- No VPN or inbound port on any host. A collector only makes outbound
+  HTTPS connections, so hosts behind NAT or CGNAT can report.
+- A collector holds one token that can only write its own host's data. That
+  token gives no access to the hub's network or to other hosts.
+- Each collector keeps its own SQLite, so when the hub is down it sends the
+  backlog later.
+- A host that stops reporting is a finding (`host.silent`). An intruder or
+  miner that stops the collector shows up that way.
+
+The cost is an upload address the internet can reach. The rules below limit
+what that address accepts.
+
+### Upload
+
+The collector setting `[hub]` has `url` and `token_file` (root-only, under
+`/etc/daemonsight/`). After each collect cycle the collector sends one
+`POST` with `Authorization: Bearer <token>` and a gzipped JSON body:
+`host`, `seq`, `sent_at`, and the snapshots, events, metrics and open
+findings since the last upload the hub accepted.
+
+- **Tokens:** 32 random bytes, created on the hub with one command per host.
+  The hub stores only a SHA-256 of each token, paired with one host id, and
+  compares in constant time. A body whose `host` doesn't match its token's
+  host is refused. Revoking a host deletes its token.
+- **Order:** `seq` must be higher than the last one accepted for that host.
+  The reply carries the last accepted `seq`, and the collector resends from
+  there. A replayed or out-of-order upload is refused.
+- **Checks:** JSON only, a size limit (set from real snapshot sizes), a schema
+  check per source, and a rate limit per token. Anything a host sends is
+  untrusted; the pages already escape all text.
+- **TLS:** the collector verifies the hub's certificate against the system
+  CA store and has no setting to turn that off.
+- **No commands:** the reply never carries instructions. Actions (ban, unban,
+  restart) would need their own design.
+- **Findings:** each collector works out its own findings with its own
+  `[exposure]` settings and sends them. The hub adds `host.silent` (High) when
+  a host misses three of its longest collect intervals, and notes clock skew
+  over five minutes between `sent_at` and the time of arrival.
+
+A compromised host can still send false data about itself. That is true of
+any agent, push or pull. `host.silent` and a provider's own alarms (CPU,
+traffic) are the checks it can't forge.
+
+### Reverse proxy
+
+The hub's web UI and its upload route share one port, behind Caddy:
+
+- The dashboard keeps a LAN-only access list.
+- Uploads from outside use their own hostname, with an access list limited
+  to each remote collector's fixed address.
+- Collectors on the LAN post to the hub's LAN address.
+
+### Container image
+
+The hub ships as an image on GitHub Container Registry
+(`ghcr.io/bradbrownjr/daemonsight`), built by GitHub Actions on each release
+tag. It runs as a non-root user, with its SQLite on a volume and its config
+mounted read-only, and suits a home server such as Unraid. The remote sources
+in phase 2b (OPNsense, Unraid) run in the hub too, since they are API calls
+from the LAN. An Unraid template can come later.
+
+Collectors stay native packages on each Linux host (LXC, VPS). They need root,
+the host's D-Bus, `/proc` and netlink, which a container would only get by
+giving up its isolation.
 
 ## Remote sources (phase 2b)
 
 Appliances that can't run the collector are read over their own APIs by a
 collector on the LAN. Each one is stored under its own `host` id, so the UI
-shows it as another host, and the central view later picks it up the same way.
+shows it as another host. On a hub install the hub runs these sources itself.
 Keys live in root-only files under `/etc/daemonsight/`, and the client sends
 only reads. Rows are marked unverified until they have run against your
 devices.
@@ -319,3 +377,4 @@ monitoring on the host; these rules say which process is responsible:
 8. Trivy rootfs and JSON reporting: https://trivy.dev/docs/latest/target/rootfs/ and https://trivy.dev/docs/latest/configuration/reporting/
 9. debsecan(1), Debian 12: https://manpages.debian.org/bookworm/debsecan/debsecan.1.en.html
 10. Docker Compose labels: https://github.com/docker/compose/blob/main/pkg/api/labels.go
+11. Wazuh architecture: https://documentation.wazuh.com/current/getting-started/architecture.html
