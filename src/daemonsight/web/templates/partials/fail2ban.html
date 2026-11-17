@@ -1,5 +1,5 @@
-{% from "_macros.html" import src, src_button, src_panel %}
-<div id="live" hx-get="/partials/fail2ban" hx-trigger="every 30s" hx-swap="outerHTML">
+{% from "_macros.html" import src, src_button, src_panel with context %}
+<div id="live" hx-get="{{ base }}/partials/fail2ban" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
 {{ src_panel("src-fail2ban", v.src.fail2ban) }}
 <section class="card mb-4" id="jails" aria-labelledby="jails-title" data-section{% if not v.jails %} data-empty{% endif %}>

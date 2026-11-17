@@ -1,8 +1,9 @@
 """SQLite storage.
 
-The collector is the only writer. The web process opens the file read-only.
-Every table carries a `host` column so a later hub can store several hosts
-in one database.
+On a host, the collector is the only writer and the web process opens the
+file read-only. On a hub, the hub's web process is the only writer: it stores
+what collectors upload. Every table carries a `host` column, so one database
+holds every host.
 
 Read-only access to a WAL database works when the -wal and -shm files exist
 and are readable (https://www.sqlite.org/wal.html, section 5). The collector
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -64,9 +65,29 @@ CREATE TABLE IF NOT EXISTS events (
     severity TEXT,
     title    TEXT NOT NULL,
     detail   TEXT,
-    link     TEXT
+    link     TEXT,
+    src_id   INTEGER  -- hub: the event's id on its collector, so a resent upload adds nothing
 );
 CREATE INDEX IF NOT EXISTS events_by_time ON events (host, ts);
+
+-- Collector: upload cursors. Hub: nothing yet.
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Hub: hosts allowed to upload, by the SHA-256 of their token.
+CREATE TABLE IF NOT EXISTS hosts (
+    id           TEXT PRIMARY KEY,
+    token_hash   TEXT NOT NULL UNIQUE,
+    created_at   REAL NOT NULL,
+    last_seq     INTEGER NOT NULL DEFAULT 0,
+    last_seen    REAL,
+    last_sent_at REAL,
+    max_interval REAL,
+    version      TEXT,
+    address      TEXT
+);
 """
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -113,6 +134,11 @@ def migrate(conn: sqlite3.Connection) -> None:
         raise RuntimeError(f"database schema {version} is newer than this DaemonSight ({SCHEMA_VERSION})")
     if version < SCHEMA_VERSION:
         conn.executescript(SCHEMA)
+        # Version 1 databases have events without src_id.
+        if "src_id" not in {r[1] for r in conn.execute("PRAGMA table_info(events)")}:
+            conn.execute("ALTER TABLE events ADD COLUMN src_id INTEGER")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS events_by_source "
+                     "ON events (host, src_id) WHERE src_id IS NOT NULL")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
@@ -147,8 +173,10 @@ def add_event(conn, host: str, ts: float, kind: str, title: str, *, severity: st
     )
 
 
-def reconcile_findings(conn, host: str, ts: float, current: list) -> list[tuple[str, object]]:
+def reconcile_findings(conn, host: str, ts: float, current: list,
+                       keep_prefix: str | None = None) -> list[tuple[str, object]]:
     """Make the open findings match `current` (a list of findings.Finding).
+    Rules starting with `keep_prefix` are left alone (the hub's own rules).
 
     Returns (change, finding) pairs where change is "opened" or "resolved".
     """
@@ -156,6 +184,7 @@ def reconcile_findings(conn, host: str, ts: float, current: list) -> list[tuple[
     open_rows = {
         (r["rule"], r["key"]): r
         for r in conn.execute("SELECT * FROM findings WHERE host = ? AND resolved_at IS NULL", (host,))
+        if not (keep_prefix and r["rule"].startswith(keep_prefix))
     }
     seen = set()
     conn.execute("BEGIN")
@@ -184,6 +213,38 @@ def reconcile_findings(conn, host: str, ts: float, current: list) -> list[tuple[
         conn.execute("ROLLBACK")
         raise
     return changes
+
+
+def set_finding(conn, host: str, ts: float, f, *, rule: str, key: str) -> str | None:
+    """Open, update or resolve one finding without touching the others.
+    `f` is a findings.Finding, or None to resolve. Returns "opened",
+    "resolved" or None."""
+    row = conn.execute("SELECT id FROM findings WHERE host = ? AND rule = ? AND key = ? AND resolved_at IS NULL",
+                       (host, rule, key)).fetchone()
+    if f is None:
+        if row:
+            conn.execute("UPDATE findings SET resolved_at = ? WHERE id = ?", (ts, row["id"]))
+            return "resolved"
+        return None
+    if row:
+        conn.execute("UPDATE findings SET severity=?, title=?, detail=?, link=?, last_seen=? WHERE id=?",
+                     (f.severity, f.title, f.detail, f.link, ts, row["id"]))
+        return None
+    conn.execute("INSERT INTO findings (host, rule, key, severity, title, detail, link, first_seen, last_seen) "
+                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (host, rule, key, f.severity, f.title, f.detail, f.link, ts, ts))
+    return "opened"
+
+
+def get_meta(conn, key: str, default: str | None = None) -> str | None:
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_meta(conn, values: dict[str, object]) -> None:
+    conn.executemany("INSERT INTO meta (key, value) VALUES (?, ?) "
+                     "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                     [(k, str(v)) for k, v in values.items()])
 
 
 # --- reads (collector and web) --------------------------------------------

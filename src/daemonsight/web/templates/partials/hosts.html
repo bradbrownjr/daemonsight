@@ -1,0 +1,34 @@
+<div id="live" hx-get="/partials/hosts" hx-trigger="every 30s" hx-swap="outerHTML">
+<section class="card" id="hosts" aria-labelledby="hosts-title" data-section{% if not v.hosts %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="hosts-title">Hosts</h2>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.hosts|length }} hosts · {{ v.reporting }} reporting</div>
+  </div>
+  {% if not v.hosts %}
+  <div class="card-body">
+    <p>No hosts yet. Add one on the hub, then put its token on the host:</p>
+    <pre class="mb-0">daemonsight hub add-host &lt;name&gt;</pre>
+  </div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="hosts">
+      <thead><tr><th data-sort="text">Host</th><th data-sort="text">State</th><th data-sort="num">Last upload</th><th data-sort="num">Findings</th><th data-sort="text">System</th><th data-sort="text">Version</th><th data-sort="text">From</th></tr></thead>
+      <tbody>
+        {% for h in v.hosts %}
+        <tr data-row>
+          <td><a href="/h/{{ h.id }}/" class="fw-bold">{{ h.id }}</a></td>
+          <td><span class="badge {{ h.state_badge }}">{{ h.state }}</span></td>
+          <td data-v="{{ h.seen_v }}">{{ h.seen }}</td>
+          <td data-v="{{ h.findings_v }}">{% for label, cls, n in h.findings %}<span class="badge {{ cls }} me-1">{{ n }} {{ label|lower }}</span>{% else %}<span class="text-secondary">None</span>{% endfor %}</td>
+          <td>{{ h.os }}{% if h.uptime %}<div class="text-secondary small">up {{ h.uptime }}</div>{% endif %}</td>
+          <td class="small">{{ h.version }}</td>
+          <td class="font-monospace small">{{ h.address }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No hosts match the filter.</div>
+</section>
+</div>

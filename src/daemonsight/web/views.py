@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 from .. import db, findings as rules
 from ..collector.sources.caddy import is_local
 from . import provenance as prov
-from ..config import Config
+from ..config import Config, ExposureConfig
 
 SEVERITY_BADGE = {
     "critical": ("Critical", "bg-red text-red-fg"),
@@ -362,7 +363,7 @@ def exposure(conn, cfg: Config) -> dict:
     f2b = _snap_data(snaps, "fail2ban")
     jails = (f2b or {}).get("jails", [])
     expected = set(cfg.exposure.expected_public)
-    public_keys = {(r["proto"], r["port"]) for r in rules.public_listeners(snaps, {"eph": _eph()})}
+    public_keys = {(r["proto"], r["port"]) for r in rules.public_listeners(snaps, {"eph": _eph(snaps)})}
     ctr_names = {c["id"]: c["name"] for c in (_snap_data(snaps, "docker") or {}).get("containers", [])}
     rows = []
     for r in ports.get("listeners", []):
@@ -421,7 +422,12 @@ def exposure(conn, cfg: Config) -> dict:
     }
 
 
-def _eph() -> tuple[int, int]:
+def _eph(snaps: dict) -> tuple[int, int]:
+    """The host's ephemeral port range: from its settings on a hub, else
+    this machine's."""
+    settings = snaps.get("settings")
+    if settings and settings.data and len(settings.data.get("eph") or []) == 2:
+        return int(settings.data["eph"][0]), int(settings.data["eph"][1])
     try:
         with open("/proc/sys/net/ipv4/ip_local_port_range") as fh:
             lo, hi = fh.read().split()
@@ -516,7 +522,7 @@ def jails(conn, cfg: Config) -> dict:
     coverage = []
     jl = (f2b or {}).get("jails", [])
     seen = set()
-    for r in rules.public_listeners(snaps, {"eph": _eph()}):
+    for r in rules.public_listeners(snaps, {"eph": _eph(snaps)}):
         owner = r.get("owner") or {}
         unit = owner.get("id") if owner.get("kind") == "unit" else None
         name = unit or r.get("process") or f"port {r['port']}"
@@ -534,3 +540,56 @@ def jails(conn, cfg: Config) -> dict:
         "public_host": rules.host_is_public(_snap_data(snaps, "ports")),
         "src": {"fail2ban": prov.section("fail2ban", cfg), "ports": prov.section("ports", cfg)},
     }
+
+
+# --- hub -------------------------------------------------------------------
+
+def host_config(conn, cfg: Config, host: str) -> Config:
+    """The hub's config, with the host's own settings from its last upload:
+    which ports it expects to be public, its jail links, web UI links and
+    how often it reads system health."""
+    snap = db.get_snapshot(conn, host, "settings")
+    data = snap.data if snap and snap.data else {}
+    exp = data.get("exposure") or {}
+    exposure = ExposureConfig(
+        expected_public=list(exp.get("expected_public") or []),
+        upstream_allow=list(exp.get("upstream_allow") or []),
+        jail_covers={k: list(v) for k, v in (exp.get("jail_covers") or {}).items()},
+    )
+    collector = replace(cfg.collector, interval_system=int(data.get("interval_system") or cfg.collector.interval_system))
+    return replace(cfg, host_id=host, exposure=exposure, links=dict(data.get("links") or {}), collector=collector)
+
+
+def hosts_list(conn, cfg: Config) -> dict:
+    now = time.time()
+    counts: dict[str, dict[str, int]] = {}
+    for r in conn.execute("SELECT host, severity, COUNT(*) AS n FROM findings WHERE resolved_at IS NULL "
+                          "GROUP BY host, severity"):
+        counts.setdefault(r["host"], {})[r["severity"]] = r["n"]
+    silent = {r["host"] for r in conn.execute(
+        "SELECT host FROM findings WHERE rule = 'host.silent' AND resolved_at IS NULL")}
+    rows = []
+    for h in conn.execute("SELECT * FROM hosts ORDER BY id"):
+        system = db.get_snapshot(conn, h["id"], "system")
+        data = system.data if system and system.data else {}
+        if h["last_seen"] is None:
+            state, badge = "Never reported", "bg-secondary-lt"
+        elif h["id"] in silent:
+            state, badge = "Not reporting", "bg-red-lt"
+        else:
+            state, badge = "Reporting", "bg-green-lt"
+        c = counts.get(h["id"], {})
+        rows.append({
+            "id": h["id"], "state": state, "state_badge": badge,
+            "seen": fmt_ago(h["last_seen"]) if h["last_seen"] else "never",
+            "seen_v": h["last_seen"] or 0,
+            "os": data.get("os") or "",
+            "uptime": fmt_duration(now - data["boot_time"]) if data.get("boot_time") else "",
+            "version": h["version"] or "",
+            "address": h["address"] or "",
+            "findings": [(SEVERITY_BADGE[sev][0], SEVERITY_BADGE[sev][1], c[sev])
+                         for sev in ("critical", "high", "medium", "low") if c.get(sev)],
+            "findings_v": sum(c.get(sev, 0) * w for sev, w in (("critical", 1000), ("high", 100),
+                                                                ("medium", 10), ("low", 1))),
+        })
+    return {"hosts": rows, "reporting": sum(1 for r in rows if r["state"] == "Reporting")}

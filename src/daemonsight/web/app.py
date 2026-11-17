@@ -1,22 +1,25 @@
-"""The web UI. Read-only: it never touches sockets, logs or tools, only the
-collector's database."""
+"""The web UI. It never touches sockets, logs or tools, only the database.
+On a host it opens the database read-only. On a hub it also writes what
+collectors upload (see add_ingest)."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
 import sqlite3
-from contextlib import contextmanager
+import time
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import db, full_version
+from .. import db, full_version, hub
 from ..config import Config
 from . import views
 from .auth import PasswordStore, RateLimiter
@@ -44,7 +47,16 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
     if len(secret) < 32:
         raise RuntimeError(f"session secret in {cfg.web.secret_file} is too short")
 
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    hub_conn = db.connect_writer(cfg.db_path) if cfg.hub.enabled else None
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        task = asyncio.create_task(_watch_silent(hub_conn)) if hub_conn is not None else None
+        yield
+        if task:
+            task.cancel()
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.add_middleware(
         SessionMiddleware, secret_key=secret, session_cookie="daemonsight_session",
         max_age=cfg.web.session_hours * 3600, same_site="strict", https_only=cfg.web.secure_cookies,
@@ -100,7 +112,7 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
         return "light" if request.cookies.get("theme") == "light" else "dark"
 
     def render(request: Request, name: str, ctx: dict, status: int = 200) -> HTMLResponse:
-        ctx = {"theme": theme(request), "path": request.url.path, **ctx}
+        ctx = {"theme": theme(request), "path": request.url.path, "base": "", "hub": cfg.hub.enabled, **ctx}
         return templates.TemplateResponse(request, name, ctx, status_code=status)
 
     @app.exception_handler(LoginRequired)
@@ -152,62 +164,145 @@ def create_app(cfg: Config, *, secret: str | None = None) -> FastAPI:
                             secure=cfg.web.secure_cookies, httponly=True)
         return response
 
-    @app.get("/", response_class=HTMLResponse)
-    async def overview(request: Request):
+    # --- pages ---------------------------------------------------------------
+    # On a single host the pages live at /, /exposure ... for this host. On a
+    # hub, / lists the hosts and each host's pages live under /h/<host>/.
+    pages = {"overview": views.overview, "exposure": views.exposure, "routes": views.routes,
+             "services": views.services, "fail2ban": views.jails}
+
+    def resolve(conn, host: str | None) -> tuple[Config, str]:
+        if not cfg.hub.enabled:
+            return cfg, ""
+        if host is None or not hub.HOST_RE.match(host) or \
+                not conn.execute("SELECT 1 FROM hosts WHERE id = ?", (host,)).fetchone():
+            raise HTTPException(404)
+        return views.host_config(conn, cfg, host), f"/h/{host}"
+
+    async def show(request: Request, name: str, host: str | None, partial: bool, units: str = "active"):
         require_login(request)
         with reader() as conn:
-            ctx = views.overview(conn, cfg) if conn else None
-        return render(request, "overview.html", {"page": "overview", "v": ctx})
+            if conn is None:
+                if cfg.hub.enabled:
+                    raise HTTPException(404)
+                ctx, base = None, ""
+            else:
+                hcfg, base = resolve(conn, host)
+                if name == "services":
+                    ctx = views.services(conn, hcfg, units if units in views.UNIT_FILTERS else "active")
+                else:
+                    ctx = pages[name](conn, hcfg)
+        template = f"partials/{name}.html" if partial else f"{name}.html"
+        return render(request, template, {"page": name, "v": ctx, "base": base})
 
-    @app.get("/partials/overview", response_class=HTMLResponse)
-    async def overview_partial(request: Request):
+    async def logs(request: Request, cname: str, host: str | None = None):
         require_login(request)
         with reader() as conn:
-            ctx = views.overview(conn, cfg) if conn else None
-        return render(request, "partials/overview.html", {"v": ctx})
+            if conn is None:
+                ctx, base = None, ""
+            else:
+                hcfg, base = resolve(conn, host)
+                ctx = views.container_logs(conn, hcfg, cname)
+        return render(request, "partials/logs.html", {"logs": ctx, "name": cname, "base": base})
 
-    @app.get("/services", response_class=HTMLResponse)
-    async def services(request: Request, units: str = "active"):
-        require_login(request)
-        units = units if units in views.UNIT_FILTERS else "active"
-        with reader() as conn:
-            ctx = views.services(conn, cfg, units) if conn else None
-        return render(request, "services.html", {"page": "services", "v": ctx})
+    def handler(name: str, partial: bool):
+        async def route(request: Request, host: str | None = None, units: str = "active"):
+            return await show(request, name, host, partial, units)
+        return route
 
-    @app.get("/partials/services", response_class=HTMLResponse)
-    async def services_partial(request: Request, units: str = "active"):
-        require_login(request)
-        units = units if units in views.UNIT_FILTERS else "active"
-        with reader() as conn:
-            ctx = views.services(conn, cfg, units) if conn else None
-        return render(request, "partials/services.html", {"v": ctx})
+    def add_pages(prefix: str) -> None:
+        for name in pages:
+            path = "/" if name == "overview" else f"/{name}"
+            app.add_api_route(prefix + path, handler(name, False), methods=["GET"], response_class=HTMLResponse)
+            app.add_api_route(f"{prefix}/partials/{name}", handler(name, True), methods=["GET"],
+                              response_class=HTMLResponse)
+        app.add_api_route(prefix + "/partials/logs/{cname}", logs, methods=["GET"], response_class=HTMLResponse)
 
-    # Pages with no options: a full page and a partial its poll refreshes.
-    def simple_page(page: str, builder) -> None:
-        async def full(request: Request):
+    if cfg.hub.enabled:
+        add_pages("/h/{host}")
+
+        @app.get("/", response_class=HTMLResponse)
+        async def hosts_page(request: Request):
             require_login(request)
             with reader() as conn:
-                ctx = builder(conn, cfg) if conn else None
-            return render(request, f"{page}.html", {"page": page, "v": ctx})
+                ctx = views.hosts_list(conn, cfg) if conn else {"hosts": []}
+            return render(request, "hosts.html", {"page": "hosts", "v": ctx})
 
-        async def partial(request: Request):
+        @app.get("/partials/hosts", response_class=HTMLResponse)
+        async def hosts_partial(request: Request):
             require_login(request)
             with reader() as conn:
-                ctx = builder(conn, cfg) if conn else None
-            return render(request, f"partials/{page}.html", {"v": ctx})
+                ctx = views.hosts_list(conn, cfg) if conn else {"hosts": []}
+            return render(request, "partials/hosts.html", {"v": ctx})
 
-        app.add_api_route(f"/{page}", full, methods=["GET"], response_class=HTMLResponse)
-        app.add_api_route(f"/partials/{page}", partial, methods=["GET"], response_class=HTMLResponse)
-
-    simple_page("exposure", views.exposure)
-    simple_page("routes", views.routes)
-    simple_page("fail2ban", views.jails)
-
-    @app.get("/partials/logs/{name}", response_class=HTMLResponse)
-    async def logs_partial(request: Request, name: str):
-        require_login(request)
-        with reader() as conn:
-            ctx = views.container_logs(conn, cfg, name) if conn else None
-        return render(request, "partials/logs.html", {"logs": ctx, "name": name})
+        add_ingest(app, cfg, hub_conn)
+    else:
+        add_pages("")
 
     return app
+
+
+async def _watch_silent(conn) -> None:
+    """Every minute, flag hosts that stopped reporting."""
+    while True:
+        try:
+            hub.check_silent(conn, time.time())
+        except Exception:
+            log.exception("checking for silent hosts failed")
+        await asyncio.sleep(60)
+
+
+def add_ingest(app: FastAPI, cfg: Config, conn) -> None:
+    """POST /api/v1/ingest: a collector's upload. Authenticated by the host's
+    token, not the login. Every refusal is logged as
+    "Refused upload from <address>: <reason>" for fail2ban."""
+    bad_tokens = RateLimiter(limit=10, window=300)   # per address
+    per_host = RateLimiter(limit=120, window=60)     # uploads per host
+    cap = cfg.hub.max_upload_mb * 2**20
+    unpacked_cap = cfg.hub.max_unpacked_mb * 2**20
+
+    @app.post("/api/v1/ingest")
+    async def ingest(request: Request):
+        client = request.client.host if request.client else "unknown"
+
+        def refuse(status: int, reason: str) -> Response:
+            log.warning("Refused upload from %s: %s", client, reason)
+            return PlainTextResponse(reason, status_code=status)
+
+        if bad_tokens.blocked(client):
+            return refuse(429, "too many refused uploads; wait a few minutes")
+        auth = request.headers.get("authorization", "")
+        token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        row = hub.host_for_token(conn, token)
+        if row is None:
+            bad_tokens.fail(client)
+            return refuse(401, "unknown token")
+        if per_host.blocked(row["id"]):
+            return refuse(429, f"{row['id']} is uploading too often")
+        per_host.fail(row["id"])
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            return refuse(415, "send application/json")
+        encoding = request.headers.get("content-encoding", "").strip().lower()
+        if encoding not in ("", "gzip"):
+            return refuse(415, "send gzip or no encoding")
+        try:
+            if int(request.headers.get("content-length", "0")) > cap:
+                return refuse(413, "upload too large")
+        except ValueError:
+            return refuse(400, "bad Content-Length")
+        body = bytearray()
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > cap:
+                return refuse(413, "upload too large")
+        try:
+            up = hub.unpack(bytes(body), encoding == "gzip", unpacked_cap)
+        except hub.UploadRefused as exc:
+            return refuse(exc.status, exc.reason)
+        if up.host != row["id"]:
+            bad_tokens.fail(client)
+            return refuse(403, f"this token belongs to {row['id']}, not {up.host}")
+        if up.seq <= row["last_seq"]:
+            log.info("Stale upload from %s (%s): seq %d, already at %d", client, row["id"], up.seq, row["last_seq"])
+            return JSONResponse({"last_seq": row["last_seq"]}, status_code=409)
+        hub.store(conn, row, up, time.time(), client)
+        return JSONResponse({"last_seq": up.seq})

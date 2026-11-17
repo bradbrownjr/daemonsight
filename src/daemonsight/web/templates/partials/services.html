@@ -1,5 +1,5 @@
-{% from "_macros.html" import src, src_button, src_panel %}
-<div id="live" hx-get="/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-swap="outerHTML" hx-select="#live-data" hx-target="#live-data">
+{% from "_macros.html" import src, src_button, src_panel with context %}
+<div id="live" hx-get="{{ base }}/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-swap="outerHTML" hx-select="#live-data" hx-target="#live-data">
 <div id="live-data">
 {% if v %}
 <section class="card mb-4" id="containers" aria-labelledby="ctr-title" data-section{% if not v.containers %} data-empty{% endif %}>
@@ -28,7 +28,7 @@
           <td data-v="{{ c.cpu_v }}">{{ c.cpu }}</td>
           <td data-v="{{ c.mem_v }}">{{ c.mem }}</td>
           <td class="font-monospace">{% for p in c.ports %}<div>{% if p.wide %}<span class="text-red">{{ p.text }}</span> <span class="badge bg-red-lt">all interfaces</span>{% else %}{{ p.text }}{% endif %}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
-          <td><button type="button" class="btn btn-sm" hx-get="/partials/logs/{{ c.name|urlencode }}" hx-target="#logs" hx-swap="outerHTML" aria-label="Show logs for {{ c.name }}">Logs</button></td>
+          <td><button type="button" class="btn btn-sm" hx-get="{{ base }}/partials/logs/{{ c.name|urlencode }}" hx-target="#logs" hx-swap="outerHTML" aria-label="Show logs for {{ c.name }}">Logs</button></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -43,7 +43,7 @@
 
 <div class="card mb-4" data-section{% if not (v and v.containers) %} data-empty{% endif %}><div id="logs" class="card-body text-secondary">Choose Logs on a container to see its last lines.</div></div>
 
-<div id="live-units" hx-get="/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-select="#units-data" hx-target="#units-data" hx-swap="outerHTML">
+<div id="live-units" hx-get="{{ base }}/partials/services?units={{ v.unit_filter if v else 'active' }}" hx-trigger="every 30s" hx-select="#units-data" hx-target="#units-data" hx-swap="outerHTML">
 <div id="units-data">
 {% if v %}
 <section class="card mb-4" id="units" aria-labelledby="units-title" data-section{% if v.systemd_state.state != 'ok' and not v.units %} data-empty{% endif %}>
@@ -51,7 +51,7 @@
     <h2 class="card-title" id="units-title">systemd services</h2>{{ src("src-systemd", v.src.systemd) }}
     <div class="btn-group" role="group" aria-label="Filter units">
       {% for key, label in [('active', 'Active'), ('failed', 'Failed'), ('all', 'All')] %}
-      <a class="btn btn-sm{{ ' active' if v.unit_filter == key }}" href="/services?units={{ key }}#units" {% if v.unit_filter == key %}aria-current="true"{% endif %}>{{ label }}{% if key == 'failed' and v.unit_counts.get('failed') %} <span class="badge bg-red text-red-fg ms-1">{{ v.unit_counts.failed }}</span>{% endif %}</a>
+      <a class="btn btn-sm{{ ' active' if v.unit_filter == key }}" href="{{ base }}/services?units={{ key }}#units" {% if v.unit_filter == key %}aria-current="true"{% endif %}>{{ label }}{% if key == 'failed' and v.unit_counts.get('failed') %} <span class="badge bg-red text-red-fg ms-1">{{ v.unit_counts.failed }}</span>{% endif %}</a>
       {% endfor %}
     </div>
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.unit_counts.get('active', 0) }} active · {{ v.unit_counts.get('failed', 0) }} failed</div>

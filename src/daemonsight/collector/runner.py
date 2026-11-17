@@ -18,6 +18,7 @@ from .sources.firewall import FirewallSource
 from .sources.ports import PortsSource
 from .sources.system import SystemSource
 from .sources.systemd import SystemdSource
+from .upload import Uploader
 
 log = logging.getLogger("daemonsight.collector")
 
@@ -201,6 +202,10 @@ class Collector:
             loop.add_signal_handler(sig, stop.set)
         tasks = [asyncio.create_task(self._loop(s), name=f"source-{s.name}") for s in self.sources]
         log.info("collector started for host %s with %d sources", self.host, len(tasks))
+        if self.cfg.upload.url:
+            longest = max((s.interval for s in self.sources), default=60)
+            uploader = Uploader(self.cfg, self.conn, self._lock, self.eph, longest)
+            tasks.append(asyncio.create_task(uploader.run(stop), name="upload"))
         await stop.wait()
         for t in tasks:
             t.cancel()

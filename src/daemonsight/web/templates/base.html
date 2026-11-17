@@ -42,9 +42,14 @@
   <div class="container-xl pb-2 d-flex flex-wrap align-items-center gap-2">
   <nav aria-label="Sections">
     <ul class="nav nav-pills gap-1">
+      {% if hub %}
+      <li class="nav-item"><a class="nav-link{{ ' active' if page == 'hosts' }}" {% if page == 'hosts' %}aria-current="page"{% endif %} href="/">Hosts</a></li>
+      {% endif %}
+      {% if not hub or base %}
       {% for key, href, label in [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('fail2ban', '/fail2ban', 'fail2ban')] %}
-      <li class="nav-item"><a class="nav-link{{ ' active' if page == key }}" {% if page == key %}aria-current="page"{% endif %} href="{{ href }}">{{ label }}</a></li>
+      <li class="nav-item"><a class="nav-link{{ ' active' if page == key }}" {% if page == key %}aria-current="page"{% endif %} href="{{ base }}{{ href }}">{{ label }}</a></li>
       {% endfor %}
+      {% endif %}
     </ul>
   </nav>
   {% if v %}
@@ -60,7 +65,7 @@
 </header>
 <main class="container-xl py-4">
   {% if not v %}
-  <div class="alert alert-warning">No data yet. Start the collector: <code>systemctl start daemonsight-collector</code></div>
+  <div class="alert alert-warning">{% if hub %}No data yet.{% else %}No data yet. Start the collector: <code>systemctl start daemonsight-collector</code>{% endif %}</div>
   {% else %}
   {% block content %}{% endblock %}
   {% endif %}

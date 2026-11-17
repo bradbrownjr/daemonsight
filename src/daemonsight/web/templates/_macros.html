@@ -21,7 +21,7 @@
       <dt>{{ e.label }}</dt>
       <dd>
         {% if e.kind in ('cmd', 'file') %}<code class="ds-copy-text">{{ e.value }}</code><button type="button" class="btn btn-sm ds-copy">Copy</button>
-        {% elif e.kind == 'link' %}<a href="{{ e.href }}" class="ds-pop-link">{{ e.text }}</a>
+        {% elif e.kind == 'link' %}<a href="{{ base }}{{ e.href }}" class="ds-pop-link">{{ e.text }}</a>
         {% else %}<a href="{{ e.href }}" target="_blank" rel="noopener noreferrer">{{ e.text }}</a>{% endif %}
       </dd>
       {% endfor %}

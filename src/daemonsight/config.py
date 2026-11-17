@@ -63,6 +63,27 @@ class ExposureConfig:
 
 
 @dataclass
+class UploadConfig:
+    """On a collector: send everything it collects to a hub."""
+    # The hub's upload address, e.g. "https://hub.example.com/api/v1/ingest".
+    # Empty means this host keeps its data to itself.
+    url: str = ""
+    # The host's token from `daemonsight hub add-host` (root-only file).
+    token_file: str = "/etc/daemonsight/hub.token"
+    # Seconds between uploads.
+    interval: int = 30
+
+
+@dataclass
+class HubConfig:
+    """On the hub: receive uploads from collectors."""
+    enabled: bool = False
+    # Largest upload accepted, before and after gzip.
+    max_upload_mb: int = 8
+    max_unpacked_mb: int = 48
+
+
+@dataclass
 class Thresholds:
     disk_percent: float = 90.0
     memory_percent: float = 90.0
@@ -77,6 +98,8 @@ class Config:
     collector: CollectorConfig = field(default_factory=CollectorConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)
     exposure: ExposureConfig = field(default_factory=ExposureConfig)
+    upload: UploadConfig = field(default_factory=UploadConfig)
+    hub: HubConfig = field(default_factory=HubConfig)
     # Web UIs to link from each source's panel, e.g. {caddy = "https://...",
     # fail2ban = "..."}; later also opnsense, unraid and ionos.
     links: dict[str, str] = field(default_factory=dict)

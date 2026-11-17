@@ -1,5 +1,5 @@
-{% from "_macros.html" import src, src_button, src_panel %}
-<div id="live" hx-get="/partials/overview" hx-trigger="every 30s" hx-swap="outerHTML">
+{% from "_macros.html" import src, src_button, src_panel with context %}
+<div id="live" hx-get="{{ base }}/partials/overview" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
 {% set t = v.tiles %}
 {% if t %}
@@ -68,7 +68,7 @@
       <div data-row class="list-group-item d-flex gap-3 align-items-start">
         <span class="badge ds-sev {{ f.badge }}">{{ f.label }}</span>
         <div class="ds-min0">
-          <div class="fw-bold">{% if f.link %}<a href="{{ f.link }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}{{ src("src-fd-" ~ loop.index, f.src) }}</div>
+          <div class="fw-bold">{% if f.link %}<a href="{{ base }}{{ f.link }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}{{ src("src-fd-" ~ loop.index, f.src) }}</div>
           <div class="text-secondary">{{ f.detail }}</div>
           <div class="text-secondary small">Since {{ f.since }}</div>
         </div>
