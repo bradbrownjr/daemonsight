@@ -6,11 +6,12 @@ A backup is one .tar.gz, readable by its owner only, holding:
   config.toml    the config file the install runs with
   password, secret, hub.token   when they exist and can be read
   remotes/<name>.key   the API key of each system the hub reads (a hub only)
+  shodan.key   the Shodan API key for the outside view, when one is saved (a hub only)
   manifest.json  version, schema, host and what's inside
 
 The password file holds an Argon2 hash, but the session secret, an upload
-token and the API keys of remote systems are live credentials. Store backups
-like the server itself.
+token, the API keys of remote systems and the Shodan API key are live
+credentials. Store backups like the server itself.
 
 A restore refuses while the collector or hub holds the database (see
 `hold`), checks the archive's names, the database's integrity and its schema
@@ -73,7 +74,7 @@ def hold(cfg: Config):
 def _files(cfg: Config, config_file: Path) -> dict[str, Path]:
     return {"config.toml": config_file, "password": Path(cfg.web.password_file),
             "secret": Path(cfg.web.secret_file), "hub.token": Path(cfg.upload.token_file),
-            **remote_store.key_files(cfg.data_dir)}
+            "shodan.key": cfg.shodan_key_path, **remote_store.key_files(cfg.data_dir)}
 
 
 def create(cfg: Config, config_file: Path, dest_dir: Path | None = None, now: float | None = None) -> Path:
@@ -160,7 +161,7 @@ def scheduled(cfg: Config, config_file: Path) -> Path | None:
 
 # --- restoring ------------------------------------------------------------------
 
-ALLOWED = {"state.db", "manifest.json", "config.toml", "password", "secret", "hub.token"}
+ALLOWED = {"state.db", "manifest.json", "config.toml", "password", "secret", "hub.token", "shodan.key"}
 
 
 def _allowed(name: str) -> bool:

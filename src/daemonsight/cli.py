@@ -25,6 +25,9 @@ def _setup_logging(verbose: bool) -> None:
                         format="%(levelname)s %(name)s: %(message)s")
     # httpx logs every request at INFO: one line per upload.
     logging.getLogger("httpx").setLevel(logging.DEBUG if verbose else logging.WARNING)
+    # With -v that line carries the full URL, and a Shodan API request's URL carries the key: redact it.
+    from . import shodan
+    shodan.install_log_redaction()
 
 
 def _group_id() -> int | None:
@@ -295,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
         from logging.handlers import RotatingFileHandler
         fh = RotatingFileHandler(cfg.log_file, maxBytes=5 * 2**20, backupCount=3)
         fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        from . import shodan
+        shodan.filter_handler(fh)
         logging.getLogger().addHandler(fh)
     handler = {
         "collector": cmd_collector, "web": cmd_web, "set-password": cmd_set_password,

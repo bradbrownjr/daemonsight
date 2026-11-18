@@ -40,12 +40,13 @@ class Field:
     key: str                    # "outside.enabled": the config file's [section] and name
     label: str
     group: str
-    kind: str                   # "bool", "int", "float", "addresses"
+    kind: str                   # "bool", "int", "float", "addresses", "choice"
     help: str
     lo: float | None = None
     hi: float | None = None
     nullable: bool = False      # blank means "automatic" (stored as null)
     unit: str = ""
+    choices: tuple[tuple[str, str], ...] = ()    # kind "choice": (stored value, label shown)
 
     @property
     def section(self) -> str:
@@ -63,11 +64,18 @@ class Field:
 
 GROUPS = {
     "outside": {"title": "Outside view", "hub_only": True,
-                "intro": "Asks Shodan's InternetDB what the internet sees of each host's public addresses. "
-                         "Only the IP address is sent.",
+                "intro": "Asks Shodan what the internet sees of each host's public addresses: InternetDB, which is "
+                         "free for non-commercial use and needs no key, or the Shodan API with your own key. Only "
+                         "the IP address is sent; the API also gets your key.",
                 "note": "InternetDB is free for non-commercial use only. Shodan: \"If you're using the InternetDB "
-                        "API to make money then you need an enterprise license.\" Turn this on only if your use "
-                        "is non-commercial or you hold that licence."},
+                        "API to make money then you need an enterprise license.\" It takes no key, so a key does "
+                        "not change that. For commercial use, choose the Shodan API and use your own key on a plan "
+                        "that allows it: Shodan's pricing page lists Commercial Use on its Freelancer, Small "
+                        "Business and Corporate API plans, and says the API may be used in products \"as long as "
+                        "the data is attributed to Shodan\" (DaemonSight names Shodan wherever it shows this "
+                        "data). That page does not say whether the one-time Membership allows commercial use, so "
+                        "ask Shodan before relying on it. The Enterprise Data License covers commercial use "
+                        "without attribution."},
     "cve": {"title": "CVE checks", "hub_only": True,
             "intro": "Downloads the Debian security tracker, FIRST's EPSS scores and CISA's KEV list, and matches "
                      "each host's packages against them.", "note": ""},
@@ -82,14 +90,46 @@ GROUPS = {
                         "under Hosts, Add a system; each one sets its own read interval there.", "note": ""},
 }
 
+# Beside a group: how to get what it needs. Steps follow Shodan's own pages (linked); check them when Shodan
+# changes its site.
+GUIDES = {
+    "outside": {
+        "title": "Getting a Shodan API key",
+        "steps": [
+            "Decide which source fits your use. InternetDB needs no key but is for non-commercial use only. For "
+            "commercial use, choose a Shodan API plan that lists Commercial Use (Freelancer, Small Business or "
+            "Corporate on Shodan's pricing page).",
+            "Create a Shodan account at account.shodan.io, then pick a plan. Looking up IPs through the API needs "
+            "at least a Membership: a free account's key is refused.",
+            "On your account page, copy the API key.",
+            "Paste it into API key here and press Save key. It is never shown again.",
+            "Press Test key. It shows your plan and credits, or why Shodan refused the key.",
+            "Set Source to Shodan API (your key) and save the group. Host lookups use no query credits, and the "
+            "limit is one request a second.",
+        ],
+        "links": [
+            ("Your Shodan account and API key", "https://account.shodan.io/"),
+            ("Shodan plans and pricing", "https://developer.shodan.io/pricing"),
+            ("Shodan REST API reference", "https://developer.shodan.io/api"),
+            ("How Shodan counts credits", "https://book.shodan.io/developer-apis/shodan-api/"),
+            ("InternetDB and its terms", "https://internetdb.shodan.io/"),
+        ],
+    },
+}
+
 FIELDS: tuple[Field, ...] = (
     Field("outside.enabled", "Enabled", "outside", "bool",
-          "Ask InternetDB about each host's public addresses. Off closes any outside.* finding at the next pass."),
+          "Ask Shodan about each host's public addresses. Off makes no requests and closes any outside.* finding at the next pass."),
+    Field("outside.source", "Source", "outside", "choice",
+          "InternetDB: free for non-commercial use, no key, no banners, updated weekly. Shodan API: your key, "
+          "one lookup per address with each port's transport, product, version and the time Shodan last saw it. "
+          "Choosing the Shodan API needs a saved key; set it below.",
+          choices=(("internetdb", "InternetDB (free, non-commercial)"), ("shodan", "Shodan API (your key)"))),
     Field("outside.addresses", "Extra addresses", "outside", "addresses",
           "One per line: an IP address, or ip=hostid to attach an address no collector reports (a router's, "
           "say) to that host. Private addresses are refused."),
     Field("outside.refresh_hours", "Check every", "outside", "float",
-          "Hours between checks of each address. InternetDB itself updates about weekly.", 1, 720, unit="hours"),
+          "Hours between checks of each address. InternetDB updates about weekly; Shodan crawls the internet at least weekly.", 1, 720, unit="hours"),
     Field("cve.enabled", "Enabled", "cve", "bool",
           "Download the feeds and match packages. Off makes no downloads and closes any cve.* finding at the "
           "next pass."),
@@ -130,6 +170,9 @@ READ_ONLY: tuple[tuple[str, str, str], ...] = (
     ("web.secret_file", "Session secret file", AUTH),
     ("data_dir", "Data folder", FILES),
     ("@db_path", "Database", FILES),
+    ("@shodan_key_path", "Shodan key file", "Where the Shodan API key is saved (mode 0600). The key itself is "
+                                           "never shown, and is saved from this page. Set as key_file under [outside]; blank means "
+                                           "shodan.key in the data folder. " + FILES),
     ("@backup_dir", "Backup folder", "Where backups are written, which hold the secrets. " + FILES),
     ("log_file", "Log file", FILES),
     ("hub.enabled", "Hub enabled", "Turns this install into a hub. Turning it off from here would remove this page."),
@@ -209,6 +252,11 @@ def parse(f: Field, raw) -> object:
         if t in ("off", "false", "0", "no"):
             return False
         raise Invalid("Choose On or Off.")
+    if f.kind == "choice":
+        t = text.strip()
+        if t not in dict(f.choices):
+            raise Invalid("Choose one of: " + ", ".join(label for _v, label in f.choices) + ".")
+        return t
     if f.kind == "addresses":
         out: list[str] = []
         for line in text.replace("\r", "").split("\n"):
@@ -251,6 +299,10 @@ def valid_stored(f: Field, value) -> object:
         if isinstance(value, bool):
             return value
         raise Invalid("not a boolean")
+    if f.kind == "choice":
+        if isinstance(value, str) and value in dict(f.choices):
+            return value
+        raise Invalid("not one of the choices")
     if f.kind == "addresses":
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise Invalid("not a list of text")
@@ -329,6 +381,8 @@ def show(f: Field, value) -> str:
         return "on" if value else "off"
     if f.kind == "addresses":
         return ", ".join(value) if value else "none"
+    if f.kind == "choice":
+        return dict(f.choices).get(value, str(value))
     if value is None:
         return "automatic"
     return f"{value:g}" if isinstance(value, float) else str(value)
@@ -407,7 +461,7 @@ def describe(base: Config, conn, hub: bool) -> list[dict]:
                 "range": _range_text(f) if f.lo is not None else "",
             })
         out.append({"id": gid, "hub_only": g["hub_only"], "title": g["title"], "intro": g["intro"],
-                    "note": g["note"], "fields": items})
+                    "note": g["note"], "fields": items, "guide": GUIDES.get(gid)})
     return out
 
 

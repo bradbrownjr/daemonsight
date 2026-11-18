@@ -126,11 +126,12 @@ DaemonSight knows when it first appeared and when it cleared.
 | `unraid.unclean_shutdown` | Unraid's unread alerts with the subject "Unclean shutdown detected" (Parity Check Tuning plugin, or Unraid itself), grouped into one finding: "Unraid shut down uncleanly N times since DATE", every date in the detail. The basis is the set of times, so a new crash brings back an accepted finding | Medium |
 | `unraid.notification` | Every other unread warning or alert, one finding per distinct title (repeats grouped; the detail has the newest subject and description, the count and the newest and oldest date), plus one summary, "N unread Unraid alerts and warnings", for the whole inbox. Notices about conditions DaemonSight checks live are dropped as findings (see "Notifications") but stay on the Notifications page. The text is the server's, cut and escaped | Medium when the group has an alert, Low for warnings; the summary is Low |
 | `unraid.os_update` | The newest stable Unraid release is newer than the version the API reports (see "The newest release"). "Unraid X is available (running Y)", with a link to the release notes. The basis is the new version | Low |
-| `outside.unexpected_port` | Shodan's InternetDB lists a port as open on one of the host's public addresses and the port is not in `exposure.expected_public` (any protocol: InternetDB gives port numbers only). The detail says what DaemonSight knows about it: a listener on the host (process, unit or container), a DNAT forward that covers it (its target, and the interface or tunnel that reaches it), a container that publishes it, or that nothing on the host listens on it. Key `<ip> <port>` (see "The outside view") | High |
+| `outside.unexpected_port` | Shodan's InternetDB lists a port as open on one of the host's public addresses and the port is not in `exposure.expected_public` (any protocol: InternetDB gives port numbers only; the Shodan API source names the transport and the software in the detail, but the rule still compares port numbers). The detail says what DaemonSight knows about it: a listener on the host (process, unit or container), a DNAT forward that covers it (its target, and the interface or tunnel that reaches it), a container that publishes it, or that nothing on the host listens on it. Key `<ip> <port>` (see "The outside view") | High |
 | `outside.not_seen` | A port DaemonSight judges internet-reachable (listening on a public address, past the host and provider firewalls, not forwarded away) and expected is not in Shodan's list for the address. Worded as possibly fine: not scanned yet, or blocked by a provider firewall. When Shodan has no record of the address, one per expected port, with that said. Not raised for an IPv6 address Shodan has no record of | Low |
 | `outside.tagged` | Shodan tags the address `compromised`, `malware`, `c2` or `doublepulsar`. Other tags (cloud, cdn, vpn, scanner, honeypot, tor, self-signed ...) are shown on the Exposure page and make no finding | Critical |
 | `outside.vulns` | Shodan lists CVEs for the address. The detail says they are guesses from service banners and names which of them DaemonSight's own `cve.*` matches for the host also have | Medium |
 | `outside.stale` | No good answer for an address for three refreshes (at least 72 hours). The other `outside.*` findings keep following the last good answer | Low |
+| `outside.key` | Only with the Shodan API source: Shodan refused the key (HTTP 401 or 403), has no query credits, or the source is the Shodan API but no key is saved. One per host, key `shodan`, raised at the first failed pass instead of after 72 hours. The detail says nothing is falling back to InternetDB | Medium |
 | `unraid.ups` | The UPS is on battery (Medium; High at 30% charge or below, or when it reports low battery), charge under 50% (Medium), or its battery needs replacing (Low) | Medium, High or Low |
 
 Hub rules for remote systems (`remote.*`, `unraid.*`) and the outside view (`outside.*`) are computed by the hub
@@ -336,7 +337,7 @@ precedence").
 - `findings`: rule, key, severity, title, detail, link, fix, basis, howto (schema version 6), first_seen, last_seen, resolved_at.
 - `accepted`: host, rule, key, fingerprint, note, accepted_at, accepted_by. Written by the hub's web process (see "Accepting a finding"). Schema version 4.
 - `remotes` (schema version 5): id, kind (`unraid`), url, enabled, tls (`verify` or `pin`), tls_pin (SHA-256 of the pinned certificate), tls_cert (its PEM), interval, created_at, last_ok, last_error, fails. A remote system is also a row in `hosts` with `hosts.kind` set (collector hosts have `kind` NULL) and a `token_hash` of `remote:<id>`, which no upload token can equal. The API key is not in the database: it is `<data>/remotes/<id>.key`, mode 0600 in a 0700 folder.
-- `outside` (schema version 7): ip, first_try, checked_at, fetched_at, status (`ok`, `none` for a 404, `error`), data (the cleaned InternetDB answer, JSON), error. Hub only; see "The outside view".
+- `outside` (schema version 7): ip, first_try, checked_at, fetched_at, status (`ok`, `none` for a 404, `error`), data (the cleaned answer, JSON: an InternetDB answer as is; a Shodan API answer carries `source: "shodan"`, `services` and `last_update` as well), error. Hub only; see "The outside view".
 - `settings` (schema version 8): key, value (JSON), changed_at, changed_by. Hub only: what was saved on the Settings page, over the config file. See "Settings and configuration precedence".
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down. Events are per host (`host` is NOT NULL and every list filters by it). A change that belongs to no host, a setting changed on the hub, is stored with the reserved host `""` (`db.HUB_HOST`), which no host id can equal (`hub.HOST_RE` needs at least one character). They show under "Recent hub changes" on the hub's Hosts page and on the Settings page, never under a host. The same retention applies to them. This reuses the one events table and its pruning, instead of a second log with its own retention and display code.
 - `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
@@ -366,11 +367,11 @@ folders, log file, hub flag and upload limits, upload settings), each with its
 reason: a mistake there could lock the administrator out of the page needed to
 fix it.
 
-Editable on a hub: `outside.enabled`, `outside.addresses`,
+Editable on a hub: `outside.enabled`, `outside.source` (a choice of two, kind `choice`), `outside.addresses`,
 `outside.refresh_hours`, `cve.enabled`, `cve.refresh_hours`, `cve.epss_high`,
 all three `retention.*`, `backup.interval_hours` (blank is automatic, stored
 as null), `backup.keep`, and `remote.enabled`. `backup.dir` is read-only: it
-decides where files holding secrets are written.
+decides where files holding secrets are written. `outside.key_file` (the Shodan key's path) is read-only for the same reason.
 
 `config.load` records which keys the file set (`Config.file_keys`), so the
 page can say Config file or Default. `settings.effective(base, conn)` returns
@@ -401,10 +402,12 @@ other hub POSTs. It parses every posted value (`settings.parse`: whole numbers
 for integers, finite numbers in range for decimals, On or Off, public IP
 addresses with `ip` or `ip=hostid` for the address list), and saves nothing
 unless all are valid; on an error the page is drawn again with the messages and
-what was typed. A value equal to the one in effect is skipped. `reset=<key>`
+what was typed. `outside.source = shodan` is refused when no Shodan key is saved. A value equal to the one in effect is skipped. `reset=<key>`
 deletes the row. Each change or reset also writes a hub-wide event, such as
 "Setting changed: Outside view, enabled: off → on" or "Setting reset: Backups,
-keep: 20 → 3 (config file)", in the same transaction.
+keep: 20 → 3 (config file)", in the same transaction. The Shodan API key is not
+a setting and is never in the table: it has its own route, described under "The
+outside view".
 
 ## Web UI
 
@@ -992,10 +995,15 @@ version comparison applies to Ubuntu versions unchanged.
 
 ## The outside view
 
-What the internet sees of a host, from Shodan's InternetDB, set beside what
-DaemonSight knows from inside. A host can't see its own provider firewall,
-other devices answering on its address, or a forward's far end; an outside
-scan can. Off by default, on the hub only (`[outside]`, or Settings, Outside view).
+What the internet sees of a host, from Shodan, set beside what DaemonSight
+knows from inside. A host can't see its own provider firewall, other devices
+answering on its address, or a forward's far end; an outside scan can. Off by
+default, on the hub only (`[outside]`, or Settings, Outside view).
+
+There are two sources, chosen by Settings, Outside view, Source (`[outside]
+source`): **InternetDB** (the default: free for non-commercial use, no key) and
+the **Shodan API** with the owner's own key (the route for use InternetDB's
+terms do not cover). Both feed the same rules.
 
 ### What InternetDB is
 
@@ -1022,7 +1030,10 @@ the owner's). What follows is stated as the page says it, or as observed.
   address returned the same 404 as an unknown IPv4 one. So IPv6 addresses are
   checked. How much of IPv6 Shodan scans is unverified, which is why an IPv6
   address with no record produces no `outside.not_seen` finding.
-- **Rate limits: not documented.** Responses carried no rate-limit headers;
+- **Rate limit.** Shodan's API book says InternetDB "has a rate limit that
+  allows bursts of up to 10,000 requests per second" [53] (the page was
+  checked 2026-11-18, after this section was first written, when the limit was
+  thought undocumented). Responses carried no rate-limit headers;
   they came through Cloudflare with `cache-control: public, max-age=432000`
   (five days). DaemonSight asks each address at most once per `refresh_hours`
   (24 by default), a second apart, and stops for the pass on an HTTP 429,
@@ -1039,7 +1050,108 @@ the owner's). What follows is stated as the page says it, or as observed.
   `starttls`, `tor`, `videogame` and `vpn`. The list is incomplete: `cdn` and
   `pqc` came back in real answers and are not in it. `c2` is on the owner's
   list and in an unofficial list of Shodan's most used tags [50], and is not in
-  the library; it is kept in the critical set, unverified.
+  the library. Shodan's own banner schema, checked later [56], lists `c2`,
+  `compromised`, `doublepulsar` and `malware` among its tag values (31 in
+  all, including `cdn` and `pqc`), so all four critical tags are now
+  confirmed by Shodan itself.
+
+### The Shodan API source
+
+Checked 2026-11-18 against Shodan's published pages (cited), not against the
+live API: there was no key, and no request was sent to api.shodan.io. The code
+and its tests use a fake server with the documented reply shape.
+
+- **The call.** `GET https://api.shodan.io/shodan/host/{ip}?key={YOUR_API_KEY}`
+  "Returns all services that have been found on the given host IP", with the
+  options `history` (default false) and `minify` ("True to only return the
+  list of ports and the general host information, no banners") [52]. A reply
+  has host fields (`ip_str`, `ports`, `hostnames`, `tags`, `last_update`, ...)
+  and `data`, a list of banners, each with `port`, `transport` (`tcp` or
+  `udp`; the documented example is `53` over `udp`) and `timestamp` ("Date
+  and time that the banner was collected in UTC time") [52][56]. `product`,
+  `version`, `cpe23` and `vulns` (an object keyed by CVE id) are optional
+  banner properties in Shodan's banner schema, and "you need to check for the
+  existence of a property" [56]. The REST page's example does not show them.
+- **Why not `minify`.** The minified answer has "no banners", so no per-port
+  transport, product or time. DaemonSight uses the full lookup and keeps
+  `ports`, and per port and transport `product`, `version` and the time Shodan
+  last saw it.
+- **Cost.** "IP lookups don't consume query credits" [53]. Query credits are
+  used by searches (`/shodan/host/search`, and only with a filter or past page
+  one) and domain lookups; they reset at the start of each month [53][55].
+  `GET /api-info` is not described as using any.
+- **Who may look up IPs.** Shodan's help says "Looking up IPs via the main
+  Shodan REST API requires at least a Shodan Membership (one-time payment of
+  $49 for lifetime account upgrade). For free IP lookups check out the
+  InternetDB API." [55] The pricing page's comparison table lists "IP lookups"
+  under Membership, Freelancer, Small Business, Corporate and Enterprise [54].
+  A free account therefore cannot use this source. What a free account's key
+  gets back is unverified; the official Python client turns HTTP 401 into the
+  server's message (or "Invalid API key") and 403 into "Access denied (403
+  Forbidden)" [57], and DaemonSight treats both as "key refused".
+- **Rate limit.** "All API plans are subject to a rate limit of 1 request per
+  second" [54]; the official client defaults to one request a second [57].
+  DaemonSight makes one request per address per refresh, 1.2 seconds apart.
+  What a 429 looks like, and whether it carries `Retry-After`, is unverified;
+  it is handled as for InternetDB (stop the pass, honour the header up to a
+  day, else an hour).
+- **Authentication.** Only the `key` query parameter is documented [52], and
+  the official client sends it that way [57]. No header is documented, so none
+  is used, and the key travels in a URL. Over HTTPS the URL path and query are
+  inside the encrypted request, but httpx logs the full URL of every request at
+  INFO, and a library's error text can contain it. So `shodan.redact` strips
+  `key=...` from every error text DaemonSight stores or shows, and a logging
+  filter on the `httpx` and `httpcore` loggers rewrites those lines (a test
+  asserts it with the log at DEBUG). Redirects are never followed, so the key
+  cannot be handed to another host.
+- **Errors.** "A non-200 status code in the response indicates an error
+  occurred" with a body like `{"error": "Invalid IP"}` [52]. The exact status
+  and body for a bad key, for an address with no information and for a missing
+  Membership are not documented; 404 is taken as "no record" (what
+  InternetDB does), 401 and 403 as "key refused", 402 or an error text that
+  contains "credit" as "no credits". Unverified against the live API.
+- **`GET /api-info?key=...`** "Returns information about the API plan
+  belonging to the given API key" (`plan`, `query_credits`, `scan_credits`,
+  `usage_limits`, `monitored_ips`, ...) [52]. Test key calls it and shows the
+  plan name as Shodan gives it and the credits. DaemonSight does not map plan
+  names to what a plan may be used for: the documented example plan is
+  `stream-100`, and the names of the Membership and Freelancer plans are not
+  published.
+- **Commercial use.** Shodan's pricing page lists "Commercial Use" as a
+  feature of the Freelancer ($69 a month), Small Business ($359) and Corporate
+  ($1099) API plans (prices as seen 2026-11-18) [54]. Its FAQ answers "Can we
+  use the API to build products?" with "Yes, you can integrate the API in your
+  products as long as the data is attributed to Shodan." [54] The Enterprise
+  Data License "provides rights to commercial use without attribution" [58].
+  The one-time Membership is described only as "a lifetime account upgrade to
+  browse more results, monitor some IPs and dive into the API" [54]; no page
+  read says it allows or forbids commercial use, and no terms-of-service page
+  was found (www.shodan.io/legal, /terms and /about/terms are 404, and the
+  membership purchase page needs a login). **Whether the Membership may be used
+  commercially is unverified**; the Settings note says so and tells the owner
+  to ask Shodan. DaemonSight attributes: the Exposure section and the source
+  panels say the data is from Shodan.
+- **InternetDB and a key.** InternetDB's own page says "No, you don't need to
+  have a Shodan account or a Shodan API key in order to use the InternetDB
+  API", and its OpenAPI description has no key parameter [49]. A key does not
+  change its terms, so DaemonSight sends none to it. The commercial route
+  Shodan names for InternetDB is an "enterprise license" [49]. Shodan's pricing
+  page is not consistent about it: the Corporate plan card lists "InternetDB
+  API Commercial Use", while the comparison table ticks InternetDB only under
+  Enterprise [54]. DaemonSight does not rely on either: the commercial route it
+  offers is the REST API on a plan that lists Commercial Use.
+
+**The key.** One line in `<data>/shodan.key` (or `[outside] key_file`), mode
+0600, written atomically. It is never in the `settings` table, an event, a
+log line, a page or an error, and it is not shown after it is saved. The
+Settings page saves, replaces, removes and tests it (`POST
+/settings/shodan-key`: login required, cross-site posts refused, one action
+per request). Saving and removing write the hub events "Shodan API key saved"
+and "Shodan API key removed" (who, never the key). Choosing the Shodan API as
+the source is refused without a saved key, and removing the key is refused while
+it is the source. If the file is missing anyway (a hand-edited config), the
+chore asks nobody and raises `outside.key`. A backup carries the file, like
+the other secrets.
 
 ### What it asks, and when
 
@@ -1053,9 +1165,16 @@ queries. Every minute it:
    addresses`. An entry `ip=host` is attached to that host; a plain `ip` to
    the host that reports it, and is dropped with a log line when no host does.
 2. Fetches each address that is due: never asked; or its last attempt was
-   `refresh_hours` ago (an hour after a failure). One request per address, a
-   second apart. The request is `GET https://internetdb.shodan.io/<ip>` with
-   `User-Agent: DaemonSight/<version>` and nothing else.
+   `refresh_hours` ago (an hour after a failure); or its stored answer came
+   from the other source (the source was changed). One request per address. The
+   InternetDB request is `GET https://internetdb.shodan.io/<ip>`, a second
+   apart, with `User-Agent: DaemonSight/<version>` and nothing else. The Shodan
+   API request is `GET https://api.shodan.io/shodan/host/<ip>?key=...`, 1.2
+   seconds apart, the key read from its file at the start of each pass. If the
+   key is refused or Shodan has no credits, the pass stops, every address left
+   in it gets the same error without a request, and nothing is asked again for
+   an hour, or until the key or the source changes. It never falls back to
+   InternetDB.
 3. Stores the cleaned answer in the `outside` table of `state.db` (ip,
    first_try, checked_at, fetched_at, status `ok`, `none` or `error`, data,
    error), schema version 7. A failed fetch keeps the old answer and sets
@@ -1083,6 +1202,7 @@ fix command (they are decisions).
 | `outside.tagged` | Critical | IP and the critical tags present |
 | `outside.vulns` | Medium | IP and a digest of the CVE list, so a new CVE brings an accepted finding back |
 | `outside.stale` | Low | IP |
+| `outside.key` | Medium | The kind of problem (`refused`, `missing`, `credits`), so it does not reopen when the text changes |
 
 What DaemonSight knows about a port (`outside.explain_port`) comes from the
 host's own readings: its listeners (process, unit or container, bound
@@ -1095,6 +1215,11 @@ it and no forward covers it. Example, from the test fixture: a VPS forwards
 every TCP port except 22, 80, 443, 2083 and 8001 over its `wg0` tunnel to
 10.99.0.2, and Shodan lists ports 22, 80, 443 and 9123. Port 9123 gives a
 high `outside.unexpected_port` whose detail names the forward to 10.99.0.2.
+
+With the Shodan API source the `outside.unexpected_port` detail also says what
+Shodan saw: for example "Shodan saw nginx 1.24.0 over TCP, last seen
+2026-11-10." Last-seen dates are in the detail only, never in the basis, so an
+accepted finding does not come back each time Shodan rescans.
 
 `outside.vulns` cross-references DaemonSight's own matches: it reads the
 host's rows in `cve.db` and names the CVE ids both have. Shodan matches the
@@ -1114,12 +1239,18 @@ finding, else Unexpected) and what DaemonSight knows about it; the expected
 ports Shodan did not list; hostnames, CPEs and tags (critical ones in red); and
 the CVE ids with links to NVD, marked where DaemonSight's own matches have
 them. The address's source panel gives the exact URL, a `curl` command to
-repeat the request, what is sent, how often Shodan updates and the terms. A
-port's panel has the finding's accept form. Shodan's text is escaped like all
+repeat the request, what is sent, how often Shodan updates and the terms. With
+the Shodan API source the table also has Transport (`tcp`/`udp`), Service
+Shodan saw (product and version, or "not named" / "no banner") and Last seen
+(relative, with the UTC time on hover), and the panel shows the request and the
+`curl` command with `key=YOUR_KEY`, a placeholder: the real key is never put in
+a page. A refused key shows its message beside the address, with a link to
+Settings. A port's panel has the finding's accept form. Shodan's text is escaped like all
 host text.
 
 Limits: Shodan's view is a week old at best, covers the ports it scans, and
-can't say TCP from UDP. An address attached to a host with no uploaded
+InternetDB can't say TCP from UDP (the Shodan API can, but `exposure.expected_public`
+is still compared by port number). An address attached to a host with no uploaded
 settings has an empty expected list, so every port Shodan sees is unexpected.
 
 ## Remote sources (phase 2b)
@@ -1624,7 +1755,8 @@ The collector must stay light:
 - Unraid: whether the API gives a threshold for a disk with its own temperature setting, and the SSD thresholds (the schema has no field).
 - Unraid: the notification, folder and release queries ran against the real server with an Admin key, read-only; a Viewer key reading `Notifications.list` and `Docker.organizer` was not tried. The release page was fetched without parameters and with `branch=stable`; its reply shape is what the fixture copies. Unverified: the exact label of the notification bell's "Archive all" (taken from the brief; the webgui source has no such string in the files searched), whether an acknowledged SMART attribute (the Dashboard's orange icon) still sends a notification when it changes again (the SMART docs say so), and that a history entry's `date` is the time the check ended (observed: it matches the finish notice within seconds).
 - Unraid: the container statistics subscription ran against the real server with an Admin key, read-only (the handshake, the stream, the id format and its control-code prefix, `memUsage`). Not tried with a Viewer key: the source gives a Viewer `READ_ANY` on `DOCKER`, which the subscription needs, but no Viewer key was available. Run it once with a real Viewer key before relying on it. The cost on the Unraid side (`docker stats` started and stopped each sample) was not measured, and the figure for "no memory limit" assumes Docker reports the host's memory as the limit (seen here: 94.28 GiB on a server with that much RAM).
-- Outside view: the whole chore against the real InternetDB from a real hub with real hosts (tests use a fake server with the documented reply shape, and the requests were checked by hand against documentation addresses and public ones); what an HTTP 429 from InternetDB looks like and whether it sends `Retry-After`; whether Shodan scans IPv6 widely; whether `c2` is a tag Shodan uses; and a complete list of tag values (Shodan documents none).
+- Outside view: the whole chore against the real InternetDB from a real hub with real hosts (tests use a fake server with the documented reply shape, and the requests were checked by hand against documentation addresses and public ones); what an HTTP 429 from InternetDB looks like and whether it sends `Retry-After`; whether Shodan scans IPv6 widely; and the tag values beyond the 31 in Shodan's banner schema [56].
+- Shodan API source: never run against the live API (no key was available; no request was sent to api.shodan.io). Unverified: the status code and body for a bad key, for an address Shodan has no information on, and for a free account's key (401, 403 and 404 are assumed from the official client's handling and from InternetDB); what a 429 looks like and whether it sends `Retry-After`; whether a full host lookup carries `product`, `version`, `cpe23` and `vulns` for every banner (the REST page's example shows none, the banner schema lists them as optional); whether the host reply has a top-level `vulns` (it is read if present, and banner `vulns` are read too); the biggest real reply (the cap is 4 MiB); whether the one-time Membership allows commercial use; and which plan name `api-info` returns for each plan. Run Test key and one real refresh with a real key before relying on it.
 
 ## Sources
 
@@ -1679,3 +1811,10 @@ The collector must stay light:
 49. Shodan InternetDB, the published page (what it returns, "updated once a week", "free for non-commercial use", the enterprise licence for revenue-generating use, no key needed, no banners): https://internetdb.shodan.io/ . Reply shape, the 404 body `{"detail":"No information available"}`, IPv6 records, the 405 and 307 responses and the cache headers were observed with requests on 2026-11-18
 50. Shodan tag values: a third-party Go client library's tag list with a description of each, https://pkg.go.dev/github.com/denisgubin/shodan/models/tags ; an unofficial list of the most used tags, https://gainsec.com/2022/02/07/top-20-shodan-general-search-tags/ . Neither is Shodan's own documentation
 51. Shodan search filters (the `tag` filter is restricted to higher API plans; no values listed): https://www.shodan.io/search/filters ; Shodan help, what Shodan indexes (the data comes from service banners): https://help.shodan.io/the-basics/what-is-shodan
+52. Shodan REST API reference, read 2026-11-18: `GET /shodan/host/{ip}` (parameters `history` and `minify`, the `key` query parameter in every example, the response example with `ports`, `data` banners, `transport` and `timestamp`), `GET /api-info` (the `plan`, `query_credits`, `scan_credits` example), and "Error Handling" ("A non-200 status code ... {"error": "Invalid IP"}"): https://developer.shodan.io/api
+53. Shodan book, "Shodan API" (query, scan and alert credits; "IP lookups don't consume query credits"; credits reset monthly; history up to 90 days; Shodan crawls at least weekly): https://book.shodan.io/developer-apis/shodan-api/ ; "InternetDB" ("bursts of up to 10,000 requests per second", weekly update, `vulns` includes verified and unverified): https://book.shodan.io/developer-apis/internetdb/
+54. Shodan plans and pricing (Freelancer, Small Business and Corporate list "Commercial Use"; "All API plans are subject to a rate limit of 1 request per second"; the FAQ "Can we use the API to build products?"; the comparison table's IP lookups and InternetDB rows; the Membership as "a one-time payment for a lifetime account upgrade"), read 2026-11-18: https://developer.shodan.io/pricing (redirects to https://account.shodan.io/billing)
+55. Shodan help center: "Looking up IP Information" ("requires at least a Shodan Membership (one-time payment of $49 ...)"): https://help.shodan.io/developer-fundamentals/looking-up-ip-info ; "Shodan Credits Explained": https://help.shodan.io/the-basics/credit-types-explained ; "Account Management FAQ" (the Membership is a lifetime upgrade): https://help.shodan.io/the-basics/account-faq
+56. Shodan Datapedia, the banner reference and JSON schema v29 (`product`, `version`, `transport`, `timestamp` in UTC, `vulns`, `cpe23`, and the Tag values `c2`, `compromised`, `doublepulsar`, `malware` ...): https://datapedia.shodan.io/ and https://datapedia.shodan.io/banner.schema.json
+57. Shodan's official Python client, `shodan/client.py` (`params['key'] = self.api_key`, `api_rate_limit = 1`, HTTP 401 and 403 handling, `host(ips, history, minify)` taking a comma-separated list): https://github.com/achillean/shodan-python
+58. Shodan Enterprise ("The Enterprise Data License provides rights to commercial use without attribution"): https://enterprise.shodan.io/

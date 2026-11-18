@@ -7,7 +7,7 @@ import time
 from urllib.parse import quote, urlsplit
 from dataclasses import replace
 
-from .. import db, distro, findings as rules, hub, outside as outside_mod
+from .. import db, distro, findings as rules, hub, outside as outside_mod, shodan as shodan_mod
 from ..collector.sources.caddy import is_local
 from .. import cve as _cve  # noqa: F401 (package)
 from ..cve import feeds as cve_feeds, match as cve_match, store as cve_store
@@ -596,20 +596,26 @@ NVD = "https://nvd.nist.gov/vuln/detail/"
 
 
 def outside_section(conn, cfg: Config, snaps: dict, ports: dict, expected: set, found: list[dict]) -> dict:
-    """"Seen from outside": what Shodan's InternetDB lists for this host's public addresses,
-    each port with a status and what DaemonSight knows about it."""
+    """"Seen from outside": what Shodan (InternetDB, or the Shodan API with the owner's key) lists for this
+    host's public addresses, each port with a status and what DaemonSight knows about it. With the API, each
+    port also has its transport, the software Shodan named and when it last saw it."""
+    source = outside_mod.source_of(cfg)
     out = {"state": "ok", "message": None, "addresses": [], "refresh_hours": cfg.outside.refresh_hours,
-           "terms": outside_mod.TERMS, "url": outside_mod.URL, "enabled": cfg.outside.enabled}
+           "terms": outside_mod.SHODAN_TERMS if source == "shodan" else outside_mod.TERMS,
+           "url": outside_mod.URL, "enabled": cfg.outside.enabled, "source": source,
+           "source_name": "Shodan API" if source == "shodan" else "Shodan InternetDB", "rich": False,
+           "key_saved": shodan_mod.key_saved(cfg) if source == "shodan" else None}
     if not cfg.hub.enabled:
         out.update(state="off", message="Outside checks run on a hub, which asks Shodan about each host's public "
                                         "addresses. This host has no hub.")
         return out
     if not cfg.outside.enabled:
-        out.update(state="off", message="Outside checks are off. To see what Shodan's InternetDB lists for this host's "
-                                        "public addresses, turn on Outside view on the Settings page (or set "
+        out.update(state="off", message="Outside checks are off. To see what Shodan lists for this host's public "
+                                        "addresses, turn on Outside view on the Settings page (or set "
                                         "enabled = true under [outside] in the hub's config; docs/INSTALL.md, "
                                         "\"Outside checks\"). InternetDB is free for non-commercial "
-                                        "use only; read its terms first.")
+                                        "use only; for commercial use choose the Shodan API there and add your "
+                                        "own key. Read the terms on that page first.")
         return out
     ips = outside_mod.host_addresses(cfg.host_id, ports, cfg)
     if not ips:
@@ -625,7 +631,8 @@ def outside_section(conn, cfg: Config, snaps: dict, ports: dict, expected: set, 
         row = rows.get(ip)
         a = {"ip": ip, "anchor": rules.anchor("outside", ip), "state": "waiting", "fetched": "never", "stale": False,
              "error": (row or {}).get("error"), "ports": [], "missing": [], "hostnames": [], "cpes": [], "tags": [],
-             "vulns": [], "src": prov.outside_address(ip, row), "stale_finding": by_key.get(("outside.stale", ip))}
+             "vulns": [], "src": prov.outside_address(ip, row, source),
+             "stale_finding": by_key.get(("outside.stale", ip)), "key_finding": by_key.get(("outside.key", "shodan"))}
         out["addresses"].append(a)
         if row is None:
             continue
@@ -637,14 +644,31 @@ def outside_section(conn, cfg: Config, snaps: dict, ports: dict, expected: set, 
         a["fetched"] = fmt_ago(row["fetched_at"], now)
         data = row["data"] or {}
         seen = set(data.get("ports", []))
+        by_port: dict[int, list[dict]] = {}
+        for svc in data.get("services", []):
+            by_port.setdefault(svc["port"], []).append(svc)
+        via_api = data.get("source") == "shodan"
+        out["rich"] = out["rich"] or via_api
+        a["rich"] = via_api
         for p in sorted(seen):
             finding = by_key.get(("outside.unexpected_port", f"{ip} {p}"))
             known = outside_mod.explain_port(snaps, p)
             anchor_id = rules.anchor("outside", ip, p)
+            svcs = by_port.get(p, [])
+            names = []
+            for svc in svcs:
+                label = outside_mod.service_label(svc)
+                if label and label not in names:
+                    names.append(label)
+            newest = max((svc["seen"] for svc in svcs if svc.get("seen")), default=None)
             a["ports"].append({
                 "port": p, "anchor": anchor_id, "known": known,
                 "status": status_of(outside_mod.port_expected(expected, p), finding),
-                "src": {**prov.outside_port(ip, p, known), "finding": finding, "anchor": anchor_id}})
+                "transport": ", ".join(sorted({svc["transport"] for svc in svcs})) or "not given",
+                "service": ", ".join(names) or ("not named" if svcs else "no banner"),
+                "seen": fmt_ago(newest, now) if newest else "not given", "seen_v": newest or "",
+                "seen_abs": fmt_when(newest) if newest else "",
+                "src": {**prov.outside_port(ip, p, known, source), "finding": finding, "anchor": anchor_id}})
         if not (row["status"] == "none" and ":" in ip):
             a["missing"] = [{"port": p, "who": who} for p, who in sorted(
                 outside_mod.expected_ports_here(snaps, expected, cfg.exposure.upstream_allow, ip, eph).items())

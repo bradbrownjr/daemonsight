@@ -153,7 +153,7 @@ restarting:
 
 | Group | Settings |
 |---|---|
-| Outside view | Enabled, extra addresses (`ip` or `ip=hostid`, one per line), check every N hours |
+| Outside view | Enabled, source (InternetDB or the Shodan API), extra addresses (`ip` or `ip=hostid`, one per line), check every N hours; and the Shodan API key (save, replace, remove, test; see "Outside checks") |
 | CVE checks | Enabled, check every N hours, the EPSS score that makes a finding High |
 | Retention | Chart points (hours), Recent changes (days), cleared findings (days); 0 keeps for good |
 | Backups | Hours between scheduled backups (blank is automatic, 0 is off), how many to keep |
@@ -178,8 +178,8 @@ enabled: off → on".
 **Config file only.** The page lists, without a form, what is never editable
 in the browser: the web listen address and port, trusted proxies, cookie and
 session settings, the password and secret files, the data, database and backup
-folders, the log file, whether this install is a hub, the upload limits and
-the upload settings. A mistake in any of them could lock you out of the page
+folders, the log file, where the Shodan key file is kept (`[outside] key_file`),
+whether this install is a hub, the upload limits and the upload settings. A mistake in any of them could lock you out of the page
 you would use to fix it, or stop the server starting. Change them in
 `config.toml` and restart.
 
@@ -318,8 +318,9 @@ Sources: `system`, `systemd`, `ports`, `docker`, `caddy`, `fail2ban`,
 
 A backup is one `.tar.gz` holding a consistent copy of the database (taken
 while the collector or hub keeps running), the config file, the password
-hash, the session secret and any upload token. Only its owner can read it.
-Keep copies as private as the server: the secret and token are live.
+hash, the session secret, any upload token, the API key of each remote system
+and the Shodan API key. Only its owner can read it. Keep copies as private as
+the server: the secret, the token and the API keys are live.
 
 **Scheduled:** the hub, and the collector on a host that keeps its own
 data, write one every 24 hours to `backups` in the data folder and keep the
@@ -544,17 +545,49 @@ days, a low "feed is stale" finding appears on each host.
 
 ### Outside checks
 
-The hub can ask Shodan's InternetDB (https://internetdb.shodan.io/) what the
-internet sees of each host's public addresses: open ports, software names
-(CPEs), hostnames, tags and CVEs, from Shodan's own weekly scan. DaemonSight
-compares that with what it knows from inside the host. It is **off by
-default**, on the hub only.
+The hub can ask Shodan what the internet sees of each host's public
+addresses: open ports, software names, hostnames, tags and CVEs, from
+Shodan's own scans. DaemonSight compares that with what it knows from inside
+the host. It is **off by default**, on the hub only. There are two sources;
+you choose one under Settings, Outside view, Source.
+
+| Source | Needs | Terms | What you get |
+|---|---|---|---|
+| InternetDB (default) | nothing: no account, no key | Free for non-commercial use only | Ports, CPEs, hostnames, tags, CVEs; updated about weekly; no banners |
+| Shodan API | your own Shodan API key | The terms of the plan the key belongs to | The same, plus each port's transport (TCP or UDP), the software name and version Shodan saw, and when it last saw it |
 
 **Licence.** InternetDB is free for non-commercial use. Shodan's page says:
 "If you're using the InternetDB API to make money then you need an
-enterprise license." If you run DaemonSight for clients or inside a
-for-profit business, read Shodan's terms first. DaemonSight does not turn this
-on for you.
+enterprise license." InternetDB takes no key, so a key does not change that. If
+you run DaemonSight for clients or inside a for-profit business, use the
+Shodan API source with a key on a plan that allows your use. Shodan's pricing
+page (https://developer.shodan.io/pricing) lists "Commercial Use" on its
+Freelancer, Small Business and Corporate API plans, and its FAQ says the API
+may be used in products "as long as the data is attributed to Shodan"
+(DaemonSight says the data is from Shodan wherever it shows it). The Enterprise
+Data License covers commercial use without attribution. That page does not say
+whether the one-time Membership allows commercial use, and no Shodan terms
+page was found that does, so ask Shodan before relying on it. DaemonSight does
+not turn any of this on for you.
+
+**Getting a Shodan API key.**
+
+1. Create an account at https://account.shodan.io/. A free account is enough
+   to get a key, but not to use it: looking up IPs through the API needs at
+   least a Membership (a one-time payment), and a free account's key is
+   refused.
+2. Choose a plan that allows your use on https://developer.shodan.io/pricing.
+   For commercial use, a plan that lists Commercial Use (above).
+3. Copy the API key from your account page.
+4. On the hub's Settings page, Outside view, paste it into API key and press
+   Save key. It is written to a file only the hub can read, and never shown
+   again. Replace and Remove are there too.
+5. Press Test key. It asks Shodan's `api-info` page and shows your plan name
+   and your credits, or the reason Shodan refused the key. (Test key does not
+   say whether the plan allows your use: that is Shodan's terms.)
+6. Set Source to Shodan API (your key) and save the group. The page refuses
+   this until a key is saved, and refuses to remove the key while the Shodan API
+   is the source.
 
 To turn it on, open Settings (account menu), choose Outside view, set Enabled
 to On and save. It starts at the next pass, with no restart. Or add this to
@@ -563,8 +596,10 @@ the hub's `config.toml` and restart the hub:
 ```toml
 [outside]
 enabled = true
+source = "internetdb"         # or "shodan": the key is saved on the Settings page
 refresh_hours = 24            # each address is asked at most this often
 addresses = []                # extra addresses, see below
+# key_file = ""               # where the Shodan key is kept; blank: shodan.key in the data folder
 ```
 
 - It checks every public address each host reports in its ports snapshot
@@ -575,25 +610,41 @@ addresses = []                # extra addresses, see below
   no collector reports (a router's, for instance). Findings and the Exposure
   section belong to that host, and its `exposure.expected_public` decides what
   is expected.
-- It sends one request per address per refresh, a second apart, from the
-  hub, in the background. The request is `GET https://internetdb.shodan.io/<ip>`
-  with the User-Agent `DaemonSight/<version>`; nothing else leaves the hub.
-  The hub needs outbound HTTPS to `internetdb.shodan.io`. Shodan documents
-  no rate limit; if it answers HTTP 429 the hub stops for the time it asks.
-- Shodan updates InternetDB about once a week, so a fixed port can stay in
-  its data for days. A finding clears at the first refresh after Shodan
-  stops listing the port.
+- It sends one request per address per refresh, from the hub, in the
+  background, with the User-Agent `DaemonSight/<version>`. InternetDB:
+  `GET https://internetdb.shodan.io/<ip>`, a second apart; nothing else leaves
+  the hub, and if it answers HTTP 429 the hub stops for the time it asks. Shodan
+  API: `GET https://api.shodan.io/shodan/host/<ip>?key=<your key>`, 1.2
+  seconds apart (Shodan's plans allow one request a second). A host lookup
+  uses no query credits, according to Shodan's API book. The hub needs
+  outbound HTTPS to the host of the source you chose.
+- The key goes only to `api.shodan.io`, as the `key` query parameter (the
+  only way Shodan documents). The hub removes it from every error message and
+  log line, never shows it again, and does not follow redirects. It is in a
+  file, `shodan.key` in the data folder, mode 0600, and in backups; see
+  SECURITY.md.
+- If Shodan refuses the key (HTTP 401 or 403), or has no credits, the hub
+  says so at once with a medium `outside.key` finding and a message beside the
+  address on the Exposure page. It does not fall back to InternetDB. Fix the
+  key, or set Source back to InternetDB. A new key is tried at the next pass.
+- Shodan updates InternetDB about once a week, and crawls the internet at least
+  weekly, so a fixed port can stay in its data for days. A finding clears at
+  the first refresh after Shodan stops listing the port.
 - The Exposure page gets a "Seen from outside" section: for each address,
   when it was fetched, then each port Shodan lists with its status and what
-  DaemonSight knows about it, plus hostnames, CPEs and tags. Its source panel
-  has the exact URL and a `curl` command to repeat the request yourself.
+  DaemonSight knows about it, plus hostnames, CPEs and tags. With the Shodan
+  API source it also shows each port's transport, the software Shodan named
+  and when it last saw it. Its source panel has the request and a `curl`
+  command to repeat it yourself (for the API it says `key=YOUR_KEY`: put your
+  own key there; the page never shows it).
 - Findings: `outside.unexpected_port` (high), `outside.not_seen` (low),
-  `outside.tagged` (critical), `outside.vulns` (medium) and `outside.stale`
-  (low). Accept them with a note like any other; see docs/DESIGN.md, "The
-  outside view".
+  `outside.tagged` (critical), `outside.vulns` (medium), `outside.stale`
+  (low) and, with the Shodan API, `outside.key` (medium). Accept them with a
+  note like any other; see docs/DESIGN.md, "The outside view".
 - Turn Enabled off again (Settings page, or `enabled = false` and a restart) and
   the hub makes no requests and closes the `outside.*` findings at its next
-  pass, about a minute later.
+  pass, about a minute later. Remove the key from the Settings page (with
+  Source on InternetDB) to delete the key file.
 
 ### Hosts that stop reporting
 

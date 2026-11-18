@@ -30,9 +30,10 @@ SECTION_READ = {
     "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
     "cve": "The hub matches this host's installed packages against the Debian security tracker, EPSS scores and "
            "CISA's KEV list; the host downloads nothing",
-    "outside": "Shodan's free InternetDB, asked by the hub about this host's public addresses. Only the IP address "
-               "is sent, with a generic User-Agent, DaemonSight/<version>. The answer is Shodan's scan data, up to a "
-               "week old, compared with what DaemonSight reads from inside the host",
+    "outside": "Shodan, asked by the hub about this host's public addresses: its free InternetDB, or the Shodan API "
+               "with the owner's key. Only the IP address is sent (the API also gets the key), with a generic "
+               "User-Agent, DaemonSight/<version>. The answer is Shodan's scan data, up to a week old, compared "
+               "with what DaemonSight reads from inside the host",
     "unraid": "The hub's read-only GraphQL queries to the Unraid API, checked against DaemonSight's Unraid rules",
     "remote": "The hub's last attempt to read this system's API",
     "findings": "DaemonSight's rules, applied to the latest reading from each source",
@@ -40,32 +41,54 @@ SECTION_READ = {
 }
 
 
-def outside_address(ip: str, row: dict | None) -> dict:
-    """The panel for one address in "Seen from outside": the exact request, and how to repeat it."""
-    from .. import outside
+def outside_address(ip: str, row: dict | None, source: str = "internetdb") -> dict:
+    """The panel for one address in "Seen from outside": the exact request, and how to repeat it. The Shodan API's
+    request shows key=YOUR_KEY: the real key is never put in a panel."""
+    from .. import outside, shodan
     from .views import fmt_when
-    entries = [{"kind": "url", "label": "Request", "text": outside.URL + ip, "href": outside.URL + ip},
-               cmd("Check it yourself", f"curl -s {q(outside.URL + ip)}"),
-               plain("Sent", f"Only the IP address, with the User-Agent {outside.USER_AGENT}"),
-               plain("Updated", "InternetDB updates once a week; it returns no banners"),
-               plain("Terms", outside.TERMS),
-               {"kind": "url", "label": "About InternetDB", "text": outside.DOCS, "href": outside.DOCS}]
+    if source == "shodan":
+        shown = f"{shodan.HOST_URL}{ip}?key=YOUR_KEY"
+        entries = [plain("Request", shown),
+                   cmd("Check it yourself (put your key where it says YOUR_KEY)", f"curl -s {q(shown)}"),
+                   plain("Sent", f"The IP address and your API key, over HTTPS to api.shodan.io only, with the User-Agent "
+                                 f"{outside.USER_AGENT}. The key is saved on the hub, never shown, and removed from every "
+                                 "log line and error"),
+                   plain("Cost", "Host lookups use no query credits (Shodan's API book); the limit is 1 request a second"),
+                   plain("Updated", "Shodan crawls the internet at least once a week"),
+                   plain("Terms", outside.SHODAN_TERMS),
+                   {"kind": "url", "label": "About the host lookup", "text": shodan.DOCS, "href": shodan.DOCS}]
+        read = ("The hub asks the Shodan API about this address once per refresh, with the key saved on the Settings "
+                "page, and keeps the answer. HTTP 404 means Shodan has no record of the address; 401 or 403 means "
+                "the key was refused. The reply is untrusted text: it is checked for shape and size, stored as data, "
+                "and shown escaped")
+    else:
+        entries = [{"kind": "url", "label": "Request", "text": outside.URL + ip, "href": outside.URL + ip},
+                   cmd("Check it yourself", f"curl -s {q(outside.URL + ip)}"),
+                   plain("Sent", f"Only the IP address, with the User-Agent {outside.USER_AGENT}"),
+                   plain("Updated", "InternetDB updates once a week; it returns no banners"),
+                   plain("Terms", outside.TERMS),
+                   {"kind": "url", "label": "About InternetDB", "text": outside.DOCS, "href": outside.DOCS}]
+        read = ("The hub asks InternetDB about this address once per refresh and keeps the answer. "
+                "HTTP 404 means Shodan has no record of the address. The reply is untrusted text: it is checked "
+                "for shape and size, stored as data, and shown escaped")
     if row and row.get("fetched_at"):
         entries.append(plain("Answer fetched", fmt_when(row["fetched_at"])))
-    return {"title": f"Shodan's view of {ip}",
-            "read": "The hub asks InternetDB about this address once per refresh and keeps the answer. "
-                    "HTTP 404 means Shodan has no record of the address. The reply is untrusted text: it is checked "
-                    "for shape and size, stored as data, and shown escaped",
-            "entries": entries}
+    return {"title": f"Shodan's view of {ip}", "read": read, "entries": entries}
 
 
-def outside_port(ip: str, port: int, lines: list[str]) -> dict:
-    from .. import outside
+def outside_port(ip: str, port: int, lines: list[str], source: str = "internetdb") -> dict:
+    from .. import outside, shodan
     entries = [text("What DaemonSight knows", ln) for ln in lines]
-    entries += [cmd("Who listens here", f"sudo ss -ltnup 'sport = :{port}'"),
-                cmd("Shodan's record", f"curl -s {q(outside.URL + ip)}")]
-    return {"title": f"Port {port} on {ip}",
-            "read": "Shodan's scan data (InternetDB), compared with this host's own readings", "entries": entries}
+    if source == "shodan":
+        shown = f"{shodan.HOST_URL}{ip}?key=YOUR_KEY"
+        entries += [cmd("Who listens here", f"sudo ss -ltnup 'sport = :{port}'"),
+                    cmd("Shodan's record (put your key where it says YOUR_KEY)", f"curl -s {q(shown)}")]
+        read = "Shodan's scan data (the Shodan API), compared with this host's own readings"
+    else:
+        entries += [cmd("Who listens here", f"sudo ss -ltnup 'sport = :{port}'"),
+                    cmd("Shodan's record", f"curl -s {q(outside.URL + ip)}")]
+        read = "Shodan's scan data (InternetDB), compared with this host's own readings"
+    return {"title": f"Port {port} on {ip}", "read": read, "entries": entries}
 
 
 def cve_packages() -> dict:

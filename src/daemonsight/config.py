@@ -108,11 +108,11 @@ class CveConfig:
 
 @dataclass
 class OutsideConfig:
-    """On the hub: ask Shodan's InternetDB what the internet sees of each
-    host's public addresses. Off by default: InternetDB is free for
-    non-commercial use only ("If you're using the InternetDB API to make money
-    then you need an enterprise license", https://internetdb.shodan.io/).
-    Only the IP address is sent."""
+    """On the hub: ask Shodan what the internet sees of each host's public
+    addresses. Off by default: InternetDB is free for non-commercial use only
+    ("If you're using the InternetDB API to make money then you need an
+    enterprise license", https://internetdb.shodan.io/). Only the IP address is
+    sent (the Shodan API source also sends your key)."""
     enabled: bool = False
     # Extra addresses to check, besides every host's own public addresses.
     # "203.0.113.9" is checked for the host that reports it; "203.0.113.9=vps"
@@ -121,6 +121,12 @@ class OutsideConfig:
     addresses: list[str] = field(default_factory=list)
     # Hours between checks of each address. InternetDB updates weekly.
     refresh_hours: float = 24
+    # Where the addresses come from: "internetdb" (free for non-commercial use, no key) or "shodan" (Shodan's
+    # REST API with your own key, for use its plan allows, commercial included). The key is never in this file:
+    # it is saved from the Settings page into key_file.
+    source: str = "internetdb"
+    # The file holding the Shodan API key (one line, mode 0600). Blank: shodan.key in data_dir.
+    key_file: str = ""
 
 
 @dataclass
@@ -212,6 +218,10 @@ class Config:
     def cve_db_path(self) -> Path:
         return Path(self.data_dir) / "cve.db"
 
+    @property
+    def shodan_key_path(self) -> Path:
+        return Path(self.outside.key_file) if self.outside.key_file else Path(self.data_dir) / "shodan.key"
+
 
 def _apply(obj, values: dict, section: str, seen: set[str] | None = None) -> None:
     known = {f.name: f for f in fields(obj)}
@@ -260,6 +270,10 @@ def load(path: str | os.PathLike | None = None) -> Config:
         seen.add("retention.metrics_hours")   # the old name sets the same thing
     cfg.file_keys = frozenset(seen)
     cfg.role = valid_role(cfg.role, warn=True)
+    if cfg.outside.source not in ("internetdb", "shodan"):
+        logging.getLogger("daemonsight").warning(
+            "unknown [outside] source %r; using \"internetdb\" (known: internetdb, shodan)", cfg.outside.source)
+        cfg.outside.source = "internetdb"
     return cfg
 
 

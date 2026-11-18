@@ -14,13 +14,14 @@ import unicodedata
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import config as config_mod, db, full_version, hub, settings
+from .. import config as config_mod, db, full_version, hub, settings, shodan
 from ..config import Config
 from ..remote.client import Net
 from . import report, unraid_views, views
@@ -211,6 +212,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
         groups = settings.describe(cfg, conn, can_edit)
         events = views.events_list(conn, db.HUB_HOST, 20) if conn is not None and can_edit else []
         ctx = {"groups": groups, "read_only": settings.read_only(live(conn) if conn is not None else cfg),
+               "shodan": {"saved": shodan.key_saved(cfg), "path": str(cfg.shodan_key_path)},
                "can_edit": can_edit, "config_path": str(file_path), "errors": errors or {},
                "posted": posted or {}, "problems": problems or [], "events": events, "no_filter": True, "host": None}
         return render(request, "settings.html", {"page": "settings", "v": ctx}, status)
@@ -265,6 +267,9 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                     values[key] = settings.parse(settings.BY_KEY[key], raw)
                 except settings.Invalid as exc:
                     errors[key] = str(exc)
+            if values.get("outside.source") == "shodan" and not shodan.key_saved(cfg):
+                errors["outside.source"] = ("No Shodan API key is saved. Save your key under API key first, then "
+                                            "choose the Shodan API.")
             if errors:
                 with reader() as conn:
                     return settings_page(request, conn, 400, errors=errors, posted=posted)
@@ -278,6 +283,72 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             else:
                 flash(request, "No changes: those values are already in effect.")
             return RedirectResponse(f"/settings#{group}" if group else "/settings", status_code=303)
+
+        @app.post("/settings/shodan-key")
+        async def shodan_key_post(request: Request, key: str = Form(""), action: str = Form("")):
+            """Save, replace, remove or test the Shodan API key. The key is typed here once and written to a 0600
+            file; it is never put into a page, an event, a log line or the database, and these routes never show
+            it. Test uses the key typed in the box, else the saved one, and shows Shodan's plan and credits or
+            its error. Needs the login and refuses a cross-site request, like every hub action."""
+            require_login(request)
+            if request.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
+                return PlainTextResponse("cross-site request refused", status_code=403)
+            by = str(request.session.get("user") or "admin")
+            client = request.client.host if request.client else "?"
+            back = RedirectResponse("/settings#outside", status_code=303)
+            typed = key.strip()
+            if action == "save":
+                try:
+                    shodan.write_key(cfg, typed)
+                except ValueError as exc:
+                    flash(request, str(exc), error=True)
+                    return back
+                except OSError as exc:
+                    log.error("Could not save the Shodan API key: %s", exc.strerror or type(exc).__name__)
+                    flash(request, "The key file could not be written. Check the data folder's permissions.", error=True)
+                    return back
+                db.add_event(hub_conn, db.HUB_HOST, time.time(), "setting", "Shodan API key saved", detail=f"by {by}")
+                log.info("Shodan API key saved by %s from %s", by, client)
+                flash(request, "Shodan API key saved. Press Test key to check it, then set Source to Shodan API.")
+            elif action == "remove":
+                if settings.effective(cfg, hub_conn).outside.source == "shodan":
+                    flash(request, "The Shodan API is the chosen source. Set Source back to InternetDB and save "
+                                   "before you remove the key.", error=True)
+                elif shodan.delete_key(cfg):
+                    db.add_event(hub_conn, db.HUB_HOST, time.time(), "setting", "Shodan API key removed",
+                                 detail=f"by {by}")
+                    log.info("Shodan API key removed by %s from %s", by, client)
+                    flash(request, "Shodan API key removed. The key file is deleted.")
+                else:
+                    flash(request, "No Shodan API key was saved.", error=True)
+            elif action == "test":
+                use = typed
+                if use:
+                    try:
+                        use = shodan.clean_key(use)
+                    except ValueError as exc:
+                        flash(request, str(exc), error=True)
+                        return back
+                else:
+                    use = shodan.read_key(cfg) or ""
+                if not use:
+                    flash(request, "Enter a key to test, or save one first.", error=True)
+                    return back
+                own = outside_client is None
+                http = outside_client or httpx.AsyncClient(timeout=httpx.Timeout(20.0), follow_redirects=False)
+                try:
+                    info = await shodan.api_info(http, use)
+                finally:
+                    if own:
+                        await http.aclose()
+                text = shodan.describe_info(info)
+                if info.ok and typed:
+                    text += " This key is not saved yet: press Save key to keep it."
+                flash(request, text, error=not info.ok)
+                log.info("Shodan API key tested by %s from %s: %s", by, client, "accepted" if info.ok else "not accepted")
+            else:
+                flash(request, "Unknown action.", error=True)
+            return back
 
     # --- pages ---------------------------------------------------------------
     # On a single host the pages live at /, /exposure ... for this host. On a

@@ -63,15 +63,19 @@ the row they are about, and a port's panel shows the process behind it.
   Unexpected and Changed count as needing attention. Nothing is hidden: the
   Exposure page has a Status column on every listener and port forward, with a
   dash for what the internet can't reach.
-- **Seen from outside (Shodan).** Off by default. A hub can ask Shodan's free
-  InternetDB what the internet sees of each host's public addresses, once a
-  day, sending only the IP address. The Exposure page lists each port Shodan
-  sees with a status and what DaemonSight knows about it (the process, or the
-  port forward and the tunnel it goes through), and findings flag a port
-  nobody expected, an expected port Shodan doesn't see, Shodan's compromise
-  tags and its CVE guesses. Turn it on from the Settings page. InternetDB is
-  free for non-commercial use only: see [docs/INSTALL.md](docs/INSTALL.md),
-  "Outside checks".
+- **Seen from outside (Shodan).** Off by default. A hub can ask Shodan what the
+  internet sees of each host's public addresses, once a day, sending only the
+  IP address. The source is your choice on the Settings page: InternetDB (free,
+  no key, for non-commercial use only) or the Shodan API with your own key
+  (the route for commercial use; Test key shows your plan and credits, and the
+  key is kept in a file, never shown again). The Exposure page lists each port
+  Shodan sees with a status and what DaemonSight knows about it (the process,
+  or the port forward and the tunnel it goes through); with the API it also
+  gives each port's transport, the software Shodan named and when it last saw
+  it. Findings flag a port nobody expected, an expected port Shodan doesn't
+  see, Shodan's compromise tags and its CVE guesses, and a refused key. Turn it
+  on from the Settings page; see [docs/INSTALL.md](docs/INSTALL.md), "Outside
+  checks", for the terms and how to get a key.
 - **Per-host report.** One page per host (`/h/<host>/report`, or `/report` on
   a single host) puts the open findings in order: install updates, restart
   services, reboot, automatic updates, then the rest, each step with its

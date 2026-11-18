@@ -7,8 +7,24 @@ InternetDB (https://internetdb.shodan.io/) answers `GET /<ip>` with
 It needs no key, updates weekly, returns no banners, and is "free for
 non-commercial use" ("If you're using the InternetDB API to make money then
 you need an enterprise license"). So it is off by default ([outside] enabled).
-Its rate limits are not documented; this module makes one request per address
-per refresh, a second apart, and stops for the pass on HTTP 429.
+Its rate limit is documented as bursts of up to 10,000 requests a second
+(book.shodan.io, "InternetDB"); this module makes one request per address per
+refresh, a second apart, and stops for the pass on HTTP 429.
+
+The other source is Shodan's own REST API with the owner's key ([outside]
+source = "shodan"; shodan.py holds the key file and its redaction). It is the
+route for use InternetDB's terms do not cover: Shodan's pricing page lists
+"Commercial Use" on its Freelancer, Small Business and Corporate API plans. A
+host lookup, `GET https://api.shodan.io/shodan/host/<ip>?key=...`, uses no
+query credits ("IP lookups don't consume query credits", book.shodan.io,
+"Shodan API"), is limited to one request a second on every plan (pricing page),
+and gives each port's transport, product, version and the time Shodan last saw
+it. It is fetched in full: with `minify` the answer has "no banners", so no
+per-port transport or time. One request per address per refresh, 1.2 s apart.
+The key is sent only to api.shodan.io, only as the `key` query parameter (the
+only way the documentation shows), and is redacted from every error and log
+line. A refused key (HTTP 401/403) or no credits is reported as an
+`outside.key` finding at once, and nothing falls back to InternetDB.
 
 Only the IP address is sent, with the User-Agent "DaemonSight/<version>".
 Private, loopback and link-local addresses are never sent. The answer is
@@ -24,6 +40,7 @@ It keeps each host's `outside.*` findings current, as the CVE chore does for
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
@@ -31,10 +48,11 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import httpx
 
-from . import __version__, db, settings
+from . import __version__, db, settings, shodan
 from .config import Config
 from .findings import Finding, anchor, digest, firewall_state, public_listeners
 
@@ -45,21 +63,31 @@ DOCS = "https://internetdb.shodan.io/"
 USER_AGENT = f"DaemonSight/{__version__}"
 TERMS = ("Free for non-commercial use. \"If you're using the InternetDB API to make money then you need an "
          "enterprise license.\" (https://internetdb.shodan.io/)")
+SHODAN_TERMS = ("Data from Shodan (https://www.shodan.io/). Shodan's pricing page says the API may be used in products "
+                "\"as long as the data is attributed to Shodan\", and lists Commercial Use on its Freelancer, Small "
+                "Business and Corporate plans (https://developer.shodan.io/pricing).")
+
+
+def source_of(cfg: Config) -> str:
+    """"shodan" when the Shodan API is chosen, else "internetdb"."""
+    return "shodan" if cfg.outside.source == "shodan" else "internetdb"
 MAX_BYTES = 1 << 20          # largest answer accepted
+SHODAN_MAX_BYTES = 4 << 20   # a full host answer holds every banner (HTTP pages included)
 GAP_SECONDS = 1.0            # between two requests in one pass
+SOURCES = ("internetdb", "shodan")
+SOURCE_NAMES = {"internetdb": "InternetDB", "shodan": "the Shodan API"}
 RETRY_AFTER_ERROR = 3600     # seconds before asking again after a failure
 STALE_FLOOR_HOURS = 72       # an answer older than max(this, 3 refreshes) is called stale
 
 CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,10}$")
 TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,39}$")
 
-# Tags that make `outside.tagged` critical. From Shodan's tag filter as listed
-# by a third-party client library (github.com/denisgubin/shodan, models/tags),
-# since Shodan's own help pages list no values: "compromised" (a NoSQL database
-# compromised for ransomware), "malware" (a verified command-and-control
-# server, from Malware Hunter), "doublepulsar" (an SMB banner answering the
-# DoublePulsar backdoor handshake). "c2" is on the owner's list and in
-# Shodan's top tags; it is unverified in any official text.
+# Tags that make `outside.tagged` critical. All four are in the Tag list of
+# Shodan's own banner schema (https://datapedia.shodan.io/banner.schema.json,
+# definitions.Tag.enum): "compromised" (a NoSQL database compromised for
+# ransomware), "malware" (a verified command-and-control server, from Malware
+# Hunter), "c2" (a command-and-control server), "doublepulsar" (an SMB banner
+# answering the DoublePulsar backdoor handshake).
 CRITICAL_TAGS = ("compromised", "malware", "c2", "doublepulsar")
 TAG_NOTES = {
     "compromised": "Shodan thinks a service here was breached (it applies this to NoSQL databases held for ransom).",
@@ -196,6 +224,7 @@ class Result:
     data: dict | None = None
     error: str | None = None
     retry_after: float | None = None  # the whole pass should stop for this long (HTTP 429)
+    stop: bool = False                # the key was refused, or Shodan has no credits: asking again now is pointless
 
 
 async def fetch(client: httpx.AsyncClient, ip: str) -> Result:
@@ -222,6 +251,146 @@ async def fetch(client: httpx.AsyncClient, ip: str) -> Result:
         return Result("error", error=f"{type(exc).__name__}: {exc}"[:200])
     try:
         data = clean(json.loads(body))
+    except (ValueError, RecursionError):
+        data = None
+    if data is None:
+        return Result("error", error="the answer is not the documented shape")
+    return Result("ok", data)
+
+
+def _port(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 < value < 65536 else None
+
+
+def _when(value) -> float | None:
+    """Shodan's banner time, "2021-01-22T08:49:35.190817" (UTC, no zone), as epoch seconds."""
+    if not isinstance(value, str) or len(value) > 40:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    try:
+        return dt.timestamp()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+TRANSPORT_RE = re.compile(r"^[a-z]{2,10}$")
+
+
+def empty_shodan() -> dict:
+    return {"source": "shodan", "ports": [], "services": [], "cpes": [], "hostnames": [], "tags": [], "vulns": [],
+            "last_update": None}
+
+
+def clean_host(payload) -> dict | None:
+    """A Shodan host lookup reduced to what DaemonSight uses, in the shape `clean` gives plus `services` (one per
+    port and transport: product, version, the time Shodan last saw it) and `source`; None when it isn't the
+    documented shape. The documented fields (https://developer.shodan.io/api, GET /shodan/host/{ip}, and the banner
+    schema at https://datapedia.shodan.io/): ports, hostnames, tags, last_update, and data[] banners with port,
+    transport, timestamp, optional product, version, cpe23 and vulns."""
+    if not isinstance(payload, dict):
+        return None
+    try:
+        banners = payload.get("data")
+        if banners is None:
+            banners = []
+        if not isinstance(banners, list):
+            raise ValueError("data")
+        services: dict[tuple[int, str], dict] = {}
+        cpes: list[str] = []
+        vulns: set[str] = set()
+        for b in banners[:2000]:
+            if not isinstance(b, dict):
+                continue
+            port, transport = _port(b.get("port")), b.get("transport")
+            if port is None or not isinstance(transport, str) or not TRANSPORT_RE.match(transport):
+                continue
+            svc = {"port": port, "transport": transport, "product": _text(b.get("product"), 100),
+                   "version": _text(b.get("version"), 60), "seen": _when(b.get("timestamp"))}
+            old = services.get((port, transport))
+            if old is None or (svc["seen"] or 0) >= (old["seen"] or 0):
+                services[(port, transport)] = svc
+            listed = b.get("cpe23") if isinstance(b.get("cpe23"), list) else b.get("cpe")
+            for c in listed if isinstance(listed, list) else []:
+                c = _text(c, 200)
+                if c and c not in cpes and len(cpes) < 100:
+                    cpes.append(c)
+            bv = b.get("vulns")
+            if isinstance(bv, dict):
+                vulns.update(k for k in list(bv)[:2000] if isinstance(k, str) and CVE_RE.match(k))
+
+        def items(key, keep, cap):
+            raw = payload.get(key)
+            if raw is None:
+                return []
+            if not isinstance(raw, list):
+                raise ValueError(key)
+            out = []
+            for x in raw[:cap * 2]:
+                y = keep(x)
+                if y is not None and y not in out:
+                    out.append(y)
+            return out[:cap]
+
+        ports = items("ports", _port, 1000) if payload.get("ports") is not None else sorted({k[0] for k in services})
+        top_vulns = payload.get("vulns")
+        if isinstance(top_vulns, dict):
+            top_vulns = list(top_vulns)
+        if isinstance(top_vulns, list):
+            vulns.update(v for v in top_vulns[:4000] if isinstance(v, str) and CVE_RE.match(v))
+        return {
+            "source": "shodan",
+            "ports": sorted(ports),
+            "services": [services[k] for k in sorted(services)][:1000],
+            "cpes": cpes,
+            "hostnames": items("hostnames", lambda x: _text(x, 253), 50),
+            "tags": items("tags", lambda x: x if isinstance(x, str) and TAG_RE.match(x) else None, 50),
+            "vulns": sorted(vulns)[:2000],
+            "last_update": _when(payload.get("last_update")),
+        }
+    except ValueError:
+        return None
+
+
+async def _read(r: httpx.Response, limit: int) -> bytes | None:
+    body = b""
+    async for chunk in r.aiter_bytes(1 << 14):
+        body += chunk
+        if len(body) > limit:
+            return None
+    return body
+
+
+async def fetch_shodan(client: httpx.AsyncClient, ip: str, key: str) -> Result:
+    """Ask the Shodan API about one address (a full host lookup, one address per request). Never raises. Every
+    error text is redacted: the key is a query parameter and must not leave this function in any message."""
+    try:
+        async with client.stream("GET", shodan.HOST_URL + ip, params={"key": key},
+                                 headers={"User-Agent": USER_AGENT, "Accept": "application/json"}) as r:
+            code = r.status_code
+            if code == 429:
+                try:
+                    wait = min(float(r.headers.get("retry-after", "")), 86400)
+                except ValueError:
+                    wait = 3600
+                return Result("error", error="HTTP 429: Shodan says slow down (its limit is 1 request a second)",
+                              retry_after=wait)
+            body = await _read(r, SHODAN_MAX_BYTES if code == 200 else 1 << 16)
+    except httpx.HTTPError as exc:
+        return Result("error", error=shodan.redact(f"{type(exc).__name__}: {exc}", key)[:200])
+    if body is None:
+        return Result("error", error="answer is larger than the limit")
+    if code == 404:
+        return Result("none", empty_shodan())
+    if code != 200:
+        text = shodan.error_text(code, body, key)
+        return Result("error", error=text[:400], stop=text.startswith((shodan.KEY_REFUSED, shodan.NO_CREDITS)))
+    try:
+        data = clean_host(json.loads(body))
     except (ValueError, RecursionError):
         data = None
     if data is None:
@@ -263,9 +432,17 @@ def store_result(conn, ip: str, res: Result, now: float) -> None:
         (ip, now, now, now, res.status, json.dumps(res.data) if res.data is not None else None))
 
 
-def is_due(row: dict | None, now: float, refresh_hours: float) -> bool:
+def row_source(row: dict) -> str:
+    """Which source a stored answer came from. An InternetDB answer carries no mark; a Shodan one says "shodan"."""
+    data = row.get("data")
+    return "shodan" if isinstance(data, dict) and data.get("source") == "shodan" else "internetdb"
+
+
+def is_due(row: dict | None, now: float, refresh_hours: float, source: str = "internetdb") -> bool:
     if row is None:
         return True
+    if row["fetched_at"] is not None and row_source(row) != source:
+        return True      # the source was changed: ask the new one now, whatever the old answer's age
     wait = refresh_hours * 3600
     if row["error"]:
         wait = min(wait, RETRY_AFTER_ERROR)
@@ -428,13 +605,53 @@ def eph_of(snaps: dict) -> tuple[int, int]:
 
 # ---- the rules -------------------------------------------------------------------
 
+def service_label(svc: dict) -> str:
+    """"nginx 1.24.0", "nginx", or "" when Shodan named no software."""
+    return " ".join(x for x in (svc.get("product"), svc.get("version")) if x)
+
+
+def seen_on(svcs: list[dict]) -> str:
+    """One sentence about what Shodan saw on a port, from its services (one per transport). No dates in the
+    basis: this is detail only."""
+    parts = []
+    for svc in svcs:
+        what = service_label(svc) or "a service it could not name"
+        when = (f", last seen {time.strftime('%Y-%m-%d', time.gmtime(svc['seen']))}" if svc.get("seen") else "")
+        parts.append(f"{what} over {svc['transport'].upper()}{when}")
+    return "Shodan saw " + "; ".join(parts) + "."
+
+
 def _ids(items: list[str], limit: int = 8) -> str:
     more = f" and {len(items) - limit} more" if len(items) > limit else ""
     return ", ".join(items[:limit]) + more
 
 
+def key_finding(problem: str, error: str | None) -> Finding:
+    """The Shodan key is the reason this host's addresses can't be refreshed: said once for the host, at once,
+    with the fix. Basis is the kind of problem only, so it does not reopen when the text changes."""
+    title, how = {
+        "refused": ("Shodan refused the API key",
+                    "Open Settings, Outside view, and press Test key to see Shodan's answer.\n"
+                    "Copy the key again from https://account.shodan.io/ and replace the saved one.\n"
+                    "Looking up IPs through the Shodan API needs at least a Membership; a free account's key is refused.\n"
+                    "To stop asking Shodan, set Source back to InternetDB (free for non-commercial use only) or turn the Outside view off."),
+        "missing": ("The Shodan API is selected but no key is saved",
+                    "Open Settings, Outside view, paste your Shodan API key and save it.\n"
+                    "Or set Source back to InternetDB (free for non-commercial use only)."),
+        "credits": ("Shodan has no query credits left",
+                    "Open Settings, Outside view, and press Test key to see the credits Shodan reports.\n"
+                    "Query credits renew at the start of each month (https://help.shodan.io/the-basics/credit-types-explained).\n"
+                    "Host lookups are documented as using none, so look at the plan too (https://account.shodan.io/)."),
+    }[problem]
+    return Finding("outside.key", "shodan", "medium", title,
+                   f"{error or title}. Nothing is being refreshed for this host's public addresses, and DaemonSight "
+                   "does not fall back to InternetDB on its own: the findings from Shodan come from the last good "
+                   "answer, if any.",
+                   "/settings#outside", basis=problem, howto=how)
+
+
 def host_findings(host: str, rows: dict[str, dict], snaps: dict, exposure, now: float, refresh_hours: float,
-                  cve_matches: dict[str, str] | None = None) -> list[Finding]:
+                  cve_matches: dict[str, str] | None = None, source: str = "internetdb") -> list[Finding]:
     """The `outside.*` findings for one host. `rows` are the stored answers for
     its addresses (ip -> row), `exposure` its ExposureConfig, `cve_matches`
     DaemonSight's own CVE matches for it (cve id -> state), or None when that
@@ -442,31 +659,48 @@ def host_findings(host: str, rows: dict[str, dict], snaps: dict, exposure, now: 
     out: list[Finding] = []
     expected = exposure.expected_public
     eph = eph_of(snaps)
+    name = SOURCE_NAMES.get(source, "InternetDB")
     for ip, row in sorted(rows.items()):
         link = f"/exposure#{anchor('outside', ip)}"
+        problem = next((k for p, k in shodan.KEY_PROBLEMS.items() if (row["error"] or "").startswith(p)), None) \
+            if source == "shodan" else None
+        if problem and not any(f.rule == "outside.key" for f in out):
+            out.append(key_finding(problem, row["error"]))
         if is_stale(row, now, refresh_hours):
             since = row["fetched_at"]
             when = (f"The last good answer is {int((now - since) // 86400)} days old." if since is not None
                     else "It has never answered.")
+            how = ("Check that the hub can reach https://api.shodan.io/ and that the key still works (Settings, Outside view, Test key).\n"
+                   "Shodan's limit is 1 request a second on every plan. If the error says HTTP 429, raise refresh_hours under [outside]."
+                   if source == "shodan" else
+                   "Check that the hub can reach https://internetdb.shodan.io/ (see the source panel for a curl command).\n"
+                   "If the error says HTTP 429, raise refresh_hours under [outside].")
             out.append(Finding(
                 "outside.stale", ip, "low", f"Shodan's view of {ip} could not be refreshed",
-                f"InternetDB has not given a good answer for {ip} for a while. {when} The last error was: "
+                f"{name[0].upper() + name[1:]} has not given a good answer for {ip} for a while. {when} The last error was: "
                 f"{row['error'] or 'none recorded'}. The outside findings for this address come from the last good answer.",
-                link, basis=ip,
-                howto="Check that the hub can reach https://internetdb.shodan.io/ (see the source panel for a curl command).\n"
-                      "Rate limits are not documented. If the error says HTTP 429, raise refresh_hours under [outside]."))
+                link, basis=ip, howto=how))
         if row["status"] not in ("ok", "none") or row["fetched_at"] is None:
             continue
         data = row["data"] or {"ports": [], "cpes": [], "hostnames": [], "tags": [], "vulns": []}
+        via_api = data.get("source") == "shodan"
+        by_port: dict[int, list[dict]] = {}
+        for svc in data.get("services", []):
+            by_port.setdefault(svc["port"], []).append(svc)
         seen = set(data["ports"])
         for p in data["ports"]:
             if port_expected(expected, p):
                 continue
             lines = explain_port(snaps, p)
+            if via_api:
+                lag = (seen_on(by_port[p]) + " Shodan's data can lag behind a change." if p in by_port else
+                       "Shodan listed the port with no banner, so it does not say whether it is TCP or UDP. "
+                       "Its data can lag behind a change.")
+            else:
+                lag = "Shodan's data is up to a week old, and it does not say whether the port is TCP or UDP."
             out.append(Finding(
                 "outside.unexpected_port", f"{ip} {p}", "high", f"Shodan sees port {p} open on {ip}",
-                f"Port {p} is not in exposure.expected_public. " + " ".join(lines)
-                + " Shodan's data is up to a week old, and it does not say whether the port is TCP or UDP.",
+                f"Port {p} is not in exposure.expected_public. " + " ".join(lines) + " " + lag,
                 f"/exposure#{anchor('outside', ip, p)}", basis=f"{ip}|{p}|{digest(lines)}",
                 howto=f"Find what answers on port {p}: the source panel on the port's row says what DaemonSight knows.\n"
                       f"If it is meant to be public, add \"{p}/tcp\" (or udp) to exposure.expected_public in the host's config.\n"
@@ -484,7 +718,8 @@ def host_findings(host: str, rows: dict[str, dict], snaps: dict, exposure, now: 
                     "outside.not_seen", f"{ip} {p}", "low", f"Shodan does not list port {p} on {ip}",
                     f"DaemonSight expects port {p} to be public on this host ({who} listens on it, and it is in "
                     f"exposure.expected_public). {why} That may be fine: Shodan may not have scanned it yet "
-                    "(InternetDB updates once a week), or a provider firewall may keep Shodan's scanners out.",
+                    + ("(Shodan crawls the internet at least once a week)" if via_api else "(InternetDB updates once a week)")
+                    + ", or a provider firewall may keep Shodan's scanners out.",
                     f"/exposure#{anchor('outside', ip)}", basis=f"{ip}|{p}",
                     howto=f"Test it yourself from a machine outside your network, for example: curl -sv --connect-timeout 5 http://{ip}:{p}/ "
                           "(use the right protocol for the service).\n"
@@ -514,8 +749,11 @@ def host_findings(host: str, rows: dict[str, dict], snaps: dict, exposure, now: 
                          "shows the upstream version, and distributions fix bugs without changing it.")
             out.append(Finding(
                 "outside.vulns", ip, "medium", f"Shodan lists {len(vulns)} CVE{'s' if len(vulns) != 1 else ''} for {ip}",
-                f"{_ids(vulns)}. These are guesses: InternetDB matches the software version a service shows in its "
-                f"banner against known CVEs, and returns no banners to check. {cross}",
+                f"{_ids(vulns)}. These are guesses: "
+                + ("Shodan matches the software version a service shows in its banner against known CVEs, and some "
+                   "of them are marked unverified. " if via_api else
+                   "InternetDB matches the software version a service shows in its banner against known CVEs, and "
+                   "returns no banners to check. ") + cross,
                 link, basis=f"{ip}|{digest(vulns)}",
                 howto="Open the Seen from outside section on the Exposure page for the full list and the services behind it.\n"
                       "For each, check the version the service really runs, and whether your distribution backported the fix (the Vulnerabilities page does this for installed packages).\n"
@@ -562,13 +800,19 @@ def _cve_matches(cfg: Config, host: str) -> dict[str, str] | None:
 
 
 class Chore:
-    def __init__(self, cfg: Config, state_conn, client: httpx.AsyncClient | None = None, gap: float = GAP_SECONDS):
+    def __init__(self, cfg: Config, state_conn, client: httpx.AsyncClient | None = None, gap: float | None = None):
         self.base = cfg            # the config file's values; self.cfg adds the Settings page's, each pass
         self.cfg = cfg
         self.state = state_conn
         self.client = client       # an httpx client for tests
-        self.gap = gap
+        self.gap = gap             # seconds between requests; None: the source's own (a test passes 0)
         self.paused_until = 0.0    # after an HTTP 429
+        self.mark: tuple | None = None   # (source, a digest of the key): when it changes, key errors are retried at once
+
+    def _gap(self, source: str) -> float:
+        if self.gap is not None:
+            return self.gap
+        return shodan.RATE_LIMIT_GAP if source == "shodan" else GAP_SECONDS
 
     async def run_once(self, now: float | None = None) -> int:
         """One pass: fetch what is due, then bring the findings up to date.
@@ -579,23 +823,42 @@ class Chore:
         if not self.cfg.outside.enabled:
             clear_findings(self.state, now)
             return 0
+        source = source_of(self.cfg)
+        key = shodan.read_key(self.cfg) if source == "shodan" else None
+        mark = (source, hashlib.sha256(key.encode()).hexdigest() if key else None)
+        retry_key_errors, self.mark = mark != self.mark, mark
         tg = targets(self.state, self.cfg)
         rows = get_rows(self.state)
-        due = sorted(ip for ip in tg if is_due(rows.get(ip), now, self.cfg.outside.refresh_hours))
+        hours = self.cfg.outside.refresh_hours
+        due = sorted(ip for ip in tg if is_due(rows.get(ip), now, hours, source)
+                     or (retry_key_errors and (rows[ip]["error"] or "").startswith(tuple(shodan.KEY_PROBLEMS))))
         sent = 0
-        if due and now >= self.paused_until:
+        if due and source == "shodan" and key is None:
+            for ip in due:
+                store_result(self.state, ip, Result("error", error=(
+                    f"{shodan.KEY_MISSING}. Save one on the Settings page, or set Source back to InternetDB.")), now)
+        elif due and now >= self.paused_until:
             own = self.client is None
             client = self.client or httpx.AsyncClient(timeout=httpx.Timeout(20.0), follow_redirects=False)
+            gap = self._gap(source)
             try:
                 for i, ip in enumerate(due):
-                    if i and self.gap:
-                        await asyncio.sleep(self.gap)
-                    res = await fetch(client, ip)
+                    if i and gap:
+                        await asyncio.sleep(gap)
+                    res = await (fetch_shodan(client, ip, key) if source == "shodan" else fetch(client, ip))
                     sent += 1
                     store_result(self.state, ip, res, now)
+                    if res.stop:
+                        # The key is refused, or Shodan has no credits: every other address would get the same
+                        # answer, so say so for each without asking again.
+                        for rest in due[i + 1:]:
+                            store_result(self.state, rest, Result("error", error=res.error), now)
+                        log.warning("Shodan API: %s", shodan.redact(res.error, key))
+                        break
                     if res.retry_after:
                         self.paused_until = now + res.retry_after
-                        log.warning("InternetDB asked us to wait; pausing outside checks for %.0f s", res.retry_after)
+                        log.warning("%s asked us to wait; pausing outside checks for %.0f s",
+                                    "Shodan" if source == "shodan" else "InternetDB", res.retry_after)
                         break
             finally:
                 if own:
@@ -619,7 +882,8 @@ class Chore:
             hcfg = views.host_config(self.state, self.cfg, host)
             snaps = db.get_snapshots(self.state, host)
             current = host_findings(host, by_host.get(host, {}), snaps, hcfg.exposure, now,
-                                    self.cfg.outside.refresh_hours, _cve_matches(self.cfg, host)) \
+                                    self.cfg.outside.refresh_hours, _cve_matches(self.cfg, host),
+                                    source_of(self.cfg)) \
                 if host in by_host else []
             _set_findings(self.state, host, now, current)
 

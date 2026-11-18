@@ -111,7 +111,7 @@
 <section class="card mb-4" id="outside" aria-labelledby="outside-title" data-section{% if v.outside.state != 'ok' or not v.outside.addresses %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="outside-title">Seen from outside</h2>
-    <div class="card-actions text-secondary">Shodan InternetDB{% if v.outside.state == 'ok' %} · every {{ '%g' % v.outside.refresh_hours }} h{% endif %}</div>
+    <div class="card-actions text-secondary">{{ v.outside.source_name }}{% if v.outside.state == 'ok' %} · every {{ '%g' % v.outside.refresh_hours }} h{% endif %}</div>
   </div>
   {% if v.outside.message %}
   <div class="card-body text-secondary">{{ v.outside.message }}{% if hub and v.outside.state == 'off' and not v.outside.enabled %} <a href="/settings#outside">Open the Settings page</a>.{% endif %}</div>
@@ -123,7 +123,7 @@
       <span class="text-secondary">{% if a.state == 'waiting' %}not asked yet{% elif a.state == 'error' %}no answer yet{% else %}fetched {{ a.fetched }}{% endif %}</span>
       {% if a.stale %}<span class="badge bg-orange-lt">stale</span>{% endif %}
     </div>
-    {% if a.error %}<div class="text-orange small">Last attempt failed: {{ a.error }}</div>{% endif %}
+    {% if a.error %}<div class="text-orange small">Last attempt failed: {{ a.error }}{% if a.key_finding %} <a href="/settings#outside">Open the Settings page</a>.{% endif %}</div>{% endif %}
     {% if a.state == 'none' %}
     <div class="text-secondary mt-2">Shodan has no record of this address (HTTP 404): it has not scanned it, or nothing answered.</div>
     {% endif %}
@@ -131,11 +131,16 @@
     {% if a.ports %}
     <div class="table-responsive mt-2">
       <table class="table table-vcenter" data-table="outside-{{ oi }}">
-        <thead><tr><th data-sort="num">Port</th><th data-sort="text">Status</th><th data-sort="text">What DaemonSight knows</th></tr></thead>
+        <thead><tr><th data-sort="num">Port</th>{% if a.rich %}<th data-sort="text">Transport</th><th data-sort="text">Service Shodan saw</th><th data-sort="num">Last seen</th>{% endif %}<th data-sort="text">Status</th><th data-sort="text">What DaemonSight knows</th></tr></thead>
         <tbody>
           {% for p in a.ports %}
           <tr data-row id="{{ p.anchor }}">
             <td class="font-monospace" data-v="{{ p.port }}" data-label="Port">{{ p.port }}{{ src("src-op-" ~ oi ~ "-" ~ p.port, p.src) }}</td>
+            {% if a.rich %}
+            <td data-label="Transport" class="text-uppercase">{{ p.transport }}</td>
+            <td data-label="Service Shodan saw">{{ p.service }}</td>
+            <td data-label="Last seen" data-v="{{ p.seen_v }}"{% if p.seen_abs %} title="{{ p.seen_abs }}"{% endif %}>{{ p.seen }}</td>
+            {% endif %}
             <td data-label="Status" data-v="{{ p.status.label }}">{{ status_cell(p.status) }}</td>
             <td data-label="What DaemonSight knows">{% for line in p.known %}<div>{{ line }}</div>{% endfor %}</td>
           </tr>
@@ -160,7 +165,7 @@
   </div>
   {% endfor %}
   {% if v.outside.enabled and v.outside.addresses %}
-  <div class="card-body border-top text-secondary small">Shodan's data is its own scan, updated about weekly, and its CVE and tag guesses can be wrong. Only the IP address is sent to it. {{ v.outside.terms }}</div>
+  <div class="card-body border-top text-secondary small">Shodan's data is its own scan, updated about weekly, and its CVE and tag guesses can be wrong. {% if v.outside.source == 'shodan' %}The IP address and your API key are sent to api.shodan.io; the key is never shown here.{% else %}Only the IP address is sent to it.{% endif %} {{ v.outside.terms }}</div>
   {% endif %}
 </section>
 

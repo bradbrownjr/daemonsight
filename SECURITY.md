@@ -123,15 +123,15 @@ database and its own config, and nothing else.
 ### What can be changed in the browser
 
 Only on a hub, and only by someone logged in, these settings can be saved from
-the Settings page: the outside view (on or off, extra addresses, refresh
-hours), CVE checks (on or off, refresh hours, the EPSS threshold), retention,
+the Settings page: the outside view (on or off, its source, extra addresses,
+refresh hours, and the Shodan API key, which is not a setting: see below), CVE checks (on or off, refresh hours, the EPSS threshold), retention,
 the backup interval and count, and whether remote systems are read. Each is a
 row in the `settings` table of the hub's database, over the config file's
 value, and "Reset" deletes it. No code in the web process writes the config file.
 
 **Never editable in the browser:** the listen address and port, trusted
 proxies, `secure_cookies`, `session_hours`, the password and secret files, the
-data, database and backup folders, the log file, the hub flag and upload
+data, database and backup folders, the Shodan key file's path, the log file, the hub flag and upload
 limits, and the upload address and token file. The page shows them read-only,
 with the reason. A wrong value in any of these could lock the administrator
 out of the page needed to fix it (a bad listen address, a changed password
@@ -190,9 +190,12 @@ DaemonSight's own fail2ban page shows this jail like any other.
 | `/etc/daemonsight/password`, `secret` | root:daemonsight | 0640 |
 | `/var/lib/daemonsight/` (database) | root:daemonsight | 2750 |
 | `/var/lib/daemonsight/backups/` | root | 0700, each backup 0600 |
+| `/var/lib/daemonsight/shodan.key` (when saved) | the hub's user | 0600 |
+| `/var/lib/daemonsight/remotes/*.key` | the hub's user | 0600, in a 0700 folder |
 
-A backup holds the session secret and any upload token as well as the
-database, so keep copies as private as the server. Restoring one brings back
+A backup holds the session secret, any upload token, the API keys of remote
+systems and the Shodan API key as well as the database, so keep copies as
+private as the server. Restoring one brings back
 the password and secret it was made with.
 
 ## Remote sources
@@ -321,8 +324,43 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   followed, so an answer can't send the hub elsewhere. This tells Shodan that
   your hub exists and which addresses it watches. InternetDB is free for
   non-commercial use only; see INSTALL.md.
-- **Shodan's reply is untrusted text.** It is capped at 1 MiB, parsed as
-  JSON and cut down to ports (integers 1 to 65535), CPEs, hostnames, tags
+- **The Shodan API key (optional).** The outside view can use Shodan's REST
+  API instead of InternetDB, with the owner's key (Settings, Outside view). The
+  key gets Shodan's data and your account's plan; treat it like a password.
+  - *Where it is stored.* In a file, `<data>/shodan.key` (or `[outside]
+    key_file`), mode 0600, written atomically. It is never in the `settings`
+    table, an event, a page, a log line or an error, and it is not shown
+    again once saved: the page shows only "A key is saved", with Replace and
+    Remove. Backups include the file (the archive is 0600), so they are as
+    private as the key.
+  - *Who can change it.* Only someone logged in, on a hub, through `POST
+    /settings/shodan-key` (save, remove, test). It needs the login and refuses
+    a cross-site request, like every hub action. Saving and removing write the
+    hub events "Shodan API key saved" and "Shodan API key removed", with who
+    and no key material. The key's path and the source's default are not
+    editable in the browser except the source itself, which is refused unless a
+    key is saved.
+  - *Where it goes.* Only to `api.shodan.io` over HTTPS, in the `key` query
+    parameter: Shodan documents no other way, so there is no header to use.
+    Redirects are not followed, so it can't be handed to another host. The
+    InternetDB source never sends it.
+  - *Redaction.* `key=...` is stripped from every error text the hub stores or
+    shows, and from httpx's own request log lines (a filter on the `httpx`
+    and `httpcore` loggers, which would otherwise print the full URL at INFO
+    and DEBUG, and with `-v`). Tests assert the key is on no page, event, log
+    line, finding or database page, and only in its file. The Exposure
+    page's `curl` command says `key=YOUR_KEY`.
+  - *If Shodan refuses it.* One `outside.key` finding says so at once and the
+    hub asks nothing more for an hour, or until the key changes. It never falls
+    back to InternetDB. A hub that is compromised leaks the key it holds: use
+    a key you can revoke on your Shodan account page.
+  - *What it tells Shodan.* The IP addresses, and that your account owns this
+    hub. Its terms are your plan's; see INSTALL.md, "Outside checks".
+- **Shodan's reply is untrusted text.** It is capped at 1 MiB (4 MiB for a full
+  Shodan API host lookup, which carries every banner), parsed as
+  JSON and cut down to ports (integers 1 to 65535), per port a transport (a
+  strict pattern), product and version (length-limited text) and a time, CPEs,
+  hostnames, tags
   (a strict pattern) and CVE ids (a strict pattern), each with a count and
   length limit. It is stored as data and shown only through autoescaped
   templates; the links it produces go to `nvd.nist.gov`, built from a CVE id
