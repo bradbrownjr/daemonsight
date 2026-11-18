@@ -239,9 +239,17 @@ survives restarts, rebuilds and image updates. `[retention]` sets how
 long history stays, and the hub writes a backup to `/data/backups` every
 day (see "Back up and restore").
 
-Create the folder with the right owner first, then start the container. On
-Unraid, the template in `deploy/unraid/daemonsight.xml` sets the same
-options as this command:
+Create the folder with the right owner first, then start the container.
+
+On Unraid, use the template so the Docker tab manages the container like any
+other app: icon, web UI link, autostart, "Check for updates" and Edit. Copy
+`deploy/unraid/daemonsight.xml` to
+`/boot/config/plugins/dockerMan/templates-user/my-daemonsight.xml`, then add
+the container from Docker → Add Container → Template. A container started
+with `docker run` instead shows on the Docker tab but can't be updated or
+edited there.
+
+Anywhere else, this command sets the same options:
 
 ```bash
 mkdir -p /mnt/user/appdata/daemonsight
@@ -256,8 +264,10 @@ docker exec -it daemonsight daemonsight set-password
 ```
 
 `edge` follows `main`. Once releases are tagged, use a version such as
-`:0.2.0`, or `:latest` for the newest release. Update with `docker pull` and
-a new container; the data stays in `/data`.
+`:0.2.0`, or `:latest` for the newest release. On Unraid, update from the
+Docker tab; Unraid pulls the image and recreates the container. Elsewhere,
+`docker pull` and start a new container. Pulling alone doesn't change the
+running container. The data stays in `/data` either way.
 
 On its first start the container writes `/data/config.toml`. Edit it to set
 your reverse proxy's address, then restart the container:
