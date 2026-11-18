@@ -80,7 +80,7 @@ class Chore:
         try:
             changed = await self._refresh(conn, releases, now)
             deb = conn.execute("SELECT changed_at FROM feed WHERE name = 'debian'").fetchone()
-            gen = f"{(deb['changed_at'] if deb else None)}:{','.join(sorted(releases))}"
+            gen = f"{match.MATCH_VERSION}:{(deb['changed_at'] if deb else None)}:{','.join(sorted(releases))}"
             matched = {r["host"]: r for r in conn.execute("SELECT * FROM matched")}
         finally:
             conn.close()

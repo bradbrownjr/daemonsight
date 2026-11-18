@@ -33,6 +33,11 @@ MAX_FINDINGS = 100
 TOP_CVES = 4
 
 
+# Bump when matching changes what a host matches, so the hub matches every
+# host again without waiting for a new package list or tracker download.
+MATCH_VERSION = 2
+
+
 def release_of(inv: dict) -> str | None:
     """The Debian release an inventory is from. Raspberry Pi OS (raspbian) is
     Debian under its own name, looked up by codename as distro.py does.
