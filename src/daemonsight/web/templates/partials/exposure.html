@@ -2,7 +2,9 @@
 <div id="live" hx-get="{{ base }}/partials/exposure" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
 {{ src_panel("src-firewall", v.src.firewall) }}
-<div class="alert {{ 'alert-warning' if v.public else 'alert-info' }} mb-4">
+<details class="ds-note alert {{ 'alert-warning' if v.public else 'alert-info' }} mb-4" id="note-exposure" open>
+  <summary class="ds-note-sum">{% if v.public %}Public address {{ v.public_ips|join(', ') }} · {{ v.expected|length }} expected port{{ 's' if v.expected|length != 1 }}{% else %}No public address · reachable from the LAN{% endif %}</summary>
+  <div class="ds-note-body">
   {% if v.public %}
   This host has a public address ({{ v.public_ips|join(', ') }}), so anything bound to all interfaces can be reached from the internet unless the firewall blocks it.
   Expected public ports: {{ v.expected|join(', ') }}.
@@ -10,7 +12,8 @@
   {% else %}
   This host has no public address of its own. Sockets bound to all interfaces are reachable from the LAN, and from the internet only through a port forward or a proxy such as Caddy.
   {% endif %}
-</div>
+  </div>
+</details>
 
 <section class="card mb-4" id="listeners" aria-labelledby="listen-title" data-section{% if not v.listeners %} data-empty{% endif %}>
   <div class="card-header">

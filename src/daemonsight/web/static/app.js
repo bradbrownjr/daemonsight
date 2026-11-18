@@ -167,6 +167,42 @@
     applyFilter();
   }
 
+  var phone = window.matchMedia("(max-width: 767.98px)");
+
+  // Page notes (details.ds-note) are rendered open. On a phone they start
+  // closed unless the reader opened them; on wider screens they stay open.
+  function applyNotes() {
+    var saved = store.get("notesOpen") || {};
+    each(document.querySelectorAll("details.ds-note"), function (d) {
+      var want = phone.matches ? saved[d.id] === true : true;
+      if (d.open !== want) d.open = want;
+    });
+  }
+
+  // Phone menu: the nav, theme and Log out forms, and the hide-empty switch.
+  function initMenu() {
+    var header = document.getElementById("ds-header");
+    var button = document.getElementById("ds-menu-btn");
+    if (!header || !button) return;
+    function set(open, refocus) {
+      header.classList.toggle("ds-menu-open", open);
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+      if (!open && refocus) button.focus();
+    }
+    button.addEventListener("click", function () {
+      set(button.getAttribute("aria-expanded") !== "true");
+    });
+    header.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && button.getAttribute("aria-expanded") === "true") {
+        set(false, header.contains(document.activeElement) && document.activeElement !== button);
+      }
+    });
+    header.addEventListener("click", function (e) {
+      if (e.target.closest("nav a")) set(false);
+    });
+    phone.addEventListener("change", function () { set(false); });
+  }
+
   document.documentElement.classList.add("ds-js");
   if (!Object.prototype.hasOwnProperty.call(HTMLElement.prototype, "popover")) {
     document.documentElement.classList.add("ds-no-popover");
@@ -225,7 +261,17 @@
       var elt = e.detail && e.detail.elt;
       if (elt && /every/.test(elt.getAttribute("hx-trigger") || "") && popoverOpen()) e.preventDefault();
     });
-    document.body.addEventListener("htmx:afterSettle", applyAll);
+    document.body.addEventListener("htmx:afterSettle", function () { applyAll(); applyNotes(); });
+    initMenu();
+    document.addEventListener("toggle", function (e) {
+      var d = e.target;
+      if (!d.classList || !d.classList.contains("ds-note") || !phone.matches) return;
+      var open = store.get("notesOpen") || {};
+      if (d.open) open[d.id] = true; else delete open[d.id];
+      store.set("notesOpen", open);
+    }, true);
+    phone.addEventListener("change", applyNotes);
+    applyNotes();
     window.addEventListener("hashchange", showTarget);
     applyAll();
     showTarget();

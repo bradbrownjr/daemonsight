@@ -175,6 +175,12 @@ filter that hides it and flashes it once; the flash is off under
 
 Phones: below 768 px each table row becomes a stacked card, one labelled line
 per cell, with the header row hidden from view but kept for screen readers.
+The header shows the logo, host and a Menu button; the section links, theme
+switch, Log out and "Hide empty sections" open in a panel below it (script
+only; without it the header is unchanged). The filter box stays visible. A
+page note such as the one on Exposure is a details element with a one-line
+summary; it starts closed on a phone, remembers if the reader opened it, and
+is always open on wider screens.
 
 Source panels: every card and most rows have an (i) button. It opens a panel
 with two parts. "Read from" says how DaemonSight got the data (the D-Bus call,

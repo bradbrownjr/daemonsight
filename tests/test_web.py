@@ -150,3 +150,14 @@ def test_changing_password_ends_sessions(seeded):
     assert r.status_code == 303 and r.headers["location"].startswith("/login")
     assert c.post("/login", data={"password": "a brand new passphrase", "next": "/"}).status_code == 303
     assert c.get("/").status_code == 200
+
+
+def test_phone_menu_button_and_collapsible_note(seeded):
+    c = login(client(seeded))
+    html = c.get("/exposure").text
+    assert 'id="ds-menu-btn"' in html and 'aria-label="Menu"' in html
+    assert 'aria-expanded="false"' in html and 'aria-controls="ds-menu"' in html
+    assert 'id="ds-menu"' in html
+    assert '<details class="ds-note' in html and "<summary" in html
+    # Rendered open, so it reads in full without scripts and on desktop.
+    assert 'id="note-exposure" open' in html

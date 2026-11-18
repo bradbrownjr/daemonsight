@@ -53,6 +53,31 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
   tr:target > td:first-child { box-shadow: none; }
   tr:target { background: var(--tblr-primary-lt); }
   .ds-filter { width: 100%; }
+  /* Header: logo, host and a menu button; the rest opens below (app.js). */
+  .ds-header .container-xl { column-gap: .75rem !important; }
+  .ds-brand .fs-3 { font-size: 1.15rem !important; }
+  .ds-brand { flex: 0 0 auto; }
+  .ds-hostpill { flex: 0 1 auto; min-width: 0; flex-wrap: nowrap !important; padding: 2px 8px; }
+  .ds-hostpill .fw-bold { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .ds-hostpill .text-secondary { display: none; }
+  .ds-js .ds-menu-btn { display: inline-flex; margin-left: auto; }
+  .ds-js .ds-account { order: 3; flex: 0 0 100%; margin-left: 0 !important; flex-wrap: wrap; }
+  .ds-js .ds-header:not(.ds-menu-open) .ds-collapsible { display: none !important; }
+  .ds-js .ds-header.ds-menu-open nav .nav-pills { flex-wrap: wrap; }
+  .ds-header .ds-js-only { flex: 1 1 100%; margin-left: 0 !important; }
+  .ds-header .container-xl.pb-2 { padding-bottom: .5rem; }
+  .ds-header nav { max-width: 100%; }
+}
+.ds-menu-btn { display: none; }
+/* Page notes: always open on desktop; a one-line summary on phones. */
+.ds-note-sum { display: none; list-style: none; cursor: pointer; }
+.ds-note-sum::-webkit-details-marker { display: none; }
+@media (max-width: 767.98px) {
+  .ds-note-sum { display: block; padding-right: 4.5rem; position: relative; }
+  .ds-note-sum::after { content: "More"; position: absolute; right: 0; top: 0; font-weight: 600; text-decoration: underline; }
+  .ds-note[open] > .ds-note-sum::after { content: "Less"; }
+  .ds-note[open] > .ds-note-sum { margin-bottom: .5rem; }
+  .ds-note-sum:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; }
 }
 /* Source panels (_macros.html). Native popovers; hidden where unsupported. */
 .ds-no-popover .ds-src-btn { display: none; }
