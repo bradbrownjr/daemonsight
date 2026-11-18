@@ -130,3 +130,28 @@ async def test_reader_opens_while_writer_holds_wal(cfg):
     reader = db.connect_reader(cfg.db_path)
     assert db.get_snapshot(reader, "testhost", "docker").data == {"containers": []}
     reader.close()
+
+
+def test_proc_info_details_for_current_process():
+    import os
+    from daemonsight.collector.sources.ports import _proc_info
+    info = _proc_info(os.getpid())
+    assert info["cmdline"] and info["user"] and info["started"] and info["exe"]
+
+
+def test_proc_info_masks_secrets_and_truncates(monkeypatch):
+    import psutil
+    from daemonsight.collector.sources import ports
+
+    class P:
+        def __init__(self, pid): pass
+        def name(self): return "app"
+        def cmdline(self): return ["app", "--password=hunter2", "x" * 500]
+        def exe(self): raise psutil.AccessDenied()
+        def username(self): return "svc"
+        def create_time(self): return 1.0
+
+    monkeypatch.setattr(ports.psutil, "Process", P)
+    info = ports._proc_info(1)
+    assert "hunter2" not in info["cmdline"] and len(info["cmdline"]) == 401 and info["cmdline"].endswith("…")
+    assert info["exe"] is None and info["user"] == "svc"

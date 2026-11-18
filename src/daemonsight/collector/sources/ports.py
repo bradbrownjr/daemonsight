@@ -15,11 +15,13 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+import shlex
 import socket
 
 import psutil
 
 from . import Source
+from .docker import mask_secrets
 
 DOCKER_SCOPE = re.compile(r"/docker-([0-9a-f]{64})\.scope$")
 DOCKER_CGROUPFS = re.compile(r"/docker/([0-9a-f]{64})$")
@@ -80,13 +82,39 @@ def host_addresses(ifaddrs=None) -> list[dict]:
 SCOPE_RANK = {"all": 0, "public": 1, "private": 2, "unknown": 3, "loopback": 4}
 
 
+_PROC_ERRORS = (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError)
+CMDLINE_MAX = 400
+
+
+def _safe(fn):
+    try:
+        return fn()
+    except _PROC_ERRORS:
+        return None
+
+
+def _cmdline(p) -> str | None:
+    args = _safe(p.cmdline)
+    if not args:
+        return None
+    text = mask_secrets(shlex.join(args))
+    return text if len(text) <= CMDLINE_MAX else text[:CMDLINE_MAX] + "\u2026"
+
+
+NO_DETAIL = {"cmdline": None, "exe": None, "user": None, "started": None}
+
+
 def _proc_info(pid: int) -> dict:
-    info = {"pid": pid, "process": None, "owner": {"kind": "unknown", "id": None}}
+    info = {"pid": pid, "process": None, "owner": {"kind": "unknown", "id": None}, **NO_DETAIL}
     try:
         p = psutil.Process(pid)
         info["process"] = p.name()
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return info
+    info["cmdline"] = _cmdline(p)
+    info["exe"] = _safe(p.exe) or None
+    info["user"] = _safe(p.username)
+    info["started"] = _safe(p.create_time)
     try:
         with open(f"/proc/{pid}/cgroup") as fh:
             info["owner"] = owner_from_cgroup(fh.read())
@@ -111,7 +139,7 @@ def group_listeners(conns, proc_lookup=_proc_info) -> list[dict]:
         row = rows.get(key)
         if row is None:
             info = cache.setdefault(c.pid, proc_lookup(c.pid)) if c.pid else {
-                "pid": None, "process": None, "owner": {"kind": "unknown", "id": None}}
+                "pid": None, "process": None, "owner": {"kind": "unknown", "id": None}, **NO_DETAIL}
             row = rows[key] = {"proto": proto, "port": c.laddr.port, "addresses": [], **info}
         if c.laddr.ip not in row["addresses"]:
             row["addresses"].append(c.laddr.ip)

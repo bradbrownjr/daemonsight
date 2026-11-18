@@ -18,9 +18,9 @@
       <tbody>
         {% for s in v.sites %}
         <tr data-row id="{{ s.anchor }}">
-          <td><strong>{{ s.host }}</strong>{{ src("src-s-" ~ loop.index, s.src) }}</td>
-          <td><span class="badge {{ s.access_badge }}">{{ s.access }}</span></td>
-          <td>
+          <td data-label="Site"><strong>{{ s.host }}</strong>{{ src("src-s-" ~ loop.index, s.src) }}</td>
+          <td data-label="Who can reach it"><span class="badge {{ s.access_badge }}">{{ s.access }}</span></td>
+          <td data-label="Handles">
             {% for h in s.handlers %}
             <div>
               <span class="text-secondary">{{ h.kind }}{% if h.path %} {{ h.path }}{% endif %}</span>
@@ -34,7 +34,7 @@
             </div>
             {% endfor %}
           </td>
-          <td class="font-monospace">{{ s.listen }}</td>
+          <td class="font-monospace" data-label="Listens on">{{ s.listen }}</td>
         </tr>
         {% endfor %}
       </tbody>

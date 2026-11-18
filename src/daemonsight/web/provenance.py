@@ -5,6 +5,8 @@ Every card and row can carry a "source" panel built here:
   entries  places to check it by hand:
              {"kind": "file", "label", "value"}   a path, with a copy button
              {"kind": "cmd",  "label", "value"}   a shell command, with a copy button
+             {"kind": "text", "label", "value"}   text to copy, not a command to run
+             {"kind": "plain", "label", "value"}  a short fact, no copy button
              {"kind": "link", "label", "href", "text"}  a page in DaemonSight
              {"kind": "url",  "label", "href", "text"}  another web UI ([links] in the config)
 
@@ -42,6 +44,14 @@ def cmd(label: str, value: str) -> dict:
 
 def file(label: str, value: str) -> dict:
     return {"kind": "file", "label": label, "value": value}
+
+
+def text(label: str, value: str) -> dict:
+    return {"kind": "text", "label": label, "value": value}
+
+
+def plain(label: str, value: str) -> dict:
+    return {"kind": "plain", "label": label, "value": value}
 
 
 def link(label: str, href: str, text: str) -> dict:
@@ -126,7 +136,40 @@ def container(c: dict) -> dict:
             "entries": entries}
 
 
-def listener(r: dict, names: dict | None = None) -> dict:
+def _listen_port(addr: str) -> tuple[str, int] | None:
+    """('tcp'|'udp', port) from a Caddy listen string such as ':443', '[::]:2083' or 'udp/:443'."""
+    net = "tcp"
+    if "/" in addr:
+        net, addr = addr.split("/", 1)
+    if net not in ("tcp", "udp", "tcp4", "tcp6", "udp4", "udp6"):
+        return None
+    port = addr.rsplit(":", 1)[-1].split("-")[0]
+    return ("udp" if net.startswith("udp") else "tcp", int(port)) if port.isdigit() else None
+
+
+def caddy_sites_on(proto: str, port: int, caddy: dict | None) -> list[str]:
+    """Hosts of the Caddy sites served on this port, in config order."""
+    hosts: list[str] = []
+    for srv in (caddy or {}).get("servers", []):
+        if any(_listen_port(a) == (proto, port) for a in srv.get("listen") or []):
+            for site in (caddy or {}).get("sites", []):
+                if site["server"] == srv["name"] and site["host"] not in hosts:
+                    hosts.append(site["host"])
+    return hosts
+
+
+CADDY_SITE_LIMIT = 8
+
+
+def _is_caddy(r: dict) -> bool:
+    owner = r.get("owner") or {}
+    return (r.get("process") or "") == "caddy" or (
+        owner.get("kind") == "unit" and str(owner.get("id") or "").startswith("caddy."))
+
+
+def listener(r: dict, names: dict | None = None, caddy: dict | None = None) -> dict:
+    from ..findings import anchor
+    from .views import fmt_ago  # views imports this module, so import it late
     flag = "-ltnp" if r["proto"] == "tcp" else "-lunp"
     entries = [cmd("Socket and owner", f"sudo ss {flag} 'sport = :{r['port']}'")]
     owner = r.get("owner") or {}
@@ -135,8 +178,22 @@ def listener(r: dict, names: dict | None = None) -> dict:
     elif owner.get("kind") == "container" and owner.get("id"):
         name = (names or {}).get(owner["id"], owner["id"][:12])
         entries.append(link("Owned by", f"/services#ctr-{name}", f"container {name}"))
+    if r.get("cmdline"):
+        entries.append(text("Command", r["cmdline"]))
+    if r.get("exe"):
+        entries.append(file("Program", r["exe"]))
+    if r.get("user"):
+        entries.append(plain("Runs as", r["user"]))
+    if r.get("started"):
+        entries.append(plain("Started", fmt_ago(r["started"])))
     if r.get("pid"):
         entries.append(file("Process", f"/proc/{r['pid']}/"))
+    if caddy and _is_caddy(r):
+        hosts = caddy_sites_on(r["proto"], r["port"], caddy)
+        for h in hosts[:CADDY_SITE_LIMIT]:
+            entries.append(link("Caddy site", f"/routes#{anchor('site', h)}", h))
+        if len(hosts) > CADDY_SITE_LIMIT:
+            entries.append(link("More Caddy sites", "/routes", f"{len(hosts) - CADDY_SITE_LIMIT} more"))
     return {"title": f"Port {r['port']}/{r['proto']}",
             "read": "psutil.net_connections(); owner from /proc/<pid>/cgroup", "entries": entries}
 

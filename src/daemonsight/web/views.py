@@ -293,7 +293,7 @@ def services(conn, cfg: Config, unit_filter: str = "active") -> dict:
                           "loopback": "Loopback", "unknown": "Unknown"}[r["scope"]],
                 "scope_badge": {"all": "bg-orange-lt", "public": "bg-red-lt"}.get(r["scope"], "bg-secondary-lt"),
                 "process": r.get("process") or "—", "owner": who or "—",
-                "src": prov.listener(r, names),
+                "src": prov.listener(r, names, _snap_data(snaps, "caddy")),
             })
 
     return {
@@ -387,7 +387,7 @@ def exposure(conn, cfg: Config) -> dict:
             "fw": FW_LABEL[fw["state"]], "fw_badge": FW_BADGE[fw["state"]], "fw_why": fw["why"],
             "expected": ("Yes" if key in expected else "No") if internet else "—",
             "jail": (jail or "None") if internet else "—", "jail_bad": internet and not jail,
-            "anchor": rules.anchor("port", r["port"], r["proto"]), "src": prov.listener(r, ctr_names),
+            "anchor": rules.anchor("port", r["port"], r["proto"]), "src": prov.listener(r, ctr_names, _snap_data(snaps, "caddy")),
         })
     docker = []
     for c in (_snap_data(snaps, "docker") or {}).get("containers", []):

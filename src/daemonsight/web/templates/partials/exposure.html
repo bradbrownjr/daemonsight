@@ -28,14 +28,14 @@
       <tbody>
         {% for r in v.listeners %}
         <tr data-row id="{{ r.anchor }}">
-          <td class="font-monospace" data-v="{{ r.port_v }}">{{ r.port }}{{ src("src-l-" ~ loop.index, r.src) }}</td>
-          <td class="font-monospace">{{ r.addresses }}</td>
-          <td><span class="badge {{ r.reach_badge }}">{{ r.reach }}</span></td>
-          <td><span class="badge {{ r.fw_badge }}">{{ r.fw }}</span><div class="text-secondary small">{{ r.fw_why }}</div></td>
-          <td>{{ r.process }}</td>
-          <td>{{ r.owner }}</td>
-          <td>{{ r.expected }}</td>
-          <td>{% if r.jail_bad %}<span class="text-red">{{ r.jail }}</span>{% else %}{{ r.jail }}{% endif %}</td>
+          <td class="font-monospace" data-v="{{ r.port_v }}" data-label="Port">{{ r.port }}{{ src("src-l-" ~ loop.index, r.src) }}</td>
+          <td class="font-monospace" data-label="Bound to">{{ r.addresses }}</td>
+          <td data-label="Reach"><span class="badge {{ r.reach_badge }}">{{ r.reach }}</span></td>
+          <td data-label="Firewall"><span class="badge {{ r.fw_badge }}">{{ r.fw }}</span><div class="text-secondary small">{{ r.fw_why }}</div></td>
+          <td data-label="Process">{{ r.process }}</td>
+          <td data-label="Owner">{{ r.owner }}</td>
+          <td data-label="Expected">{{ r.expected }}</td>
+          <td data-label="Jail">{% if r.jail_bad %}<span class="text-red">{{ r.jail }}</span>{% else %}{{ r.jail }}{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -89,12 +89,12 @@
       <tbody>
         {% for f in v.firewall.forwards %}
         <tr data-row id="{{ f.anchor }}">
-          <td>{{ f.family }}</td>
-          <td>{{ f.proto }}</td>
-          <td class="font-monospace {{ 'text-red' if f.wide }}">{{ f.ports }}</td>
-          <td class="font-monospace">{{ f.to }}{{ src("src-f-" ~ loop.index, f.src) }}</td>
-          <td class="small">{{ f.conditions or 'always' }}</td>
-          <td>{{ f.copies }}</td>
+          <td data-label="Family">{{ f.family }}</td>
+          <td data-label="Protocol">{{ f.proto }}</td>
+          <td class="font-monospace {{ 'text-red' if f.wide }}" data-label="Ports">{{ f.ports }}</td>
+          <td class="font-monospace" data-label="Sent to">{{ f.to }}{{ src("src-f-" ~ loop.index, f.src) }}</td>
+          <td class="small" data-label="When">{{ f.conditions or 'always' }}</td>
+          <td data-label="Copies">{{ f.copies }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -118,10 +118,10 @@
       <tbody>
         {% for d in v.docker %}
         <tr data-row>
-          <td><strong>{{ d.container }}</strong>{{ src("src-d-" ~ loop.index, d.src) }}</td>
-          <td>{{ d.status }}</td>
-          <td class="font-monospace">{% if d.wide %}<span class="text-red">{{ d.published }}</span> <span class="badge bg-red-lt">all interfaces</span>{% else %}{{ d.published }}{% endif %}</td>
-          <td class="font-monospace">{{ d.target }}</td>
+          <td data-label="Container"><strong>{{ d.container }}</strong>{{ src("src-d-" ~ loop.index, d.src) }}</td>
+          <td data-label="State">{{ d.status }}</td>
+          <td class="font-monospace" data-label="Published on">{% if d.wide %}<span class="text-red">{{ d.published }}</span> <span class="badge bg-red-lt">all interfaces</span>{% else %}{{ d.published }}{% endif %}</td>
+          <td class="font-monospace" data-label="To">{{ d.target }}</td>
         </tr>
         {% endfor %}
       </tbody>

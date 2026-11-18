@@ -38,9 +38,13 @@ socket, the fail2ban socket and the firewall needs it.
 - **fail2ban replies are unpickled safely.** fail2ban's socket speaks Python
   pickle. The collector's unpickler accepts builtin data types and exception
   names only, so a reply can't run code.
-- **Secrets in container logs are masked** before they're stored:
-  `password=`, `token=`, `api_key=` and similar values, `Authorization`
-  headers, and passwords inside URLs.
+- **Secrets in container logs and command lines are masked** before
+  they're stored: `password=`, `token=`, `api_key=` and similar values,
+  `Authorization` headers, and passwords inside URLs. The command line of
+  each listening process is kept for its port's source panel, cut to 400
+  characters. A secret passed some other way, such as a bare positional
+  argument, can't be recognized; prefer config files or environment
+  variables for secrets.
 - **New files are private.** The unit sets `UMask=0027`, so the database is
   readable by root and the `daemonsight` group only.
 - **systemd hardening:** `NoNewPrivileges`, `ProtectSystem=full`,

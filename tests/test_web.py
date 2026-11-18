@@ -125,7 +125,7 @@ def test_sort_and_filter_markup(seeded):
     assert 'data-table="units"' in html and 'data-table="containers"' in html
     # Raw values for numeric sorts: unit CPU time in ns, empty when unknown.
     assert 'data-v="12000000000"' in html
-    assert '<td data-v="">' in html
+    assert '<td data-v="" data-label=' in html
     assert html.count("data-row") >= 3
     # Containers and units have data; no sockets were collected.
     assert 'id="ports" aria-labelledby="ports-title" data-section data-empty' in html

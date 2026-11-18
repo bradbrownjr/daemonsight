@@ -20,15 +20,15 @@
       <tbody>
         {% for c in v.containers %}
         <tr id="ctr-{{ c.name }}" data-row>
-          <td><strong>{{ c.name }}</strong>{{ src("src-c-" ~ loop.index, c.src) }}</td>
-          <td class="font-monospace">{{ c.image }}</td>
-          <td><span class="badge {{ c.status_badge }}">{{ c.status }}{{ c.exit }}</span>{% if c.oom %} <span class="badge bg-red-lt">OOM</span>{% endif %}</td>
-          <td>{% if c.health_bad %}<span class="text-red">{{ c.health }}</span>{% else %}{{ c.health }}{% endif %}</td>
-          <td data-v="{{ c.restarts }}">{{ c.restarts }}<div class="text-secondary small">policy {{ c.policy }}</div></td>
-          <td data-v="{{ c.cpu_v }}">{{ c.cpu }}</td>
-          <td data-v="{{ c.mem_v }}">{{ c.mem }}</td>
-          <td class="font-monospace">{% for p in c.ports %}<div>{% if p.wide %}<span class="text-red">{{ p.text }}</span> <span class="badge bg-red-lt">all interfaces</span>{% else %}{{ p.text }}{% endif %}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
-          <td><button type="button" class="btn btn-sm" hx-get="{{ base }}/partials/logs/{{ c.name|urlencode }}" hx-target="#logs" hx-swap="outerHTML" aria-label="Show logs for {{ c.name }}">Logs</button></td>
+          <td data-label="Name"><strong>{{ c.name }}</strong>{{ src("src-c-" ~ loop.index, c.src) }}</td>
+          <td class="font-monospace" data-label="Image">{{ c.image }}</td>
+          <td data-label="State"><span class="badge {{ c.status_badge }}">{{ c.status }}{{ c.exit }}</span>{% if c.oom %} <span class="badge bg-red-lt">OOM</span>{% endif %}</td>
+          <td data-label="Health">{% if c.health_bad %}<span class="text-red">{{ c.health }}</span>{% else %}{{ c.health }}{% endif %}</td>
+          <td data-v="{{ c.restarts }}" data-label="Restarts">{{ c.restarts }}<div class="text-secondary small">policy {{ c.policy }}</div></td>
+          <td data-v="{{ c.cpu_v }}" data-label="CPU">{{ c.cpu }}</td>
+          <td data-v="{{ c.mem_v }}" data-label="Memory">{{ c.mem }}</td>
+          <td class="font-monospace" data-label="Published">{% for p in c.ports %}<div>{% if p.wide %}<span class="text-red">{{ p.text }}</span> <span class="badge bg-red-lt">all interfaces</span>{% else %}{{ p.text }}{% endif %}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
+          <td data-label="Logs"><button type="button" class="btn btn-sm" hx-get="{{ base }}/partials/logs/{{ c.name|urlencode }}" hx-target="#logs" hx-swap="outerHTML" aria-label="Show logs for {{ c.name }}">Logs</button></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -65,13 +65,13 @@
       <tbody>
         {% for u in v.units %}
         <tr id="unit-{{ u.name }}" data-row>
-          <td><strong>{{ u.name }}</strong>{{ src("src-u-" ~ loop.index, u.src) }}<div class="text-secondary small">{{ u.description }}</div></td>
-          <td><span class="badge {{ u.badge }}">{{ u.active }}</span></td>
-          <td>{{ u.sub }}{% if u.result and u.result != 'success' %} <span class="text-secondary">({{ u.result }})</span>{% endif %}</td>
-          <td data-v="{{ u.since_v }}">{{ u.since }}</td>
-          <td data-v="{{ u.restarts_v }}">{{ u.restarts if u.restarts is not none else '—' }}</td>
-          <td data-v="{{ u.memory_v }}">{{ u.memory }}</td>
-          <td data-v="{{ u.cpu_v }}">{{ u.cpu }}</td>
+          <td data-label="Unit"><strong>{{ u.name }}</strong>{{ src("src-u-" ~ loop.index, u.src) }}<div class="text-secondary small">{{ u.description }}</div></td>
+          <td data-label="Active"><span class="badge {{ u.badge }}">{{ u.active }}</span></td>
+          <td data-label="Sub">{{ u.sub }}{% if u.result and u.result != 'success' %} <span class="text-secondary">({{ u.result }})</span>{% endif %}</td>
+          <td data-v="{{ u.since_v }}" data-label="Since">{{ u.since }}</td>
+          <td data-v="{{ u.restarts_v }}" data-label="Restarts">{{ u.restarts if u.restarts is not none else '—' }}</td>
+          <td data-v="{{ u.memory_v }}" data-label="Memory">{{ u.memory }}</td>
+          <td data-v="{{ u.cpu_v }}" data-label="CPU time">{{ u.cpu }}</td>
         </tr>
         {% else %}
         <tr><td colspan="7" class="text-secondary">No units match.</td></tr>
@@ -97,11 +97,11 @@
       <tbody>
         {% for r in v.listeners %}
         <tr id="port-{{ r.port|replace('/', '-') }}" data-row>
-          <td class="font-monospace" data-v="{{ r.port_v }}">{{ r.port }}{{ src("src-p-" ~ loop.index, r.src) }}</td>
-          <td class="font-monospace">{{ r.addresses }}</td>
-          <td><span class="badge {{ r.scope_badge }}">{{ r.scope }}</span></td>
-          <td>{{ r.process }}</td>
-          <td>{{ r.owner }}</td>
+          <td class="font-monospace" data-v="{{ r.port_v }}" data-label="Port">{{ r.port }}{{ src("src-p-" ~ loop.index, r.src) }}</td>
+          <td class="font-monospace" data-label="Bound to">{{ r.addresses }}</td>
+          <td data-label="Reach"><span class="badge {{ r.scope_badge }}">{{ r.scope }}</span></td>
+          <td data-label="Process">{{ r.process }}</td>
+          <td data-label="Owner">{{ r.owner }}</td>
         </tr>
         {% endfor %}
       </tbody>

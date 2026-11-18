@@ -77,3 +77,48 @@ def test_findings_link_to_their_row():
     assert anchor("port", 2083, "tcp") == "port-2083-tcp"
     assert anchor("site", "a.example.com, b.example.com") == "site-a.example.com_b.example.com"
     assert anchor("fwd", "ip", "tcp", "10.0.0.2:80") == "fwd-ip-tcp-10.0.0.2_80"
+
+
+def _caddy(n_sites=2):
+    return {"servers": [{"name": "srv0", "listen": [":443", "udp/:443"]},
+                        {"name": "srv1", "listen": ["[::]:2083"]}],
+            "sites": [{"host": f"h{i}.example.com", "server": "srv0"} for i in range(n_sites)]
+                     + [{"host": "panel.example.com", "server": "srv1"}]}
+
+
+def _caddy_row(**kw):
+    return {"proto": "tcp", "port": 443, "pid": 5, "process": "caddy",
+            "owner": {"kind": "unit", "id": "caddy.service"}, **kw}
+
+
+def test_listener_process_details():
+    import time
+    p = prov.listener(_caddy_row(cmdline="caddy run --config /etc/caddy/Caddyfile", exe="/usr/bin/caddy",
+                                 user="caddy", started=time.time() - 3 * 86400))
+    by = {e["label"]: e for e in p["entries"]}
+    assert by["Command"]["kind"] == "text" and by["Command"]["value"].startswith("caddy run")
+    assert by["Program"]["kind"] == "file" and by["Runs as"]["value"] == "caddy"
+    assert "ago" in by["Started"]["value"] and "Process" in by
+    bare = prov.listener({"proto": "tcp", "port": 1, "pid": None, "owner": {"kind": "unknown", "id": None}})
+    assert not {"Command", "Program", "Runs as", "Started"} & {e["label"] for e in bare["entries"]}
+
+
+def test_listener_caddy_sites_link_to_routes_rows():
+    p = prov.listener(_caddy_row(), caddy=_caddy())
+    links = [(e["href"], e["text"]) for e in p["entries"] if e["label"] == "Caddy site"]
+    assert links == [("/routes#site-h0.example.com", "h0.example.com"),
+                     ("/routes#site-h1.example.com", "h1.example.com")]
+    udp = prov.listener(_caddy_row(proto="udp"), caddy=_caddy())
+    assert len([e for e in udp["entries"] if e["label"] == "Caddy site"]) == 2
+    other = prov.listener(_caddy_row(port=2083), caddy=_caddy())
+    assert [e["text"] for e in other["entries"] if e["label"] == "Caddy site"] == ["panel.example.com"]
+    assert not [e for e in prov.listener(_caddy_row(port=80), caddy=_caddy())["entries"] if "Caddy" in e["label"]]
+    not_caddy = _caddy_row(process="nginx", owner={"kind": "unknown", "id": None})
+    assert not [e for e in prov.listener(not_caddy, caddy=_caddy())["entries"] if "Caddy" in e["label"]]
+
+
+def test_listener_caddy_sites_capped():
+    p = prov.listener(_caddy_row(), caddy=_caddy(12))
+    assert len([e for e in p["entries"] if e["label"] == "Caddy site"]) == 8
+    more = [e for e in p["entries"] if e["label"] == "More Caddy sites"]
+    assert more and more[0]["href"] == "/routes"
