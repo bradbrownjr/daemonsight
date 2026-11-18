@@ -1,7 +1,8 @@
 # Install, configure and update
 
-DaemonSight runs on Debian 12 or 13 with Python 3.11 or newer. Commands run
-on the server being watched, except under "Run a hub".
+DaemonSight runs on Debian 12 or 13, Ubuntu, and Fedora (tested on Fedora 44
+containers), with Python 3.11 or newer. Commands run on the host being watched,
+except under "Run a hub".
 
 ## Install
 
@@ -35,6 +36,47 @@ Options:
 
 The options are saved in `/etc/daemonsight/install.options`, so updates keep
 them.
+
+### Fedora
+
+Fedora's `python3` includes the venv module, so the only packages needed are
+Python and git (a minimal install may lack git):
+
+```bash
+sudo dnf install git python3
+git clone https://github.com/bradbrownjr/daemonsight.git
+cd daemonsight
+sudo ./install.sh
+```
+
+The rest is the same as above. Notes:
+
+- **SELinux.** No policy change is needed with SELinux enforcing. Files under
+  `/opt` are labeled `usr_t`, and a systemd service that runs a program
+  labeled `usr_t` or `bin_t` runs in the `unconfined_service_t` domain
+  ([unconfined_service_selinux(8)](https://www.mankier.com/8/unconfined_service_selinux)).
+  `install.sh` runs `restorecon` on its folders anyway. If the collector is
+  denied something, look in `sudo ausearch -m avc -ts recent`. This was not
+  tested on a host with SELinux enforcing.
+- **firewalld.** The collector only makes outbound connections to the hub, so
+  nothing is opened. The web UI listens on `127.0.0.1` by default, which
+  firewalld does not touch. Only a UI listening on a LAN address needs
+  `sudo firewall-cmd --add-port=8466/tcp --permanent` and a reload.
+- **Packages.** The Packages page uses dnf5 (Fedora 41 and newer). See
+  "Updates and reboots".
+- **Podman.** The Docker source reads `/var/run/docker.sock`. Where Docker is
+  absent and Podman's rootful socket is on, point it there. Podman's socket
+  has a Docker-compatible API ([podman-system-service(1)](https://docs.podman.io/en/latest/markdown/podman-system-service.1.html)),
+  but DaemonSight's Docker source has not been tried against it.
+
+  ```bash
+  sudo systemctl enable --now podman.socket
+  ```
+
+  ```toml
+  [collector]
+  docker_socket = "/run/podman/podman.sock"
+  ```
 
 ### Check it
 
@@ -103,10 +145,43 @@ The Packages page needs nothing extra on Debian or Ubuntu. DaemonSight runs
 (`interval_packages`, in seconds). It never runs `apt update`; keep apt's daily
 timer on so the lists stay current. The page shows the lists' age.
 
-`needrestart` is optional. With it installed (`sudo apt install needrestart`)
+On Fedora the page uses dnf5 and reads only what is cached on the host:
+`dnf check-upgrade -C` (and `--security`), `rpm -q`, `dnf versionlock list`
+and `dnf needs-restarting -C`. `-C` means "use only cached data", so it
+never downloads or installs anything. A package counts as a security update
+when a security advisory covers it. DaemonSight never runs `dnf makecache`;
+Fedora's `dnf5-makecache.timer` does, and the page shows the cache's age. On
+a new host with no cache yet, the page says so until the timer or a `sudo
+dnf makecache` has run. "Reboot needed" needs file lists in that cache; if
+they are missing the page falls back to `/run/reboot-required` and the
+installed kernel against the running one. "Services on old libraries" needs the
+`dnf5-plugins` package (installed by default on Fedora).
+
+On Debian and Ubuntu, `needrestart` is optional. With it installed (`sudo apt install needrestart`)
 the page also lists services still running old libraries after an upgrade.
 Without it, that card says so. DaemonSight only lists; it never restarts a
 service.
+
+### Laptops and desktops
+
+Set `role = "workstation"` on a host that is often off, asleep or away from
+the network:
+
+```toml
+role = "workstation"
+```
+
+It goes at the top of `/etc/daemonsight/config.toml`, before any `[section]`.
+Restart the collector afterwards. The default is `"server"`; any other value
+is treated as `"server"` and logged as a warning.
+
+A workstation that stops uploading is "Offline" on the hub's Hosts page, with
+a low "Offline since <time>" finding, not a red "Not reporting". The Hosts page
+and the host's Overview show its role.
+
+While the laptop is away from the hub's network, its uploads queue on the
+laptop and go out in order when it is back. If the hub is only reachable from
+your LAN, connect the laptop through your VPN to catch up.
 
 ### Which ports should be public
 
@@ -369,8 +444,9 @@ The host's own web UI keeps working; stop it with
 
 ### Hosts that stop reporting
 
-A host that misses three of its longest intervals gets a "Stopped
-reporting" finding, and one added but never heard from gets "Never
+A host that misses three of its longest intervals gets a high "Stopped
+reporting" finding (a low "Offline since <time>" one if it is a workstation, see
+"Laptops and desktops"), and one added but never heard from gets "Never
 reported" after ten minutes. A host whose clock is more than five minutes
 off the hub's gets "Clock is off".
 

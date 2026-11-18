@@ -32,6 +32,10 @@ SECTION_READ = {
     "events": "DaemonSight compares each new reading with the one before it",
 }
 
+PACKAGES_READ_DNF = ("dnf check-upgrade -C --json (and --security), rpm -q, dnf versionlock list, "
+                     "dnf needs-restarting -C, and the cached metadata under /var/cache/libdnf5; "
+                     "nothing is downloaded or installed")
+
 SECTION_TITLE = {
     "system": "System health", "systemd": "systemd services", "ports": "Listening sockets",
     "docker": "Containers", "caddy": "Caddy", "fail2ban": "fail2ban", "firewall": "Firewall", "packages": "Packages",
@@ -102,12 +106,15 @@ def section(source: str, cfg: Config, extra: dict | None = None) -> dict:
     elif source == "firewall":
         entries = [cmd("IPv4 rules", "sudo iptables-save"), cmd("IPv6 rules", "sudo ip6tables-save"),
                    cmd("nftables", "sudo nft list ruleset")]
+    elif source == "packages" and extra.get("backend") == "dnf":
+        entries = [cmd("Pending updates", "dnf check-upgrade -C"), cmd("Held packages", "dnf versionlock list")]
     elif source == "packages":
         entries = [cmd("Pending updates", "apt list --upgradable"), cmd("Held packages", "apt-mark showhold")]
     elif source == "findings":
         entries = [{"kind": "url", "label": "Rules", "text": "Rule list in DESIGN.md",
                     "href": "https://github.com/bradbrownjr/daemonsight/blob/main/docs/DESIGN.md#findings"}]
-    return {"title": SECTION_TITLE.get(source, source), "read": SECTION_READ.get(source),
+    read = PACKAGES_READ_DNF if source == "packages" and extra.get("backend") == "dnf" else SECTION_READ.get(source)
+    return {"title": SECTION_TITLE.get(source, source), "read": read,
             "entries": entries + _web_ui(cfg, source)}
 
 
@@ -130,8 +137,31 @@ PACKAGES_PARTS = {
 }
 
 
-def packages(part: str) -> dict:
-    title, read, entries = PACKAGES_PARTS[part]
+PACKAGES_PARTS_DNF = {
+    "security": ("Security updates", "dnf check-upgrade -C --security --json: upgrades covered by a security advisory",
+                 [cmd("Pending security updates", "dnf check-upgrade -C --security"),
+                  cmd("Advisories", "dnf advisory list --security"),
+                  cmd("Where one comes from", "dnf info <package>")]),
+    "other": ("Other updates", "dnf check-upgrade -C --json: the upgrades that no security advisory covers",
+              [cmd("Pending updates", "dnf check-upgrade -C")]),
+    "held": ("Held packages", "dnf versionlock list", [file("Lock file", "/etc/dnf/versionlock.toml"),
+                                                       cmd("Held packages", "dnf versionlock list")]),
+    "reboot": ("Reboot and restarts",
+               "dnf needs-restarting -C --json (-s for services), and rpm -q kernel-core against uname -r",
+               [cmd("Reboot needed?", "sudo dnf needs-restarting -C"),
+                cmd("Running kernel", "uname -r"),
+                cmd("Installed kernels", "rpm -q kernel-core"),
+                cmd("Services on old libraries", "sudo dnf needs-restarting -C -s")]),
+    "lists": ("Package lists", "The newest modification time of /var/cache/libdnf5/*/repodata/repomd.xml",
+              [cmd("Newest metadata", "ls -lt /var/cache/libdnf5/*/repodata/repomd.xml | head -3"),
+               cmd("dnf's timer", "systemctl list-timers 'dnf5-makecache*'"),
+               cmd("Refresh now", "sudo dnf makecache")]),
+}
+
+
+def packages(part: str, backend: str = "apt") -> dict:
+    table = PACKAGES_PARTS_DNF if backend == "dnf" else PACKAGES_PARTS
+    title, read, entries = table[part]
     return {"title": title, "read": read, "entries": list(entries)}
 
 

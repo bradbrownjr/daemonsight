@@ -7,6 +7,7 @@ then /etc/daemonsight/config.toml. A missing file means all defaults.
 from __future__ import annotations
 
 import os
+import logging
 import re
 import socket
 import tomllib
@@ -118,6 +119,10 @@ class Thresholds:
 @dataclass
 class Config:
     host_id: str = field(default_factory=socket.gethostname)
+    # "server" (always on) or "workstation" (a laptop or desktop that is often
+    # off or asleep). A workstation that stops uploading is "Offline", a low
+    # finding, not a high "Not reporting". Anything else counts as "server".
+    role: str = "server"
     data_dir: str = "/var/lib/daemonsight"
     # Also write the collector's and web UI's log lines to this file, kept
     # to four files of 5 MB. On a host the journal already has them; the hub
@@ -169,6 +174,20 @@ def _apply(obj, values: dict, section: str) -> None:
             setattr(obj, key, value)
 
 
+ROLES = ("server", "workstation")
+
+
+def valid_role(value, warn: bool = False) -> str:
+    """The role if it is a known one, else "server"."""
+    role = value.strip().lower() if isinstance(value, str) else value
+    if role in ROLES:
+        return role
+    if warn:
+        logging.getLogger("daemonsight").warning(
+            "unknown role %r in the config; using \"server\" (known: %s)", value, ", ".join(ROLES))
+    return "server"
+
+
 def config_path(path: str | os.PathLike | None = None) -> Path:
     return Path(path or os.environ.get("DAEMONSIGHT_CONFIG") or DEFAULT_PATH)
 
@@ -181,6 +200,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
             _apply(cfg, tomllib.load(fh), "")
     elif path:
         raise FileNotFoundError(candidate)
+    cfg.role = valid_role(cfg.role, warn=True)
     return cfg
 
 

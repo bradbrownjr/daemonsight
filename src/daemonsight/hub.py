@@ -126,6 +126,8 @@ class SettingsIn(_Model):
     links: dict[Annotated[str, Field(max_length=40)], Short] = Field(default_factory=dict)
     eph: tuple[int, int] = (32768, 60999)
     interval_system: int = Field(default=10, ge=1, le=86400)
+    # "server" or "workstation". Older collectors send nothing: server.
+    role: Literal["server", "workstation"] = "server"
 
 
 UPDATE_STATES = ("running", "done", "failed", "refused", "rolled_back")
@@ -384,6 +386,13 @@ def _silent(conn, host: str, now: float, f: Finding | None) -> None:
         db.add_event(conn, host, now, "host_back", "Reporting again", link="/")
 
 
+def host_role(conn, host: str) -> str:
+    """"server" or "workstation", from the host's last uploaded settings."""
+    snap = db.get_snapshot(conn, host, "settings")
+    role = (snap.data or {}).get("role") if snap and snap.data else None
+    return role if role == "workstation" else "server"
+
+
 def check_silent(conn, now: float, default_interval: float = 60) -> None:
     """Open host.silent for every host that has missed three of its longest
     intervals, or never reported within ten minutes of being added."""
@@ -396,7 +405,13 @@ def check_silent(conn, now: float, default_interval: float = 60) -> None:
                     "This host was added but has not uploaded anything. Check [upload] in its config and "
                     "journalctl -u daemonsight-collector on the host.", "/"))
             continue
-        if now - h["last_seen"] > limit:
+        if now - h["last_seen"] > limit and host_role(conn, h["id"]) == "workstation":
+            since = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(h["last_seen"]))
+            _silent(conn, h["id"], now, Finding(
+                "host.silent", "silent", "low", f"Offline since {since}",
+                "This host is set as a workstation, which is often off, asleep or away from the hub's "
+                "network. It uploads again when it's back.", "/"))
+        elif now - h["last_seen"] > limit:
             _silent(conn, h["id"], now, Finding(
                 "host.silent", "silent", "high", "Stopped reporting",
                 f"No upload for {int(now - h['last_seen'])} seconds. The host may be down, its network cut, or "

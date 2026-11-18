@@ -1,6 +1,10 @@
-"""Whether the host's Debian or Ubuntu release still gets security updates.
+"""Whether the host's Debian, Ubuntu or Fedora release still gets security updates.
 
-Release dates come from the distro-info-data CSVs (ISC licence). A host with
+Fedora's end-of-life dates are bundled in data/fedora/fedora.csv (from
+endoflife.date; see data/fedora/README.md). Fedora has no LTS: a release is
+supported until its EOL date, then it is end of life.
+
+Debian and Ubuntu release dates come from the distro-info-data CSVs (ISC licence). A host with
 the `distro-info-data` package has a newer copy in /usr/share/distro-info/;
 that one wins when it has the release. The bundled copy in `data/distro-info/`
 is the fallback. See data/distro-info/README.md.
@@ -16,8 +20,9 @@ from datetime import date
 from importlib import resources
 
 SYSTEM_DIR = "/usr/share/distro-info"
-SUPPORTED_DISTROS = ("debian", "ubuntu")
-NAMES = {"debian": "Debian", "ubuntu": "Ubuntu"}
+SUPPORTED_DISTROS = ("debian", "ubuntu", "fedora")
+NAMES = {"debian": "Debian", "ubuntu": "Ubuntu", "fedora": "Fedora"}
+EOL_SOON_DAYS = 60
 LTS_URL = "https://wiki.debian.org/LTS"
 
 
@@ -59,17 +64,20 @@ def parse_csv(text: str) -> list[dict]:
     for r in csv.DictReader(io.StringIO(text)):
         row = {k: (v or None) for k, v in r.items() if k}
         for k in row:
-            if k not in ("version", "codename", "series"):
+            if k not in ("version", "codename", "series", "state"):
                 row[k] = _parse_date(row[k])
         rows.append(row)
     return rows
 
 
 def bundled_text(distro: str) -> str:
-    return (resources.files("daemonsight.data") / "distro-info" / f"{distro}.csv").read_text(encoding="utf-8")
+    folder = "fedora" if distro == "fedora" else "distro-info"
+    return (resources.files("daemonsight.data") / folder / f"{distro}.csv").read_text(encoding="utf-8")
 
 
 def _system_text(distro: str) -> str | None:
+    if distro == "fedora":
+        return None  # no system copy of Fedora's dates
     try:
         with open(f"{SYSTEM_DIR}/{distro}.csv", encoding="utf-8") as fh:
             return fh.read()
@@ -141,8 +149,9 @@ class Support:
 
     @property
     def current(self) -> str:
-        """e.g. "Debian 13 (trixie)"."""
-        return f"{NAMES.get(self.distro, self.distro)} {self.current_version} ({self.current_codename})"
+        """e.g. "Debian 13 (trixie)", "Fedora 45"."""
+        base = f"{NAMES.get(self.distro, self.distro)} {self.current_version}"
+        return f"{base} ({self.current_codename})" if self.current_codename else base
 
     @property
     def plain(self) -> bool:
@@ -160,6 +169,23 @@ def _newest_release(rows: list[dict], distro: str, today: date) -> dict | None:
     return max(out, key=lambda r: r["release"], default=None)
 
 
+def _evaluate_fedora(rows: list[dict], version_id: str | None, today: date) -> Support:
+    """Fedora: supported until the EOL date, then end of life. A release whose
+    EOL isn't announced yet is supported with no date. Releases not out yet
+    (state "pending", i.e. Rawhide) are not judged."""
+    row = find_row(rows, version_id, None)
+    if not row or row.get("state") == "pending":
+        return UNKNOWN
+    live = [r for r in rows if r.get("state") == "current"]
+    cur = max(live, key=lambda r: int(r["version"]), default=None)
+    base = dict(distro="fedora", version=_bare_version(row), eol=row.get("eol"),
+                current_version=_bare_version(cur) if cur else "")
+    eol = row.get("eol")
+    if row.get("state") == "archived" or (eol and today >= eol):
+        return Support("eol", "End of life", **base)
+    return Support("supported", "Supported", **base)
+
+
 def evaluate(ident: dict, today: date | None = None) -> Support:
     today = today or date.today()
     target = distro_of(ident or {})
@@ -167,6 +193,8 @@ def evaluate(ident: dict, today: date | None = None) -> Support:
         return UNKNOWN
     distro, version_id, codename = target
     rows = load_rows(distro, version_id, codename)
+    if distro == "fedora":
+        return _evaluate_fedora(rows, version_id, today)
     row = find_row(rows, version_id, codename)
     if not row or not row.get("release") or row["release"] > today or not row.get("eol"):
         return UNKNOWN  # not found, not released yet, or a rolling branch such as sid

@@ -424,6 +424,11 @@ def caddy_admin_tcp(snaps, cfg, ctx) -> list[Finding]:
 STALE_LISTS_DAYS = 3
 
 
+def upgrade_cmd(data: dict | None) -> str:
+    """The command that installs pending updates on this host's package system."""
+    return "sudo dnf upgrade --refresh" if (data or {}).get("backend") == "dnf" else "sudo apt upgrade"
+
+
 def reboot_reasons(data: dict | None) -> list[str]:
     """Why the host wants a reboot; empty when it doesn't."""
     data = data or {}
@@ -431,8 +436,12 @@ def reboot_reasons(data: dict | None) -> list[str]:
     reboot = data.get("reboot") or {}
     if reboot.get("required"):
         pkgs = reboot.get("pkgs") or []
-        out.append("Updated packages ask for it: " + ", ".join(pkgs[:5]) + "." if pkgs
-                   else "The system asks for it (/var/run/reboot-required).")
+        if pkgs:
+            out.append("Updated packages ask for it: " + ", ".join(pkgs[:5]) + ".")
+        elif data.get("backend") == "dnf":
+            out.append("dnf needs-restarting asks for it.")
+        else:
+            out.append("The system asks for it (/var/run/reboot-required).")
     kernel = data.get("kernel") or {}
     if kernel.get("managed") and kernel.get("newer_installed"):
         out.append(f"Kernel {kernel['newer_installed']} is installed, {kernel['running']} is running.")
@@ -452,9 +461,10 @@ def pkg_security_updates(snaps, cfg, ctx) -> list[Finding]:
     n = len(sec)
     age = data.get("lists_age")
     fresh = age is not None and snaps["packages"].taken_at - age < STALE_LISTS_DAYS * 86400
-    todo = "Run: sudo apt upgrade"
+    cmd = upgrade_cmd(data)
+    todo = f"Run: {cmd}"
     if data.get("unattended_upgrades"):
-        todo = "unattended-upgrades is installed but is not applying them. Check it, or run: sudo apt upgrade"
+        todo = f"unattended-upgrades is installed but is not applying them. Check it, or run: {cmd}"
     return [Finding("pkg.security_updates", "security", "high" if fresh else "medium",
                     f"{n} security update{'s' if n > 1 else ''} waiting",
                     f"{_names(sec)}. {todo}", "/packages#security")]
@@ -468,7 +478,7 @@ def pkg_updates(snaps, cfg, ctx) -> list[Finding]:
         return []
     n = len(other)
     return [Finding("pkg.updates", "updates", "low", f"{n} update{'s' if n > 1 else ''} waiting",
-                    f"{_names(other)}. Run: sudo apt upgrade", "/packages#other")]
+                    f"{_names(other)}. Run: {upgrade_cmd(data)}", "/packages#other")]
 
 
 def pkg_reboot(snaps, cfg, ctx) -> list[Finding]:
@@ -484,9 +494,11 @@ def pkg_restart(snaps, cfg, ctx) -> list[Finding]:
     if not svcs:
         return []
     n = len(svcs)
+    how = ("Restart them with systemctl restart" if (data or {}).get("backend") == "dnf"
+           else "Restart them, or run: sudo needrestart -r a")
     return [Finding("pkg.restart", "restart", "low",
                     f"{n} service{'s use' if n > 1 else ' uses'} old libraries",
-                    f"{_names(svcs)}. Restart them, or run: sudo needrestart -r a", "/packages#reboot")]
+                    f"{_names(svcs)}. {how}", "/packages#reboot")]
 
 
 def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
@@ -497,9 +509,12 @@ def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
     days = int((snaps["packages"].taken_at - age) // 86400)
     if days < STALE_LISTS_DAYS:
         return []
+    if (data or {}).get("backend") == "dnf":
+        why = "dnf's makecache timer may be off (systemctl list-timers 'dnf5-makecache*')."
+    else:
+        why = "apt's daily timer may be off (systemctl list-timers 'apt-daily*')."
     return [Finding("pkg.lists_stale", "lists", "low", f"Package lists are {days} days old",
-                    "apt's daily timer may be off (systemctl list-timers 'apt-daily*'). Updates listed "
-                    "here may be missing newer ones.", "/packages#lists")]
+                    f"{why} Updates listed here may be missing newer ones.", "/packages#lists")]
 
 
 # ---- OS support -------------------------------------------------------------
@@ -536,6 +551,23 @@ def os_lts(snaps, cfg, ctx) -> list[Finding]:
                     detail + _upgrade(sup), "/#os")]
 
 
+def os_eol_soon(snaps, cfg, ctx) -> list[Finding]:
+    """Fedora has no LTS: warn for the last 60 days before a release ends."""
+    sup = system_support(_data(snaps, "system"), ctx.get("today"))
+    if sup.distro != "fedora" or sup.status != "supported" or not sup.eol:
+        return []
+    today = ctx.get("today") or date.today()
+    if (sup.eol - today).days > distro.EOL_SOON_DAYS:
+        return []
+    cur = sup.current_version
+    detail = f"Fedora stops security updates for {sup.name} on {sup.eol.isoformat()}."
+    if cur and cur != sup.version:
+        detail += (f" Upgrade to Fedora {cur}, the current release: sudo dnf upgrade --refresh, then "
+                   f"sudo dnf system-upgrade download --releasever={cur}, then sudo dnf system-upgrade reboot.")
+    return [Finding("os.eol_soon", "os", "low", f"{sup.name} support ends on {sup.eol.isoformat()}",
+                    detail, "/#os")]
+
+
 def os_eol(snaps, cfg, ctx) -> list[Finding]:
     sup = system_support(_data(snaps, "system"), ctx.get("today"))
     if sup.status not in ("ended", "eol"):
@@ -553,7 +585,7 @@ RULES = [svc_failed, ctr_down, expose_docker_bypass, sys_disk, sys_memory, sourc
          expose_unexpected, expose_forward_all, firewall_default_accept, firewall_duplicates,
          route_upstream_down, route_upstream_failing, jail_uncovered,
          jail_log_missing, caddy_admin_tcp, pkg_security_updates, pkg_updates, pkg_reboot,
-         pkg_restart, pkg_lists_stale, os_lts, os_eol]
+         pkg_restart, pkg_lists_stale, os_lts, os_eol_soon, os_eol]
 
 
 def evaluate(snaps: dict, cfg: Config, ctx: dict | None = None) -> list[Finding]:

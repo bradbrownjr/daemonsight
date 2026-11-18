@@ -82,14 +82,17 @@
       </div>
       <div class="datagrid-item">
         <div class="datagrid-title">Services on old libraries</div>
-        {% if not v.needrestart.installed %}
+        {% if not v.needrestart.installed and v.backend == 'dnf' %}
+        <div class="datagrid-content text-secondary">Not available</div>
+        <div class="text-secondary small">Needs the dnf5-plugins package and a metadata cache with file lists: <code>sudo dnf makecache</code></div>
+        {% elif not v.needrestart.installed %}
         <div class="datagrid-content text-secondary">needrestart isn't installed</div>
         <div class="text-secondary small">To see them: <code>sudo apt install needrestart</code></div>
         {% elif v.needrestart.services %}
         <div class="datagrid-content">
           {% for s in v.needrestart.services %}<div class="font-monospace" data-row id="{{ 'pkg-' ~ s }}">{{ s }}</div>{% endfor %}
         </div>
-        <div class="text-secondary small">Restart them, or run <code>sudo needrestart -r a</code></div>
+        <div class="text-secondary small">{% if v.backend == 'dnf' %}Restart them with <code>systemctl restart</code>{% else %}Restart them, or run <code>sudo needrestart -r a</code>{% endif %}</div>
         {% else %}
         <div class="datagrid-content">None</div>
         {% endif %}
@@ -104,9 +107,9 @@
     <h2 class="card-title" id="lists-title">Package lists</h2>{{ src("src-pkg-lists", v.src.lists) }}
   </div>
   <div class="card-body text-secondary">
-    {% if v.lists_age %}Updated {{ v.lists_age }}{% if v.lists_stale %} <span class="text-orange">(old: apt's daily timer may be off)</span>{% endif %}.{% else %}No package lists found.{% endif %}
-    {% if v.timer %}apt-daily.timer is {{ v.timer }}.{% endif %}
-    DaemonSight never runs apt update; the host's timer does. Checked {{ v.checked }}.
+    {% if v.lists_age %}Updated {{ v.lists_age }}{% if v.lists_stale %} <span class="text-orange">(old: {{ 'dnf' if v.backend == 'dnf' else 'apt' }}'s timer may be off)</span>{% endif %}.{% else %}No package lists found.{% endif %}
+    {% if v.timer %}{{ 'dnf5-makecache.timer' if v.backend == 'dnf' else 'apt-daily.timer' }} is {{ v.timer }}.{% endif %}
+    DaemonSight never runs {{ 'dnf makecache' if v.backend == 'dnf' else 'apt update' }}; the host's timer does. Checked {{ v.checked }}.
   </div>
   {% for part, msg in v.errors.items() %}<div class="card-body text-red">Could not read {{ part }}: {{ msg }}</div>{% endfor %}
 </section>

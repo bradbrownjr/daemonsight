@@ -1,0 +1,10 @@
+[
+  {
+    "type":"reboot",
+    "reboot_required":true,
+    "packages":[
+      "glibc"
+    ],
+    "documentation":"https://access.redhat.com/solutions/27943"
+  }
+]

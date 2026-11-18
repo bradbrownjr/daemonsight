@@ -91,7 +91,7 @@ def test_ubuntu_stages():
 
 
 def test_unknown_when_out_of_scope():
-    assert ev({"os_id": "fedora", "version_id": "44"}, 2026, 11, 18).status == "unknown"
+    assert ev({"os_id": "arch", "version_id": "rolling"}, 2026, 11, 18).status == "unknown"
     assert ev({}, 2026, 11, 18).status == "unknown"
     assert ev({"os_id": "debian", "version_codename": "sid"}, 2026, 11, 18).status == "unknown"
     assert ev({"os_id": "debian", "version_id": "99"}, 2026, 11, 18).status == "unknown"

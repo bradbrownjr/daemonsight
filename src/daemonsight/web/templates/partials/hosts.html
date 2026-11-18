@@ -23,7 +23,7 @@
       <tbody>
         {% for h in v.hosts %}
         <tr data-row>
-          <td data-label="Host"><a href="/h/{{ h.id }}/" class="fw-bold">{{ h.id }}</a></td>
+          <td data-label="Host"><a href="/h/{{ h.id }}/" class="fw-bold">{{ h.id }}</a>{% if h.role == 'workstation' %} <span class="badge bg-secondary-lt">Workstation</span>{% endif %}</td>
           <td data-v="{{ h.state }}" data-label="State"><span class="badge {{ h.state_badge }}">{{ h.state }}</span>{% if h.reboot %} <a href="/h/{{ h.id }}/packages#reboot" class="badge bg-orange-lt text-decoration-none">Reboot needed</a>{% endif %}</td>
           <td data-v="{{ h.seen_v }}" data-label="Last upload">{{ h.seen }}</td>
           <td data-v="{{ h.findings_v }}" data-label="Findings">{% for label, cls, n in h.findings %}<span class="badge {{ cls }} me-1">{{ n }} {{ label|lower }}</span>{% else %}<span class="text-secondary">None</span>{% endfor %}</td>

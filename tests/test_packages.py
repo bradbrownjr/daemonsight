@@ -128,7 +128,7 @@ async def test_unavailable_without_apt(monkeypatch):
     with pytest.raises(SourceUnavailable):
         await pk.PackagesSource(3600).collect()
     assert await runner.collect_once(pk.PackagesSource(3600), 5) == \
-        (True, None, {"available": False, "reason": "This host does not use apt and dpkg"})
+        (True, None, {"available": False, "reason": "This host uses neither apt and dpkg nor dnf and rpm"})
 
 
 def test_parts_fail_independently(monkeypatch):
@@ -272,12 +272,12 @@ def test_packages_page_empty_and_unmanaged(cfg):
 def test_packages_page_unavailable(cfg):
     conn = db.connect_writer(cfg.db_path)
     db.put_snapshot(conn, "testhost", "packages", db.now(), True, None,
-                    {"available": False, "reason": "This host does not use apt and dpkg"})
+                    {"available": False, "reason": "This host uses neither apt and dpkg nor dnf and rpm"})
     conn.close()
     c = TestClient(create_app(cfg), follow_redirects=False)
     c.post("/login", data={"password": PASSWORD, "next": "/"})
     html = c.get("/packages").text
-    assert "does not use apt" in html and check_panels(html) >= 0
+    assert "uses neither apt" in html and check_panels(html) >= 0
 
 
 # ---- hub --------------------------------------------------------------------

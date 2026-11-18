@@ -88,6 +88,7 @@ def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple
             "links": cfg.links,
             "eph": list(eph),
             "interval_system": cfg.collector.interval_system,
+            "role": cfg.role,
         },
         "snapshots": [{"source": s["source"], "taken_at": s["taken_at"], "ok": bool(s["ok"]),
                        "error": s["error"], "data": json.loads(s["data"]) if s["data"] else None} for s in snaps],

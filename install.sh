@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install or upgrade DaemonSight on Debian 12 or 13. Run as root from the repo.
+# Install or upgrade DaemonSight on Debian 12 or 13, Ubuntu or Fedora. Run as root from the repo.
 #
 #   sudo ./install.sh              collector + web UI, or the options used last time
 #   sudo ./install.sh --collector  collector only, no web UI
@@ -37,11 +37,20 @@ done
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "$REPO/pyproject.toml" ]] || { echo "Run this from the DaemonSight repo." >&2; exit 1; }
 
+# Missing-package hints follow the host's package manager. On Fedora the venv
+# module comes with python3 itself; there is no python3-venv package.
+if command -v dnf >/dev/null 2>&1; then
+  HINT_PY="dnf install python3"; HINT_VENV="dnf install python3"; HINT_GIT="dnf install git"
+else
+  HINT_PY="apt install python3"; HINT_VENV="apt install python3-venv"; HINT_GIT="apt install git"
+fi
+command -v python3 >/dev/null 2>&1 || { echo "Install python3 first: $HINT_PY" >&2; exit 1; }
 python3 - <<'EOF' || { echo "Python 3.11 or newer is required." >&2; exit 1; }
 import sys
 sys.exit(0 if sys.version_info >= (3, 11) else 1)
 EOF
-python3 -c "import venv, ensurepip" 2>/dev/null || { echo "Install python3-venv first: apt install python3-venv" >&2; exit 1; }
+python3 -c "import venv, ensurepip" 2>/dev/null || { echo "Install the venv module first: $HINT_VENV" >&2; exit 1; }
+command -v git >/dev/null 2>&1 || echo "git is not installed; daemonsight-update needs it (as root: $HINT_GIT)." >&2
 
 echo "==> User and folders"
 if ! getent passwd "$USER_NAME" >/dev/null; then
@@ -66,6 +75,14 @@ if [[ $REV != local ]] && ! git -c safe.directory="$REPO" -C "$REPO" diff --quie
 fi
 echo "$REV" > "$PREFIX/REVISION"
 chmod 0644 "$PREFIX/REVISION"
+
+# SELinux (Fedora enforces it). Files under /opt get usr_t by default and a
+# systemd service running them gets the unconfined_service_t domain, so no
+# policy is needed (unconfined_service_selinux(8)). This only fixes labels on
+# files that were moved in rather than created here.
+if command -v restorecon >/dev/null 2>&1; then
+  restorecon -R "$PREFIX" "$ETC" "$DATA" 2>/dev/null || true
+fi
 
 echo "==> Configuration"
 if [[ ! -f "$ETC/config.toml" ]]; then

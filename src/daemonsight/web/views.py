@@ -180,6 +180,9 @@ def overview(conn, cfg: Config) -> dict:
         }
 
     glance = []
+    if cfg.role == "workstation":
+        glance.append({"id": "role", "title": "Role", "value": "Workstation",
+                       "note": "Often off or asleep; Offline, not Not reporting, when it stops uploading"})
     if sysd and sysd.get("os"):
         sup = _support(sysd)
         shown = sup["label"] and not sup["plain"]
@@ -588,6 +591,7 @@ def packages(conn, cfg: Config) -> dict:
     reboot = (data or {}).get("reboot") or {}
     age = (data or {}).get("lists_age")
     reasons = rules.reboot_reasons(data)
+    backend = (data or {}).get("backend") or "apt"
     return {
         "host": _host(cfg, snaps),
         "state": _source_state(snaps, "packages"),
@@ -606,7 +610,9 @@ def packages(conn, cfg: Config) -> dict:
         "lists_stale": bool(age) and now - age > rules.STALE_LISTS_DAYS * 86400,
         "timer": (data or {}).get("daily_timer"),
         "errors": (data or {}).get("errors", {}),
-        "src": {part: prov.packages(part) for part in prov.PACKAGES_PARTS},
+        "backend": backend,
+        "tool": "dnf" if backend == "dnf" else "apt",
+        "src": {part: prov.packages(part, backend) for part in prov.PACKAGES_PARTS},
     }
 
 
@@ -625,7 +631,9 @@ def host_config(conn, cfg: Config, host: str) -> Config:
         jail_covers={k: list(v) for k, v in (exp.get("jail_covers") or {}).items()},
     )
     collector = replace(cfg.collector, interval_system=int(data.get("interval_system") or cfg.collector.interval_system))
-    return replace(cfg, host_id=host, exposure=exposure, links=dict(data.get("links") or {}), collector=collector)
+    role = "workstation" if data.get("role") == "workstation" else "server"
+    return replace(cfg, host_id=host, role=role, exposure=exposure, links=dict(data.get("links") or {}),
+                   collector=collector)
 
 
 def hosts_list(conn, cfg: Config) -> dict:
@@ -634,8 +642,8 @@ def hosts_list(conn, cfg: Config) -> dict:
     for r in conn.execute("SELECT host, severity, COUNT(*) AS n FROM findings WHERE resolved_at IS NULL "
                           "GROUP BY host, severity"):
         counts.setdefault(r["host"], {})[r["severity"]] = r["n"]
-    silent = {r["host"] for r in conn.execute(
-        "SELECT host FROM findings WHERE rule = 'host.silent' AND resolved_at IS NULL")}
+    silent = {r["host"]: r["title"] for r in conn.execute(
+        "SELECT host, title FROM findings WHERE rule = 'host.silent' AND resolved_at IS NULL")}
     reboot = {r["host"] for r in conn.execute(
         "SELECT host FROM findings WHERE rule = 'pkg.reboot' AND resolved_at IS NULL")}
     target = hub.hub_revision()
@@ -643,15 +651,19 @@ def hosts_list(conn, cfg: Config) -> dict:
     for h in conn.execute("SELECT * FROM hosts ORDER BY id"):
         system = db.get_snapshot(conn, h["id"], "system")
         data = system.data if system and system.data else {}
+        role = hub.host_role(conn, h["id"])
         if h["last_seen"] is None:
             state, badge = "Never reported", "bg-secondary-lt"
         elif h["id"] in silent:
-            state, badge = "Not reporting", "bg-red-lt"
+            if role == "workstation" and silent[h["id"]].startswith("Offline since"):
+                state, badge = "Offline", "bg-secondary-lt"
+            else:
+                state, badge = "Not reporting", "bg-red-lt"
         else:
             state, badge = "Reporting", "bg-green-lt"
         c = counts.get(h["id"], {})
         rows.append({
-            "id": h["id"], "state": state, "state_badge": badge,
+            "id": h["id"], "state": state, "state_badge": badge, "role": role,
             "seen": fmt_ago(h["last_seen"]) if h["last_seen"] else "never",
             "seen_v": h["last_seen"] or 0,
             "os": data.get("os") or "",

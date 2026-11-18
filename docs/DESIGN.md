@@ -58,7 +58,7 @@ capabilities each source needs is listed under "To verify".
 | Area | Source | Interval | Notes |
 |------|--------|----------|-------|
 | CPU, memory, disk, network | psutil: `cpu_percent`, `virtual_memory`, `disk_usage`, `net_io_counters(pernic=True)` | 15 s | Kept as time series. |
-| Operating system | `/etc/os-release`: `PRETTY_NAME`, `ID`, `ID_LIKE`, `VERSION_ID`, `VERSION_CODENAME`; `platform.release()` for the kernel; release dates from the distro-info-data CSVs | 15 s (with the system snapshot) | The snapshot carries `os`, `os_id`, `os_like`, `version_id`, `version_codename` and `kernel`. Only Debian and Ubuntu are judged; Raspberry Pi OS (`raspbian`) is looked up as Debian by codename. Any other ID has no support status and raises no finding. `/usr/share/distro-info/<distro>.csv` is read first when it has the release (it is newer where the `distro-info-data` package is installed); otherwise the copy bundled in `src/daemonsight/data/distro-info/` is used (ISC licence, see its README). Dates are judged against today when a finding is evaluated. [14] |
+| Operating system | `/etc/os-release`: `PRETTY_NAME`, `ID`, `ID_LIKE`, `VERSION_ID`, `VERSION_CODENAME`; `platform.release()` for the kernel; release dates from the distro-info-data CSVs | 15 s (with the system snapshot) | The snapshot carries `os`, `os_id`, `os_like`, `version_id`, `version_codename` and `kernel`. Only Debian, Ubuntu and Fedora are judged (Fedora's dates are in `data/fedora/fedora.csv`, from endoflife.date, MIT licence, see its README); Raspberry Pi OS (`raspbian`) is looked up as Debian by codename. Any other ID has no support status and raises no finding. `/usr/share/distro-info/<distro>.csv` is read first when it has the release (it is newer where the `distro-info-data` package is installed); otherwise the copy bundled in `src/daemonsight/data/distro-info/` is used (ISC licence, see its README). Dates are judged against today when a finding is evaluated. [14] |
 | systemd services | D-Bus `org.freedesktop.systemd1.Manager.ListUnits`; per unit `ActiveState`, `SubState`, `ActiveEnterTimestamp`; per service `NRestarts`, `MemoryCurrent`, `CPUUsageNSec` | 30 s | systemd docs: read access is granted to all clients, so this source needs no privilege. [1] |
 | Listening ports | `psutil.net_connections()` (fd, family, type, laddr, raddr, status, pid), or `/proc/net/{tcp,tcp6,udp,udp6}` plus socket inodes | 60 s | PID → owner via `/proc/<pid>/cgroup`: a systemd unit, or `docker-<id>.scope` for a container. Per process it also records the command line (secrets masked, cut to 400 characters), the executable, the user and the start time. [2] |
 | Docker | Engine API on `/var/run/docker.sock`: container list, inspect (`State.Health`, `State.OOMKilled`, port bindings), logs, one-shot stats | 30 s | The client sends GET only. A socket proxy is needed only if the collector itself runs in a container; Tecnativa's blocks POST by default. [3] |
@@ -66,6 +66,7 @@ capabilities each source needs is listed under "To verify".
 | fail2ban | The server's control socket (`/var/run/fail2ban/fail2ban.sock`): `status`, `status <jail>`, `get <jail> logpath / journalmatch / bantime / findtime / maxretry / ignoreip / actions`, `get <jail> banip --with-time` | 60 s | Pickled Python values framed by `<F2B_END_COMMAND>`, read with an unpickler that accepts builtins only. See "Answered in phase 2". [5] |
 | Firewall | `iptables-save` and `ip6tables-save` when installed; `nft -j list ruleset` for native nft tables | 5 min | Input chains (default verdict, ports accepted, following jumps) and DNAT forwards. With iptables' nf_tables backend, nft shows extension matches such as multiport only as opaque `xt` expressions, so iptables-save is read for those tables. [6] |
 | Packages | `apt-get -s -o Debug::NoLocking=1 dist-upgrade` (a simulation: pending upgrades, with the archive each comes from, so security updates are known), `apt-mark showhold`, `dpkg-query` for installed `linux-image-*`, `/var/run/reboot-required(.pkgs)`, the mtime of `/var/lib/apt/lists/*InRelease`, `systemctl is-enabled apt-daily.timer`, and `needrestart -b -r l` if installed | 1 h | Never runs `apt update`; the host's apt timers do, and the lists' age is reported. The simulation needs no root and changes nothing. A kernel that no installed `linux-image` package matches (an LXC, a custom kernel) is "managed by the host" and raises nothing. needrestart's batch mode lists services using old libraries without restarting them. [12][13] |
+| Packages, Fedora | `dnf check-upgrade -C --json` and `--security --json` (exit 100 means updates; `-C` is cache-only), `rpm -q --qf` for installed versions, `dnf versionlock list`, `dnf needs-restarting -C --json` (exit 1 means reboot) and `-C -s` (services), `rpm -q kernel-core` against `uname -r`, the mtime of `/var/cache/libdnf5/*/repodata/repomd.xml`, `systemctl is-enabled dnf5-makecache.timer` | 1 h | Same data shape as apt, plus `backend: "dnf"`. The collector picks apt if `dpkg` and `apt-get` are on PATH, else dnf if `dnf` and `rpm` are, and needs dnf5 (dnf4 reports the source unavailable). A package is "security" when `check-upgrade --security` lists it. Never downloads or installs; with no cache, `check-upgrade -C` exits 1 with "Cache-only enabled but no cache" and the updates part reports that. `needs-restarting -C` also needs file lists in the cache; without them the reboot part falls back to `/run/reboot-required` (written by dnf5 as root) and the kernel check. No versionlock plugin means nothing is held. [15][16][17][18] |
 | CVEs, host | `trivy rootfs --scanners vuln --format json /` with `--skip-dirs` for `/proc`, `/sys`, `/var/lib/docker` | 6 h | Without `--pkg-types os` it also finds language packages (Python venvs, `node_modules`) of apps on the host. [7][8] |
 | CVEs, images | `trivy image --format json <image>` for each running image | 6 h | Fields used: `VulnerabilityID`, `PkgName`, `InstalledVersion`, `FixedVersion`, `Status`, `Severity`. [8] |
 | CVEs, cross-check | `debsecan --suite <codename> --only-fixed --format detail` | 6 h | Debian's own view of fixable packages. Needs network access. [9] |
@@ -100,14 +101,22 @@ DaemonSight knows when it first appeared and when it cleared.
 | `cve.fixable_exposed` | A fixable CVE sits in a package or image whose process owns a public listener or Caddy upstream | The CVE's severity, raised one level |
 | `cve.fixable` | Any other fixable CVE | The CVE's severity |
 | `os.lts` | A Debian release is past regular support and inside LTS, or an Ubuntu release is past standard support and inside ESM | Low; Medium within 180 days of the end of LTS or ESM |
-| `os.eol` | A Debian release is past LTS (paid ELTS only, or nothing), or an Ubuntu release is past ESM | High |
+| `os.eol_soon` | A Fedora release is within 60 days of its EOL date | Low |
+| `os.eol` | A Debian release is past LTS (paid ELTS only, or nothing), an Ubuntu release is past ESM, or a Fedora release is past its EOL date | High |
 | `svc.failed` | A unit is in `failed` | High |
 | `ctr.down` | A container exited non-zero, is unhealthy, or was OOM-killed | High |
 | `caddy.admin_tcp` | The admin API listens on TCP instead of a Unix socket | Low |
 | `tls.expiring` | A served certificate expires within 14 days (phase 4) | High |
 | `sys.disk` / `sys.memory` | Above 90% for 15 minutes | Medium |
 
-`os.lts` and `os.eol` link to the "Operating system" entry under "At a glance"
+Fedora has no LTS: a release is "Supported" until its EOL date, then "End of
+life". A release whose EOL is not announced yet counts as supported with no
+date; Rawhide is not judged. `os.eol_soon` reads "Fedora 43 support ends on
+<date>" and gives the upgrade steps to the current release:
+`sudo dnf upgrade --refresh`, `sudo dnf system-upgrade download --releasever=N`,
+`sudo dnf system-upgrade reboot` [17].
+
+`os.lts`, `os.eol_soon` and `os.eol` link to the "Operating system" entry under "At a glance"
 on Overview (`/#os`). Both name the current release (Debian's newest stable,
 Ubuntu's newest LTS) as the upgrade target. The status text is one of
 "Supported", "LTS until <date>", "ESM only (Ubuntu Pro) until <date>", "No free
@@ -244,14 +253,16 @@ supports ntfy and SMTP email. Daily digest optional.
    2b. Remote sources: the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware) and the Unraid API (array, disks, containers, VMs). Each shows as its own host. See "Remote sources". Planned.
    2c. The hub: collectors upload to one install that shows every host, with the container image and Unraid template, retention and backups, and updates from the hub. See "Hub". Done.
 3. Package and CVE checks.
-   3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done.
-   3b. Next: CVE matching on the hub, from the Debian security tracker.
-   3c. Next: CVEs in container images (Trivy), with the Vulnerabilities page and the `cve` rules.
-4. Alerts, recent-changes feed, history charts.
+   3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
+   3b. Next: CVE matching on the hub. Collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, ranks by Debian urgency, EPSS and CISA's KEV list, and raises one finding per package. Vulnerabilities page and `cve` rules. No scanner binary on the hosts.
+   3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases.
+4. Alerts, recent-changes feed, history charts with drill-down. See "History charts and drill-down (planned)".
 5. `.deb` package and docs.
 
-Planned after phase 3: log collection and auditing. See "Log collection and
-auditing (planned)".
+Planned after phase 3, in this order: log collection and auditing, then a
+Windows agent. Traffic maps can come any time after phase 3. See "Log
+collection and auditing (planned)", "Windows agent (planned)" and "Maps
+(planned)".
 
 Later: actions (ban, unban, restart), CrowdSec,
 Podman, and an optional check from outside the host to confirm what's
@@ -347,6 +358,28 @@ and `upstream_allow`. A single-host install keeps its URLs.
 
 The hub's web process is the database writer (it stores uploads); on a host
 the web process stays read-only.
+
+### Roles
+
+A collector's top-level `role` is `server` (the default) or `workstation`; it
+travels in the upload's settings (`settings.role`, optional, so older
+collectors count as servers). A workstation is a laptop or desktop that is
+often off or asleep. The one thing the role changes today is silence: when a
+workstation misses three intervals the hub opens `host.silent` at Low,
+titled "Offline since <UTC time>", and the Hosts page shows the state
+"Offline" (secondary badge) instead of the red "Not reporting". A host that
+was added but never reported stays "Never reported" at High for both roles:
+that is a setup problem. The Hosts page shows a "Workstation" badge by the
+name, and a single host's Overview shows the role under "At a glance", only
+for workstations.
+
+#### Planned for workstations
+
+- LAN-only desktop services (KDE Connect, CUPS, mDNS) count as expected
+  instead of raising exposure findings.
+- Reboot findings at a lower severity, since desktops reboot often.
+- Flatpak updates shown beside dnf's.
+- Quieter alerts, once alerts exist.
 
 ### Updates from the hub
 
@@ -573,6 +606,78 @@ to the lines behind them.
   at the hub one at a time.
 - Whether the journal upload should be opt-in per host.
 
+## Windows agent (planned)
+
+A collector for Windows, after log collection, because most of what matters
+on Windows is in the Event Log and needs the same rules engine.
+
+What it would report:
+
+- Windows Update status and a pending reboot.
+- Application updates from winget.
+- Defender: real-time protection on or off, signature age, detections.
+- BitLocker status per drive, and the firewall profiles.
+- Services and listening ports (psutil works on Windows).
+- Security events from the Event Log: failed and successful logons (4625,
+  4624), new users and changes to the administrators group (4720, 4732), new
+  services (7045), the audit log cleared (1102), Defender detections. Matched
+  by the log rules engine, which could also run Sigma rules, the format tools
+  such as Hayabusa and Chainsaw use for Windows event logs.
+
+Open questions:
+
+- Packaging: a Windows service built from Python, an MSI installer, and code
+  signing so SmartScreen doesn't warn.
+- winget is built for a signed-in user. Running it as the SYSTEM account is
+  awkward and its text output isn't a stable interface; the
+  `Microsoft.WinGet.Client` PowerShell module may be better. Verify both.
+- Overlap with Wazuh, whose agent already collects Windows events, checks
+  vulnerabilities and runs detection rules. Decide whether DaemonSight does
+  this itself or reads from Wazuh (see source 11).
+
+## Maps (planned)
+
+Pictures of how traffic reaches a service, drawn as SVG on the server, so they
+work under the current CSP and on phones.
+
+- **One host:** internet → provider firewall → host firewall or port forward →
+  Caddy site → listener → process or container. Each step is coloured open,
+  blocked or LAN only, and links to the row and source panel it came from.
+- **Across hosts, on a hub:** links between machines from data already
+  collected: a Caddy upstream that points at another host's listener, a port
+  forward to another host's address, WireGuard tunnels. Richer once remote
+  sources (phase 2b) bring in the firewall and Unraid.
+- **Where bans come from:** fail2ban bans on a world map. Needs a GeoIP
+  database whose licence allows bundling or download (DB-IP's free tier is
+  one to check). Lower priority.
+
+## History charts and drill-down (planned)
+
+Phase 4 charts for CPU, memory, disk and traffic, where clicking a point
+shows what was using it at that moment.
+
+| Chart | Drill-down | From |
+|---|---|---|
+| CPU | Top processes and containers | One psutil pass a minute (top 10); per-container CPU from the cgroup files |
+| Memory | Top processes and containers by resident memory | Same samples |
+| Disk I/O | Top processes by reads and writes | psutil per-process I/O counters (root) |
+| Disk space | Which mount filled, and when | Already collected per mount; folder sizes only on request |
+| Network | Per interface; per container on Docker hosts | Interface counters; container counters from the cgroup or Docker. Per-process traffic needs eBPF, so not at first |
+
+Each drill-down row links to its row on Services. The samples get their own
+retention setting.
+
+The collector must stay light:
+
+- Budget: under 1% of one CPU core on average and about 60 MB of memory on a
+  small VPS. Anything that would break it is off by default.
+- Cheap sources first: container CPU and memory from the cgroup files the
+  kernel already keeps, not Docker's stats API, which takes two samples per
+  container.
+- Anything that walks a disk runs only when asked for, never on a schedule.
+- The collector records its own CPU and memory, shows them on the Overview,
+  and raises a low finding when it goes over budget.
+
 ## Answered in phase 1
 
 - **psutil needs root for socket owners.** Run unprivileged on Debian 13 with psutil 7.2.2, `net_connections()` lists every listener but returns `pid=None` for sockets of other users.
@@ -596,6 +701,8 @@ to the lines behind them.
 - The nft JSON reader against real `nft -j list ruleset` output from a host with native nft tables (written from libnftables-json(5) only).
 - The Caddy source against the VPS's Caddy.
 - fail2ban 1.0.2 on Debian 12.
+- Fedora: `dnf needs-restarting -C -s` output (the parser takes lines naming `*.service`; not captured, since a container has no D-Bus), the JSON for "no reboot needed", the whole collector on a real Fedora 44 KDE host, and `install.sh` under SELinux enforcing. dnf5 was tested in `fedora:44` containers only.
+- Whether the Docker source works against Podman's Docker-compatible socket.
 - The Docker source on a real Docker host (alpha or the VPS).
 - The systemd sandboxing in `daemonsight-web.service` inside an unprivileged LXC.
 
@@ -615,3 +722,7 @@ to the lines behind them.
 12. apt-get(8) (`-s` simulation, `Debug::NoLocking`), Debian 13: https://manpages.debian.org/trixie/apt/apt-get.8.en.html
 13. needrestart(1) and batch mode output: https://github.com/liske/needrestart (man/needrestart.1, README.batch.md)
 14. distro-info-data (release dates, ISC licence): https://salsa.debian.org/debian/distro-info-data and its `debian/copyright`; Debian LTS: https://wiki.debian.org/LTS
+15. dnf5 check-upgrade (exit code 100, `--security`, `--json`): https://dnf5.readthedocs.io/en/latest/commands/check-upgrade.8.html; global `--cacheonly`: https://dnf5.readthedocs.io/en/latest/dnf5.8.html
+16. dnf5 needs-restarting (exit code 1, `/run/reboot-required`, `--services`): https://dnf5.readthedocs.io/en/latest/dnf5_plugins/needs_restarting.8.html; versionlock (`/etc/dnf/versionlock.toml`): https://dnf5.readthedocs.io/en/latest/commands/versionlock.8.html
+17. dnf5 system-upgrade: https://dnf5.readthedocs.io/en/latest/commands/system-upgrade.8.html
+18. Fedora release dates: endoflife.date, https://endoflife.date/api/v1/products/fedora (MIT); SELinux domain for services run from `/opt`: https://www.mankier.com/8/unconfined_service_selinux

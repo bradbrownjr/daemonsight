@@ -6,6 +6,12 @@
 
 # data_dir = "/var/lib/daemonsight"
 
+# "server" (always on, the default) or "workstation" (a laptop or desktop that
+# is often off or asleep). A workstation that stops uploading is "Offline" on
+# the hub, a low finding, instead of a high "Not reporting". Any other value
+# counts as "server". Must stay above the first [section].
+# role = "server"
+
 # Also write log lines to this file (rotated at 5 MB, four files kept). The
 # journal has them already on a host; the hub container uses /data/daemonsight.log.
 # log_file = ""
@@ -34,9 +40,11 @@
 # interval_caddy = 60
 # interval_fail2ban = 60
 # interval_firewall = 300
-# Pending apt updates, reboots and services on old libraries (never runs apt update).
+# Pending apt or dnf updates, reboots and services on old libraries (never runs apt update
+# or dnf makecache).
 # interval_packages = 3600
 # docker_socket = "/var/run/docker.sock"
+# Podman's rootful socket speaks the Docker API: "/run/podman/podman.sock" (untested).
 # Caddy's admin address, written as Caddy writes it. A Unix socket is safer:
 # set `admin unix//run/caddy/admin.sock` in the Caddyfile and use the same here.
 # caddy_admin = "localhost:2019"

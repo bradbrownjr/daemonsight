@@ -1,0 +1,16 @@
+{
+  "upgrades":[
+    {
+      "name":"dnf5",
+      "arch":"x86_64",
+      "evr":"5.4.8.0-2.fc44",
+      "repository":"updates"
+    },
+    {
+      "name":"libmodulemd",
+      "arch":"x86_64",
+      "evr":"2.15.4-1.fc44",
+      "repository":"updates"
+    }
+  ]
+}

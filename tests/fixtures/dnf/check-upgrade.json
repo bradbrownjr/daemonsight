@@ -1,0 +1,34 @@
+{
+  "upgrades":[
+    {
+      "name":"dnf5",
+      "arch":"x86_64",
+      "evr":"5.4.8.0-2.fc44",
+      "repository":"updates"
+    },
+    {
+      "name":"libmodulemd",
+      "arch":"x86_64",
+      "evr":"2.15.4-1.fc44",
+      "repository":"updates"
+    },
+    {
+      "name":"tzdata",
+      "arch":"noarch",
+      "evr":"2026f-1.fc44",
+      "repository":"updates"
+    },
+    {
+      "name":"vim-minimal",
+      "arch":"x86_64",
+      "evr":"2:9.2.1302-2.fc44",
+      "repository":"updates"
+    },
+    {
+      "name":"file-libs",
+      "arch":"x86_64",
+      "evr":"5.48-2.fc44",
+      "repository":"updates"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 {% block title %}Packages · DaemonSight{% endblock %}
 {% block content %}
 <div class="mb-4">
-  <div class="page-pretitle">apt and dpkg</div>
+  <div class="page-pretitle">{{ 'dnf and rpm' if v and v.backend == 'dnf' else 'apt and dpkg' }}</div>
   <h1 class="page-title">Packages</h1>
 </div>
 {% include "partials/packages.html" %}

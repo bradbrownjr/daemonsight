@@ -1,0 +1,5 @@
+tzdata	noarch	2026e-1.fc44
+vim-minimal	x86_64	2:9.2.1202-1.fc44
+package nosuchpkg is not installed
+dnf5	x86_64	5.4.6.0-1.fc44
+libmodulemd	x86_64	2.15.3-1.fc44

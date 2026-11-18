@@ -30,7 +30,8 @@ planned. See [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Install
 
-Debian 12 or 13, Python 3.11 or newer:
+Debian 12 or 13, Ubuntu or Fedora, Python 3.11 or newer (on Fedora:
+`sudo dnf install git python3`, see [docs/INSTALL.md](docs/INSTALL.md#fedora)):
 
 ```bash
 sudo apt install git python3-venv

@@ -29,7 +29,11 @@ fi
 
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo daemonsight-update" >&2; exit 1; }
 [[ $# -le 1 ]] || { echo "Usage: daemonsight-update [branch, tag or commit]" >&2; exit 2; }
-command -v git >/dev/null || { echo "Install git first: apt install git" >&2; exit 1; }
+command -v git >/dev/null || {
+  if command -v dnf >/dev/null 2>&1; then echo "Install git first: dnf install git" >&2
+  else echo "Install git first: apt install git" >&2; fi
+  exit 1
+}
 
 # For --hub-request: tell the hub how it went, through the collector's next
 # upload. Details are fixed phrases from this script, never command output.
