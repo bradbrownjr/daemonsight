@@ -193,6 +193,14 @@ def collect_apt() -> dict:
 
     def lists():
         data["lists_age"] = newest_lists_mtime()
+        # apt-daily.timer only refreshes the lists when this is set (normally by
+        # the unattended-upgrades package); with it unset the timer does nothing.
+        try:
+            _, out = run(["apt-config", "shell", "V", "APT::Periodic::Update-Package-Lists"])
+            m = re.search(r"V='?([^'\n]*)", out)
+            data["periodic_update"] = (m.group(1) if m else "") not in ("", "0")
+        except (OSError, subprocess.SubprocessError):
+            pass  # optional detail
         if shutil.which("systemctl"):
             try:
                 _, out = run(["systemctl", "is-enabled", "apt-daily.timer"])

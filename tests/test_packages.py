@@ -181,6 +181,14 @@ def test_security_finding_medium_when_lists_old_and_unattended():
     assert r["pkg.lists_stale"].title == "Package lists are 5 days old"
 
 
+def test_lists_stale_names_unset_periodic_update():
+    old = time.time() - 5 * 86400
+    f = rules(data(lists_age=old, periodic_update=False))["pkg.lists_stale"]
+    assert "APT::Periodic::Update-Package-Lists" in f.detail and "unattended-upgrades" in f.detail
+    f = rules(data(lists_age=old, periodic_update=True))["pkg.lists_stale"]
+    assert "may be off" in f.detail
+
+
 def test_other_updates_finding():
     r = rules(data(updates=[upd("a"), upd("b")]))
     assert r["pkg.updates"].severity == "low" and r["pkg.updates"].title == "2 updates waiting"

@@ -511,6 +511,9 @@ def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
         return []
     if (data or {}).get("backend") == "dnf":
         why = "dnf's makecache timer may be off (systemctl list-timers 'dnf5-makecache*')."
+    elif data.get("periodic_update") is False:
+        why = ("apt's daily timer runs but doesn't refresh the lists: APT::Periodic::Update-Package-Lists "
+               "isn't set. Installing unattended-upgrades sets it, or run sudo apt update yourself.")
     else:
         why = "apt's daily timer may be off (systemctl list-timers 'apt-daily*')."
     return [Finding("pkg.lists_stale", "lists", "low", f"Package lists are {days} days old",

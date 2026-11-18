@@ -97,7 +97,7 @@ DaemonSight knows when it first appeared and when it cleared.
 | `pkg.updates` | Updates are pending, none of them security | Low |
 | `pkg.reboot` | `/var/run/reboot-required` exists, or a newer kernel than the running one is installed | Medium |
 | `pkg.restart` | needrestart lists services using old libraries | Low |
-| `pkg.lists_stale` | The package lists are over 3 days old | Low |
+| `pkg.lists_stale` | The package lists are over 3 days old (age is the newest list file, which apt dates by the repository's publish time). Names an unset `APT::Periodic::Update-Package-Lists`, the usual cause when apt-daily.timer runs but does nothing | Low |
 | `cve.fixable_exposed` | A fixable CVE sits in a package or image whose process owns a public listener or Caddy upstream | The CVE's severity, raised one level |
 | `cve.fixable` | Any other fixable CVE | The CVE's severity |
 | `os.lts` | A Debian release is past regular support and inside LTS, or an Ubuntu release is past standard support and inside ESM | Low; Medium within 180 days of the end of LTS or ESM |
