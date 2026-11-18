@@ -465,9 +465,12 @@ filter that hides it and flashes it once; the flash is off under
 These apply to every page. Check each layout change in a browser at desktop
 (1400 px) and phone (390 px) widths before it ships.
 
-- **One column.** Cards are full width and stack. Nothing sits beside a card,
-  so every card lines up. A guide that would sit beside a card goes inside it,
-  folded (`details`).
+- **Symmetry all the way down.** A page picks its columns once and keeps them
+  to the bottom: every card in a column is the same width, and column edges
+  line up from the first card to the last. A page may have one column or a main
+  column with a side column (a host's Overview), but a card is never narrowed
+  in one place to make room for something beside it. A guide that would sit
+  beside one card goes inside it, folded (`details`).
 - **Short up front.** A card opens with one sentence at most. Longer text
   (terms, caveats, how something is worked out) goes behind an (i) button in the
   card title that opens a popover, or in a small note at the foot of the page.
