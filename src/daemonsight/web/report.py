@@ -110,8 +110,8 @@ def build(conn, cfg: Config, base: str = "", now: float | None = None) -> dict:
         "role": "Workstation" if cfg.role == "workstation" else "Server",
         "support_text": sup["label"] if sup["label"] and not sup["plain"] else "",
         "last_upload": _fmt_utc(last_upload),
-        "last_upload_label": "Last upload" if cfg.hub.enabled else "Last collected",
-        "version": version,
+        "last_upload_label": ("Last read" if cfg.kind else "Last upload") if cfg.hub.enabled else "Last collected",
+        "version": "" if cfg.kind else version,   # a system read over its API runs no DaemonSight
         "generated": _fmt_utc(now),
     })
 

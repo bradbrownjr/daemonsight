@@ -1,0 +1,32 @@
+{
+ "data": {
+  "vms": {
+   "domains": [
+    {
+     "name": "vm-1",
+     "state": "SHUTOFF"
+    },
+    {
+     "name": "vm-2",
+     "state": "SHUTOFF"
+    },
+    {
+     "name": "vm-3",
+     "state": "RUNNING"
+    },
+    {
+     "name": "vm-4",
+     "state": "SHUTOFF"
+    },
+    {
+     "name": "vm-5",
+     "state": "SHUTOFF"
+    },
+    {
+     "name": "vm-6",
+     "state": "SHUTOFF"
+    }
+   ]
+  }
+ }
+}

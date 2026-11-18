@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit ' ~ existing.id if existing else 'Add a system' }} · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">Systems the hub reads over their API</div>
+  <h1 class="page-title">{% if existing %}Edit {{ existing.id }}{% else %}Add a system{% endif %}</h1>
+</div>
+
+<div class="row">
+<div class="col-lg-8">
+{% for p in problems %}<div class="alert alert-danger" role="alert">{{ p }}</div>{% endfor %}
+
+<form method="post" action="{{ '/remotes/' ~ existing.id ~ '/edit' if existing else '/remotes/new' }}" class="card mb-4" autocomplete="off">
+  <div class="card-body">
+    <div class="mb-3">
+      <label class="form-label" for="kind">Kind</label>
+      {% if existing %}
+      <input type="text" class="form-control" id="kind" value="{{ KINDS[existing.kind] }}" disabled>
+      {% else %}
+      <select class="form-select" id="kind" name="kind">
+        <option value="unraid" selected>Unraid · GraphQL API</option>
+        <option value="opnsense" disabled>OPNsense (coming)</option>
+      </select>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="name">Name</label>
+      {% if existing %}
+      <input type="text" class="form-control" id="name" value="{{ existing.id }}" disabled>
+      {% else %}
+      <input type="text" class="form-control" id="name" name="name" value="{{ f.name }}" required maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,62}" placeholder="tower">
+      <div class="form-hint">How the system is listed. Letters, digits, dot, dash and underscore.</div>
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="url">Address</label>
+      <input type="text" class="form-control" id="url" name="url" value="{{ f.url }}" required maxlength="300" placeholder="https://tower.example.lan:4443" inputmode="url">
+      <div class="form-hint">Where the Unraid web UI answers over https. DaemonSight adds /graphql.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="key">API key (Viewer role)</label>
+      <input type="password" class="form-control" id="key" name="key" autocomplete="new-password" maxlength="200" spellcheck="false"{% if not existing and not f.pending %} required{% endif %}>
+      <div class="form-hint">
+        {% if existing %}Leave empty to keep the saved key. A new one replaces it. {% endif %}
+        In Unraid: Settings → Management Access → API Keys, add a key with the <strong>Viewer</strong> role only. The key is never shown again.
+        {% if f.pending %}<br>The key you typed is held in memory for ten minutes, so you don't need to type it again for Save.{% endif %}
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" id="tls-label">Certificate</label>
+      <div role="radiogroup" aria-labelledby="tls-label">
+        <label class="form-check"><input class="form-check-input" type="radio" name="tls" value="verify"{% if f.tls != 'pin' %} checked{% endif %}><span class="form-check-label">Check it against the usual authorities (a myunraid.net or custom certificate)</span></label>
+        <label class="form-check"><input class="form-check-input" type="radio" name="tls" value="pin"{% if f.tls == 'pin' %} checked{% endif %}><span class="form-check-label">Trust only one certificate (Unraid's self-signed certificate): you confirm its fingerprint below</span></label>
+      </div>
+      <input type="hidden" name="pin_confirm" value="{{ f.pin_confirm }}">
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="interval">Read every (seconds)</label>
+      <input type="number" class="form-control" id="interval" name="interval" value="{{ f.interval }}" min="30" max="3600" required>
+      <div class="form-hint">30 to 3600. SMART status and notifications are read every five minutes whatever this says.</div>
+    </div>
+    {% if existing %}
+    <div class="mb-3">
+      <label class="form-check"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if f.enabled %} checked{% endif %}><span class="form-check-label">Read this system</span></label>
+    </div>
+    {% endif %}
+    <input type="hidden" name="pending" value="{{ f.pending }}">
+  </div>
+
+  {% if cert %}
+  <div class="card-body border-top" id="certificate">
+    {% if cert.confirmed %}
+    <div class="alert alert-success mb-0" role="status">The server presented the certificate you pinned.<div class="font-monospace small mt-1">SHA-256 {{ cert.fp }}</div></div>
+    {% else %}
+    <div class="alert alert-warning mb-2" role="status">
+      {% if cert.offer %}This server's certificate isn't signed by an authority DaemonSight trusts, which is normal for Unraid's self-signed certificate.
+      {% elif cert.changed %}The server's certificate is not the one you pinned. It may have been renewed, or something is in the way.
+      {% else %}Check this fingerprint before you trust the certificate.{% endif %}
+      <div class="mt-2">Fingerprint (SHA-256):</div>
+      <div class="font-monospace small text-break">{{ cert.fp }}</div>
+    </div>
+    <p class="text-secondary small">Compare it with the server's own: <code>openssl s_client -connect HOST:PORT &lt;/dev/null 2&gt;/dev/null | openssl x509 -noout -fingerprint -sha256</code>, run from another machine. If it matches, trust this certificate. DaemonSight then accepts only this one; a different certificate is refused before the key is sent.</p>
+    <button type="submit" class="btn btn-warning" name="trust" value="{{ cert.fp }}">The fingerprint matches: trust this certificate and test</button>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if result %}
+  <div class="card-body border-top" id="result">
+    {% if result.ok %}
+    <div class="alert alert-success mb-3" role="status">Connected. The key has the {{ result.roles|join(', ') if result.roles else 'no' }} role only.</div>
+    <div class="datagrid">
+      {% for label, value in result.facts %}
+      <div class="datagrid-item"><div class="datagrid-title">{{ label }}</div><div class="datagrid-content">{{ value }}</div></div>
+      {% endfor %}
+    </div>
+    {% for w in result.warnings %}<div class="text-secondary small mt-2">Note from the server: {{ w }}</div>{% endfor %}
+    {% else %}
+    <div class="alert alert-danger mb-0" role="alert"><strong>Not saved.</strong> {{ result.problem }}{% if result.roles %}<div class="mt-1">Roles on this key: {{ result.roles|join(', ') }}.</div>{% endif %}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="card-footer d-flex flex-wrap gap-2">
+    <button type="submit" class="btn" name="action" value="test">Test connection</button>
+    <button type="submit" class="btn btn-primary" name="action" value="save">Save</button>
+    <a class="btn btn-ghost-secondary ms-auto" href="/">Cancel</a>
+  </div>
+</form>
+
+{% if existing %}
+<div class="card mb-4">
+  <div class="card-header"><h2 class="card-title">Last read</h2></div>
+  <div class="card-body">
+    {% if last.polled %}Last attempt {{ last.polled }}{% if last.ok %}; last good read {{ last.ok }}{% endif %}.{% else %}Not read yet.{% endif %}
+    {% if last.error %}<div class="text-red">{{ last.error }}</div>{% endif %}
+  </div>
+</div>
+<div class="card mb-4">
+  <div class="card-header"><h2 class="card-title">Remove</h2></div>
+  <div class="card-body">
+    <p>Removing {{ existing.id }} deletes its saved API key, its history and its findings. Nothing changes on the Unraid server. Revoke the key there too (Settings → Management Access → API Keys).</p>
+    <form method="post" action="/remotes/{{ existing.id }}/remove" class="d-flex flex-wrap gap-2 align-items-end">
+      <div><label class="form-label" for="confirm">Type the name to confirm</label><input type="text" class="form-control" id="confirm" name="confirm" autocomplete="off" placeholder="{{ existing.id }}"></div>
+      <button type="submit" class="btn btn-outline-danger">Remove {{ existing.id }}</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+</div>
+</div>
+{% endblock %}

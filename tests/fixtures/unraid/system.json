@@ -1,0 +1,39 @@
+{
+ "data": {
+  "vars": {
+   "name": "tower-test",
+   "version": "7.3.2"
+  },
+  "info": {
+   "os": {
+    "hostname": "tower-test",
+    "release": "7.3 x86_64",
+    "kernel": "6.18.38-Unraid",
+    "uptime": "2026-10-01T13:34:32.065Z"
+   },
+   "versions": {
+    "core": {
+     "unraid": "7.3.2",
+     "api": "4.35.1+a9625ae2"
+    }
+   },
+   "cpu": {
+    "brand": "Example CPU @ 2.50GHz",
+    "cores": 6,
+    "threads": 12
+   }
+  },
+  "metrics": {
+   "cpu": {
+    "percentTotal": 38.28049584723165
+   },
+   "memory": {
+    "total": 101228240896,
+    "available": 51698561024,
+    "percentTotal": 48.92871735555088,
+    "swapTotal": 0,
+    "swapUsed": 0
+   }
+  }
+ }
+}

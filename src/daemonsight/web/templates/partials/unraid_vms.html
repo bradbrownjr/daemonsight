@@ -1,0 +1,31 @@
+{% from "_macros.html" import src, src_button, src_panel with context %}
+<div id="live" hx-get="{{ base }}/partials/vms" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card" id="vms" aria-labelledby="vms-title" data-section{% if not v.rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="vms-title">Virtual machines</h2>{{ src("src-vms", v.src.vms) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.rows|length }} total</div>
+  </div>
+  {% if v.unavailable %}
+  <div class="card-body text-secondary">Unraid has no VM manager running: {{ v.unavailable }}</div>
+  {% elif not v.rows %}
+  <div class="card-body text-secondary">{{ v.state.reason if v.state.state != 'ok' else 'No virtual machines.' }}</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="vms">
+      <thead><tr><th data-sort="text">Name</th><th data-sort="text">State</th></tr></thead>
+      <tbody>
+        {% for m in v.rows %}
+        <tr id="{{ m.anchor }}" data-row>
+          <td data-label="Name"><strong>{{ m.name }}</strong></td>
+          <td data-label="State"><span class="badge {{ m.state_badge }}">{{ m.state }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No virtual machines match the filter.</div>
+</section>
+{% endif %}
+</div>

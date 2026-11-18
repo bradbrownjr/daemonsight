@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Array &amp; disks · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · Unraid GraphQL API: array, disks, parity</div>
+  <h1 class="page-title">Array &amp; disks</h1>
+</div>
+{% include "partials/unraid_disks.html" %}
+{% endblock %}

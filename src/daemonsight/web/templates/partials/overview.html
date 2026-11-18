@@ -6,10 +6,10 @@
 {{ src_panel("src-system", v.src.system) }}
 <section id="system" class="ds-tiles mb-4" aria-label="System health">
   <div class="card card-sm"><div class="card-body">
-    <div class="subheader">CPU · {{ t.cpu.count }} vCPU{{ src_button("src-system", "System health") }}</div>
+    <div class="subheader">CPU · {{ t.cpu.count }} {{ 'threads' if v.host.kind else 'vCPU' }}{{ src_button("src-system", "System health") }}</div>
     <div class="d-flex align-items-baseline gap-2 mt-1">
       <span class="h1 m-0">{{ '%.0f' % t.cpu.percent }}%</span>
-      <span class="text-secondary">load {{ t.cpu.load }}</span>
+      {% if t.cpu.load %}<span class="text-secondary">load {{ t.cpu.load }}</span>{% endif %}
     </div>
     {% if t.cpu.spark %}
     <svg class="ds-spark mt-2" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="2" points="{{ t.cpu.spark }}"></polyline></svg>

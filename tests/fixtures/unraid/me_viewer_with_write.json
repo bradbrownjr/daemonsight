@@ -1,0 +1,25 @@
+{
+ "data": {
+  "me": {
+   "name": "mixed-key",
+   "roles": [
+    "VIEWER"
+   ],
+   "permissions": [
+    {
+     "resource": "DOCKER",
+     "actions": [
+      "READ_ANY",
+      "UPDATE_ANY"
+     ]
+    },
+    {
+     "resource": "ARRAY",
+     "actions": [
+      "READ_ANY"
+     ]
+    }
+   ]
+  }
+ }
+}

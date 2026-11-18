@@ -1,0 +1,31 @@
+{% from "_macros.html" import src, src_button, src_panel with context %}
+<div id="live" hx-get="{{ base }}/partials/notifications" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card" id="notifications" aria-labelledby="nt-title" data-section{% if not v.rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="nt-title">Unread warnings and alerts</h2>{{ src("src-notifications", v.src.notifications) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.rows|length }} listed{% if v.unread %} · {{ v.unread.alert }} alerts, {{ v.unread.warning }} warnings, {{ v.unread.info }} info unread{% endif %}</div>
+  </div>
+  {% if not v.rows %}
+  <div class="card-body text-secondary">{{ v.state.reason if v.state.state != 'ok' else 'No unread warnings or alerts.' }}</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="notifications">
+      <thead><tr><th data-sort="text">Level</th><th data-sort="text">Notification</th><th data-sort="num">When</th></tr></thead>
+      <tbody>
+        {% for n in v.rows %}
+        <tr id="{{ n.anchor }}" data-row>
+          <td data-label="Level"><span class="badge {{ n.level_badge }}">{{ n.level }}</span></td>
+          <td data-label="Notification"><strong>{{ n.title }}</strong><div class="text-secondary">{{ n.subject }}</div></td>
+          <td data-v="{{ n.when_v }}" data-label="When">{{ n.when }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body text-secondary small">The text is Unraid's own. Read and archive notifications in the Unraid web UI; DaemonSight only reads.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No notifications match the filter.</div>
+</section>
+{% endif %}
+</div>

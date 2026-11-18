@@ -1,0 +1,42 @@
+{
+ "data": {
+  "me": {
+   "name": "admin-key",
+   "roles": [
+    "ADMIN"
+   ],
+   "permissions": [
+    {
+     "resource": "DOCKER",
+     "actions": [
+      "CREATE_ANY",
+      "READ_ANY",
+      "UPDATE_ANY",
+      "DELETE_ANY"
+     ]
+    },
+    {
+     "resource": "VMS",
+     "actions": [
+      "CREATE_ANY",
+      "READ_ANY",
+      "UPDATE_ANY",
+      "DELETE_ANY"
+     ]
+    },
+    {
+     "resource": "INFO",
+     "actions": [
+      "READ_ANY"
+     ]
+    },
+    {
+     "resource": "DASHBOARD",
+     "actions": [
+      "READ_ANY"
+     ]
+    }
+   ]
+  }
+ }
+}

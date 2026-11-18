@@ -154,9 +154,13 @@ def test_migration_from_schema_3(tmp_path):
     raw.executescript(V3_SCHEMA)
     raw.close()
     conn = db.connect_writer(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
     cols = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
     assert {"fix", "basis"} <= cols
+    # Schema 5: remote systems.
+    assert "kind" in {r[1] for r in conn.execute("PRAGMA table_info(hosts)")}
+    assert {"id", "kind", "url", "enabled", "tls", "tls_pin", "interval", "last_ok", "last_error", "fails"} <= \
+        {r[1] for r in conn.execute("PRAGMA table_info(remotes)")}
     assert {r[1] for r in conn.execute("PRAGMA table_info(accepted)")} == {
         "host", "rule", "key", "fingerprint", "note", "accepted_at", "accepted_by"}
     row = conn.execute("SELECT * FROM findings").fetchone()

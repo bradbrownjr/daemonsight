@@ -1,0 +1,595 @@
+{
+ "data": {
+  "array": {
+   "state": "STARTED",
+   "capacity": {
+    "kilobytes": {
+     "free": "5665053204",
+     "used": "30330259214",
+     "total": "35995312418"
+    },
+    "disks": {
+     "used": "5",
+     "total": "30"
+    }
+   },
+   "parityCheckStatus": {
+    "date": "2026-10-01T13:38:27.000Z",
+    "duration": 27,
+    "speed": "0",
+    "status": "CANCELLED",
+    "errors": null,
+    "progress": 0,
+    "correcting": null,
+    "paused": null,
+    "running": null
+   },
+   "parities": [
+    {
+     "idx": 0,
+     "name": "parity",
+     "device": "sdb",
+     "size": 11718885324,
+     "status": "DISK_OK",
+     "rotational": true,
+     "temp": 39,
+     "numReads": 0,
+     "numWrites": 0,
+     "numErrors": 0,
+     "fsSize": null,
+     "fsFree": null,
+     "fsUsed": null,
+     "type": "PARITY",
+     "fsType": null,
+     "transport": "scsi",
+     "isSpinning": true,
+     "warning": null,
+     "critical": null
+    }
+   ],
+   "disks": [
+    {
+     "idx": 1,
+     "name": "disk1",
+     "device": "sdc",
+     "size": 3907018532,
+     "status": "DISK_OK",
+     "rotational": true,
+     "temp": 37,
+     "numReads": 0,
+     "numWrites": 0,
+     "numErrors": 0,
+     "fsSize": 3998833471,
+     "fsFree": 194857902,
+     "fsUsed": 3803975569,
+     "type": "DATA",
+     "fsType": "xfs",
+     "transport": "scsi",
+     "isSpinning": true,
+     "warning": null,
+     "critical": null
+    },
+    {
+     "idx": 2,
+     "name": "disk2",
+     "device": "sdd",
+     "size": 3907018532,
+     "status": "DISK_OK",
+     "rotational": true,
+     "temp": 36,
+     "numReads": 0,
+     "numWrites": 0,
+     "numErrors": 0,
+     "fsSize": 3998833471,
+     "fsFree": 136976916,
+     "fsUsed": 3861856555,
+     "type": "DATA",
+     "fsType": "xfs",
+     "transport": "scsi",
+     "isSpinning": true,
+     "warning": null,
+     "critical": null
+    },
+    {
+     "idx": 3,
+     "name": "disk3",
+     "device": "sde",
+     "size": 3907018532,
+     "status": "DISK_OK",
+     "rotational": true,
+     "temp": 38,
+     "numReads": 0,
+     "numWrites": 0,
+     "numErrors": 0,
+     "fsSize": 3999810220,
+     "fsFree": 179476947,
+     "fsUsed": 3820333273,
+     "type": "DATA",
+     "fsType": "xfs",
+     "transport": "scsi",
+     "isSpinning": true,
+     "warning": null,
+     "critical": null
+    },
+    {
+     "idx": 4,
+     "name": "disk4",
+     "device": "sdf",
+     "size": 11718885324,
+     "status": "DISK_OK",
+     "rotational": true,
+     "temp": 43,
+     "numReads": 0,
+     "numWrites": 0,
+     "numErrors": 0,
+     "fsSize": 11999161815,
+     "fsFree": 4835326386,
+     "fsUsed": 7163835429,
+     "type": "DATA",
+     "fsType": "xfs",
+     "transport": "scsi",
+     "isSpinning": true,
+     "warning": null,
+     "critical": null
+    },
+    {
+     "idx": 5,
+     "name": "disk5",
+     "device": "sdg",
+     "size": 11718885324,
+     "status": "DISK_OK",
+     "rotational": true,
+     "temp": 38,
+     "numReads": 0,
+     "numWrites": 0,
+     "numErrors": 0,
+     "fsSize": 11998673441,
+     "fsFree": 318415053,
+     "fsUsed": 11680258388,
+     "type": "DATA",
+     "fsType": "xfs",
+     "transport": "scsi",
+     "isSpinning": true,
+     "warning": null,
+     "critical": null
+    }
+   ],
+   "caches": [],
+   "boot": {
+    "idx": 30,
+    "name": "flash",
+    "device": "sda",
+    "size": 121701376,
+    "status": "DISK_OK",
+    "rotational": true,
+    "temp": null,
+    "numReads": 0,
+    "numWrites": 0,
+    "numErrors": 0,
+    "fsSize": 124591735,
+    "fsFree": 98256454,
+    "fsUsed": 26335281,
+    "type": "FLASH",
+    "fsType": "vfat",
+    "transport": "usb",
+    "isSpinning": true,
+    "warning": null,
+    "critical": null
+   }
+  },
+  "display": {
+   "hot": 45,
+   "max": 55,
+   "warning": 70,
+   "critical": 90
+  },
+  "parityHistory": [
+   {
+    "date": "2026-10-01T13:38:54.000Z",
+    "duration": 27,
+    "speed": "0",
+    "status": "CANCELLED",
+    "errors": 0
+   },
+   {
+    "date": "2026-08-04T22:07:43.000Z",
+    "duration": 112128,
+    "speed": "107.0 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2026-06-20T09:19:56.000Z",
+    "duration": 135689,
+    "speed": "88.4 MB/s",
+    "status": "COMPLETED",
+    "errors": 2
+   },
+   {
+    "date": "2026-04-10T22:48:05.000Z",
+    "duration": 35308,
+    "speed": "339.9 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-11-06T08:29:15.000Z",
+    "duration": 123194,
+    "speed": "97.4 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-09-27T00:55:44.000Z",
+    "duration": 139119,
+    "speed": "86.3 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-09-07T22:53:48.000Z",
+    "duration": 4143,
+    "speed": "2.9 GB/s",
+    "status": "CANCELLED",
+    "errors": 0
+   },
+   {
+    "date": "2025-08-24T02:25:38.000Z",
+    "duration": 48105,
+    "speed": "249.5 MB/s",
+    "status": "CANCELLED",
+    "errors": 0
+   },
+   {
+    "date": "2025-08-16T08:52:17.000Z",
+    "duration": 109059,
+    "speed": "110.0 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-07-06T14:36:29.000Z",
+    "duration": 94923,
+    "speed": "126.4 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-06-03T20:11:47.000Z",
+    "duration": 106776,
+    "speed": "112.4 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-05-13T06:47:40.000Z",
+    "duration": 49807,
+    "speed": "240.9 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-05-11T05:33:21.000Z",
+    "duration": 130810,
+    "speed": "91.7 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-05-08T23:14:36.000Z",
+    "duration": 107633,
+    "speed": "111.5 MB/s",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-03-09T09:30:06.000Z",
+    "duration": 49384,
+    "speed": "81013830",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-02-25T01:10:01.000Z",
+    "duration": 48298,
+    "speed": "82835459",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-02-22T01:55:45.000Z",
+    "duration": 42442,
+    "speed": "94264808",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-01-18T05:09:41.000Z",
+    "duration": 41129,
+    "speed": "97274113",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2025-01-06T04:46:32.000Z",
+    "duration": 54516,
+    "speed": "73387390",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-12-19T03:54:41.000Z",
+    "duration": 51482,
+    "speed": "77712346",
+    "status": "COMPLETED",
+    "errors": 3
+   },
+   {
+    "date": "2024-12-13T03:59:21.000Z",
+    "duration": 51323,
+    "speed": "77953100",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-12-06T03:16:01.000Z",
+    "duration": 32986,
+    "speed": "90965650",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-12-05T09:00:13.000Z",
+    "duration": 46031,
+    "speed": "65186351",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-11-27T04:49:48.000Z",
+    "duration": 55510,
+    "speed": "72073266",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-10-16T04:02:23.000Z",
+    "duration": 53501,
+    "speed": "74779667",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-10-13T04:50:55.000Z",
+    "duration": 56270,
+    "speed": "71099822",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-10-09T03:44:53.000Z",
+    "duration": 55753,
+    "speed": "71759134",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-10-04T05:52:13.000Z",
+    "duration": 54219,
+    "speed": "73789391",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-09-27T23:09:26.000Z",
+    "duration": 50236,
+    "speed": "79639839",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-09-17T06:58:55.000Z",
+    "duration": 66225,
+    "speed": "60412034",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-09-04T18:08:21.000Z",
+    "duration": 59,
+    "speed": "0",
+    "status": "CANCELLED",
+    "errors": 0
+   },
+   {
+    "date": "2024-08-29T06:21:45.000Z",
+    "duration": 57042,
+    "speed": "70137565",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-08-25T04:57:14.000Z",
+    "duration": 53792,
+    "speed": "74375130",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-08-23T11:57:51.000Z",
+    "duration": 59282,
+    "speed": "67487382",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-08-20T19:10:05.000Z",
+    "duration": 52431,
+    "speed": "76305754",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-08-17T05:04:41.000Z",
+    "duration": 54825,
+    "speed": "72973771",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-08-15T22:31:19.000Z",
+    "duration": 67,
+    "speed": "0",
+    "status": "CANCELLED",
+    "errors": 0
+   },
+   {
+    "date": "2024-08-15T13:57:00.000Z",
+    "duration": 74075,
+    "speed": "54009949",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-07-29T04:59:20.000Z",
+    "duration": 65682,
+    "speed": "60911467",
+    "status": "COMPLETED",
+    "errors": 4
+   },
+   {
+    "date": "2024-07-20T05:12:03.000Z",
+    "duration": 59044,
+    "speed": "67759416",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-07-14T17:50:58.000Z",
+    "duration": 71707,
+    "speed": "55793534",
+    "status": "COMPLETED",
+    "errors": 313369766
+   },
+   {
+    "date": "2024-07-04T10:16:17.000Z",
+    "duration": 20193,
+    "speed": "148595698",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-05-25T07:50:24.000Z",
+    "duration": 55279,
+    "speed": "72374446",
+    "status": "COMPLETED",
+    "errors": 1
+   },
+   {
+    "date": "2024-05-19T16:21:31.000Z",
+    "duration": 52101,
+    "speed": "76789063",
+    "status": "COMPLETED",
+    "errors": 14
+   },
+   {
+    "date": "2024-04-15T05:09:05.000Z",
+    "duration": 51253,
+    "speed": "78059567",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-04-12T15:13:24.000Z",
+    "duration": 8141,
+    "speed": "0",
+    "status": "CANCELLED",
+    "errors": 0
+   },
+   {
+    "date": "2024-04-07T07:19:55.000Z",
+    "duration": 33621,
+    "speed": "118996668",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-04-04T04:56:44.000Z",
+    "duration": 32828,
+    "speed": "121871176",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-03-31T03:00:31.000Z",
+    "duration": 49003,
+    "speed": "81643715",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-03-22T04:47:30.000Z",
+    "duration": 50050,
+    "speed": "79935804",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-03-05T23:17:53.000Z",
+    "duration": 71895,
+    "speed": "55647639",
+    "status": "COMPLETED",
+    "errors": 1
+   },
+   {
+    "date": "2024-02-21T05:25:34.000Z",
+    "duration": 56745,
+    "speed": "70504661",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-02-17T14:25:36.000Z",
+    "duration": 73369,
+    "speed": "54529665",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-02-10T12:50:02.000Z",
+    "duration": 70324,
+    "speed": "56890777",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-02-02T22:14:16.000Z",
+    "duration": 15835,
+    "speed": "126327686",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-01-28T13:41:56.000Z",
+    "duration": 56592,
+    "speed": "70695275",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2024-01-07T08:33:19.000Z",
+    "duration": 59502,
+    "speed": "67237857",
+    "status": "COMPLETED",
+    "errors": 0
+   },
+   {
+    "date": "2023-12-29T23:58:08.000Z",
+    "duration": 30884,
+    "speed": "129542384",
+    "status": "COMPLETED",
+    "errors": 0
+   }
+  ]
+ }
+}

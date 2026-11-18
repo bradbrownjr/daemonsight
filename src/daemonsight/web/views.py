@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from dataclasses import replace
 
 from .. import db, distro, findings as rules, hub
@@ -112,7 +112,28 @@ def _support(data: dict | None) -> dict:
             "badge": distro.STATUS_BADGE.get(sup.status, "bg-secondary-lt")}
 
 
+def _unraid_host(cfg: Config, snaps: dict) -> dict:
+    """The header facts for a system the hub reads over its API (Unraid)."""
+    snap = snaps.get("unraid_system")
+    data = snap.data if snap and snap.data else {}
+    now = time.time()
+    age = now - snap.taken_at if snap else None
+    fresh = age is not None and age < cfg.collector.interval_system * 4
+    ago = fmt_ago(snap.taken_at) if snap else "never"
+    return {
+        "id": cfg.host_id, "kind": cfg.kind, "kind_label": "Unraid",
+        "os": f"Unraid {data['version']}" if data.get("version") else "Unraid",
+        "kernel": data.get("kernel") or None, "virt": None,
+        "support": {"status": "supported", "label": "", "plain": True, "badge": "bg-secondary-lt"},
+        "uptime": fmt_duration(now - data["boot_time"]) if data.get("boot_time") else None,
+        "collected_ago": ago, "fresh": fresh,
+        "status_text": f"Read {ago}" if fresh else f"Not reachable \u00b7 last read {ago}",
+    }
+
+
 def _host(cfg: Config, snaps: dict) -> dict:
+    if cfg.kind == "unraid":
+        return _unraid_host(cfg, snaps)
     system = snaps.get("system")
     data = system.data if system and system.data else {}
     age = time.time() - system.taken_at if system else None
@@ -126,6 +147,9 @@ def _host(cfg: Config, snaps: dict) -> dict:
         "uptime": fmt_duration(time.time() - data["boot_time"]) if data.get("boot_time") else None,
         "collected_ago": fmt_ago(system.taken_at) if system else "never",
         "fresh": age is not None and age < stale_after,
+        "kind": None, "kind_label": None,
+        "status_text": (f"Collected {fmt_ago(system.taken_at) if system else 'never'}" if age is not None and age < stale_after
+                       else f"Collector not reporting \u00b7 last {fmt_ago(system.taken_at) if system else 'never'}"),
     }
 
 
@@ -842,7 +866,14 @@ def host_config(conn, cfg: Config, host: str) -> Config:
     )
     collector = replace(cfg.collector, interval_system=int(data.get("interval_system") or cfg.collector.interval_system))
     role = "workstation" if data.get("role") == "workstation" else "server"
-    return replace(cfg, host_id=host, role=role, exposure=exposure, links=dict(data.get("links") or {}),
+    kind = ""
+    row = conn.execute("SELECT kind FROM hosts WHERE id = ?", (host,)).fetchone()
+    if row and row["kind"]:
+        kind = row["kind"]
+        rem = conn.execute("SELECT interval FROM remotes WHERE id = ?", (host,)).fetchone()
+        # A remote system counts as stale after four missed polls (a collector: four of its own reads).
+        collector = replace(cfg.collector, interval_system=int(rem["interval"]) if rem else 60)
+    return replace(cfg, host_id=host, role=role, kind=kind, exposure=exposure, links=dict(data.get("links") or {}),
                    collector=collector)
 
 
@@ -862,7 +893,15 @@ def hosts_list(conn, cfg: Config) -> dict:
         "SELECT host, title FROM findings WHERE rule = 'host.silent' AND resolved_at IS NULL")}
     target = hub.hub_revision()
     rows = []
+    remotes = {r["id"]: r for r in conn.execute("SELECT * FROM remotes")}
     for h in conn.execute("SELECT * FROM hosts ORDER BY id"):
+        c = counts.get(h["id"], {})
+        findings = [(SEVERITY_BADGE[sev][0], SEVERITY_BADGE[sev][1], c[sev])
+                    for sev in ("critical", "high", "medium", "low") if c.get(sev)]
+        findings_v = sum(c.get(sev, 0) * w for sev, w in (("critical", 1000), ("high", 100), ("medium", 10), ("low", 1)))
+        if h["kind"] and h["id"] in remotes:
+            rows.append(_remote_row(conn, h, remotes[h["id"]], now, findings, findings_v))
+            continue
         system = db.get_snapshot(conn, h["id"], "system")
         data = system.data if system and system.data else {}
         role = hub.host_role(conn, h["id"])
@@ -875,9 +914,8 @@ def hosts_list(conn, cfg: Config) -> dict:
                 state, badge = "Not reporting", "bg-red-lt"
         else:
             state, badge = "Reporting", "bg-green-lt"
-        c = counts.get(h["id"], {})
         rows.append({
-            "id": h["id"], "state": state, "state_badge": badge, "role": role,
+            "id": h["id"], "kind": None, "state": state, "state_badge": badge, "role": role,
             "seen": fmt_ago(h["last_seen"]) if h["last_seen"] else "never",
             "seen_v": h["last_seen"] or 0,
             "os": data.get("os") or "",
@@ -888,13 +926,35 @@ def hosts_list(conn, cfg: Config) -> dict:
             "version": h["version"] or "",
             "address": h["address"] or "",
             **_update_state(h, target, now),
-            "findings": [(SEVERITY_BADGE[sev][0], SEVERITY_BADGE[sev][1], c[sev])
-                         for sev in ("critical", "high", "medium", "low") if c.get(sev)],
-            "findings_v": sum(c.get(sev, 0) * w for sev, w in (("critical", 1000), ("high", 100),
-                                                                ("medium", 10), ("low", 1))),
+            "findings": findings, "findings_v": findings_v,
         })
-    return {"hosts": rows, "reporting": sum(1 for r in rows if r["state"] == "Reporting"),
+    return {"hosts": rows, "reporting": sum(1 for r in rows if r["state"] in ("Reporting", "Reachable")),
             "hub_rev": target, "behind": sum(1 for r in rows if r["can_update"])}
+
+
+def _remote_row(conn, h, r, now: float, findings, findings_v) -> dict:
+    """A Hosts page row for a system the hub reads over its API."""
+    snap = db.get_snapshot(conn, h["id"], "unraid_system")
+    data = snap.data if snap and snap.data else {}
+    if not r["enabled"]:
+        state, badge = "Disabled", "bg-secondary-lt"
+    elif r["last_ok"] is None and not r["last_error"]:
+        state, badge = "Not read yet", "bg-secondary-lt"
+    elif r["fails"]:
+        state, badge = "Unreachable", "bg-red-lt"
+    else:
+        state, badge = "Reachable", "bg-green-lt"
+    host = urlsplit(r["url"]).netloc
+    return {
+        "id": h["id"], "kind": r["kind"], "kind_label": "Unraid \u00b7 API", "state": state, "state_badge": badge,
+        "role": "server", "seen": fmt_ago(r["last_poll"]) if r["last_poll"] else "never", "seen_v": r["last_poll"] or 0,
+        "error": (r["last_error"] or "")[:200] if r["fails"] else "",
+        "os": f"Unraid {data['version']}" if data.get("version") else "Unraid",
+        "kernel": data.get("kernel") or "", "support": _support({}), "reboot": False,
+        "uptime": fmt_duration(now - data["boot_time"]) if data.get("boot_time") else "",
+        "version": "", "address": host, "rev": None, "can_update": False, "updating": "", "update_note": "",
+        "findings": findings, "findings_v": findings_v,
+    }
 
 
 UPDATE_WORDS = {"failed": "failed", "refused": "refused", "rolled_back": "failed, rolled back"}

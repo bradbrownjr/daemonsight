@@ -1,0 +1,83 @@
+{
+ "data": {
+  "disks": [
+   {
+    "device": "/dev/sda",
+    "type": "HD",
+    "name": "Example flash drive",
+    "vendor": "Vendor",
+    "size": 124623257600,
+    "interfaceType": "USB",
+    "smartStatus": "UNKNOWN",
+    "temperature": null,
+    "isSpinning": false
+   },
+   {
+    "device": "/dev/sdb",
+    "type": "HD",
+    "name": "Example HDD",
+    "vendor": "Vendor",
+    "size": 12000138625024,
+    "interfaceType": "SAS",
+    "smartStatus": "OK",
+    "temperature": 39,
+    "isSpinning": false
+   },
+   {
+    "device": "/dev/sdc",
+    "type": "HD",
+    "name": "Example HDD",
+    "vendor": "Vendor",
+    "size": 4000787030016,
+    "interfaceType": "SAS",
+    "smartStatus": "OK",
+    "temperature": 37,
+    "isSpinning": false
+   },
+   {
+    "device": "/dev/sdd",
+    "type": "HD",
+    "name": "Example HDD",
+    "vendor": "Vendor",
+    "size": 4000787030016,
+    "interfaceType": "SAS",
+    "smartStatus": "OK",
+    "temperature": 36,
+    "isSpinning": false
+   },
+   {
+    "device": "/dev/sde",
+    "type": "HD",
+    "name": "Example HDD",
+    "vendor": "Vendor",
+    "size": 4000787030016,
+    "interfaceType": "SAS",
+    "smartStatus": "OK",
+    "temperature": 38,
+    "isSpinning": false
+   },
+   {
+    "device": "/dev/sdf",
+    "type": "HD",
+    "name": "Example HDD",
+    "vendor": "Vendor",
+    "size": 12000138625024,
+    "interfaceType": "SAS",
+    "smartStatus": "OK",
+    "temperature": 43,
+    "isSpinning": false
+   },
+   {
+    "device": "/dev/sdg",
+    "type": "HD",
+    "name": "Example HDD",
+    "vendor": "Vendor",
+    "size": 12000138625024,
+    "interfaceType": "SAS",
+    "smartStatus": "OK",
+    "temperature": 38,
+    "isSpinning": false
+   }
+  ]
+ }
+}

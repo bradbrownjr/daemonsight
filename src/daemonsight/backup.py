@@ -5,10 +5,12 @@ A backup is one .tar.gz, readable by its owner only, holding:
                  backup API, so the collector or hub can keep writing)
   config.toml    the config file the install runs with
   password, secret, hub.token   when they exist and can be read
+  remotes/<name>.key   the API key of each system the hub reads (a hub only)
   manifest.json  version, schema, host and what's inside
 
-The password file holds an Argon2 hash, but the session secret and an
-upload token are live credentials. Store backups like the server itself.
+The password file holds an Argon2 hash, but the session secret, an upload
+token and the API keys of remote systems are live credentials. Store backups
+like the server itself.
 
 A restore refuses while the collector or hub holds the database (see
 `hold`), checks the archive's names, the database's integrity and its schema
@@ -29,8 +31,11 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+import re
+
 from . import db, full_version
 from .config import Config
+from .remote import store as remote_store
 
 PREFIX = "daemonsight-"
 SUFFIX = ".tar.gz"
@@ -67,7 +72,8 @@ def hold(cfg: Config):
 
 def _files(cfg: Config, config_file: Path) -> dict[str, Path]:
     return {"config.toml": config_file, "password": Path(cfg.web.password_file),
-            "secret": Path(cfg.web.secret_file), "hub.token": Path(cfg.upload.token_file)}
+            "secret": Path(cfg.web.secret_file), "hub.token": Path(cfg.upload.token_file),
+            **remote_store.key_files(cfg.data_dir)}
 
 
 def create(cfg: Config, config_file: Path, dest_dir: Path | None = None, now: float | None = None) -> Path:
@@ -157,6 +163,10 @@ def scheduled(cfg: Config, config_file: Path) -> Path | None:
 ALLOWED = {"state.db", "manifest.json", "config.toml", "password", "secret", "hub.token"}
 
 
+def _allowed(name: str) -> bool:
+    return name in ALLOWED or remote_store.KEY_FILE_RE.match(name) is not None
+
+
 def _read(archive: Path) -> tuple[dict, dict[str, bytes] | None, tarfile.TarFile]:
     try:
         tar = tarfile.open(archive, mode="r:gz")
@@ -164,7 +174,7 @@ def _read(archive: Path) -> tuple[dict, dict[str, bytes] | None, tarfile.TarFile
         raise BackupError(f"can't open {archive}: {exc}") from None
     members = {}
     for m in tar.getmembers():
-        if m.name not in ALLOWED or not m.isfile() or m.size > MAX_MEMBER:
+        if not _allowed(m.name) or not m.isfile() or m.size > MAX_MEMBER:
             raise BackupError(f"unexpected entry in the archive: {m.name!r}")
         if m.name in members:
             raise BackupError(f"{m.name} appears twice in the archive")
@@ -213,11 +223,16 @@ def restore(cfg: Config, archive: Path, config_file: Path, db_only: bool = False
         finally:
             staged.unlink(missing_ok=True)
         if not db_only:
-            for name, path in _files(cfg, config_file).items():
+            wanted = {**_files(cfg, config_file),
+                      **{n: remote_store.key_path(cfg.data_dir, m.group(1)) for n in members
+                         if (m := remote_store.KEY_FILE_RE.match(n))}}
+            for name, path in wanted.items():
                 if name in members:
                     data = tar.extractfile(members[name]).read()
                     tmp = path.with_name(path.name + ".restoring")
                     path.parent.mkdir(parents=True, exist_ok=True)
+                    if name.startswith("remotes/"):
+                        os.chmod(path.parent, 0o700)
                     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
                     with os.fdopen(fd, "wb") as fh:
                         fh.write(data)

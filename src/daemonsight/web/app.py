@@ -22,7 +22,8 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .. import db, full_version, hub
 from ..config import Config
-from . import report, views
+from ..remote.client import Net
+from . import report, unraid_views, views
 from .auth import PasswordStore, RateLimiter
 
 log = logging.getLogger("daemonsight.auth")
@@ -43,13 +44,14 @@ def _safe_next(value: str | None) -> str:
 
 
 def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | None = None,
-               cve_client=None) -> FastAPI:
+               cve_client=None, remote_net: Net | None = None) -> FastAPI:
     if secret is None:
         secret = Path(cfg.web.secret_file).read_text().strip()
     if len(secret) < 32:
         raise RuntimeError(f"session secret in {cfg.web.secret_file} is too short")
 
     hub_conn = db.connect_writer(cfg.db_path) if cfg.hub.enabled else None
+    net = remote_net or Net()
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -62,6 +64,9 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             else:
                 from ..cve import run as cve_run
                 cve_run.clear_findings(hub_conn, time.time())
+            if cfg.remote.enabled:
+                from ..remote import poll as remote_poll
+                tasks.append(asyncio.create_task(remote_poll.loop(cfg, hub_conn, net)))
         yield
         for t in tasks:
             t.cancel()
@@ -198,6 +203,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
 
     async def show(request: Request, name: str, host: str | None, partial: bool, units: str = "active"):
         require_login(request)
+        tname = name
         with reader() as conn:
             if conn is None:
                 if cfg.hub.enabled:
@@ -205,11 +211,19 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                 ctx, base = None, ""
             else:
                 hcfg, base = resolve(conn, host)
-                if name == "services":
+                if hcfg.kind:
+                    # A system the hub reads over its API has its own pages.
+                    if name not in unraid_views.PAGE_FUNCS:
+                        raise HTTPException(404)
+                    ctx = unraid_views.PAGE_FUNCS[name](conn, hcfg)
+                    tname = name if name == "overview" else f"unraid_{name}"
+                elif name not in pages:
+                    raise HTTPException(404)
+                elif name == "services":
                     ctx = views.services(conn, hcfg, units if units in views.UNIT_FILTERS else "active")
                 else:
                     ctx = pages[name](conn, hcfg)
-        template = f"partials/{name}.html" if partial else f"{name}.html"
+        template = f"partials/{tname}.html" if partial else f"{tname}.html"
         return render(request, template, {"page": name, "v": ctx, "base": base})
 
     async def logs(request: Request, cname: str, host: str | None = None):
@@ -219,6 +233,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                 ctx, base = None, ""
             else:
                 hcfg, base = resolve(conn, host)
+                if hcfg.kind:
+                    raise HTTPException(404)
                 ctx = views.container_logs(conn, hcfg, cname)
         return render(request, "partials/logs.html", {"logs": ctx, "name": cname, "base": base})
 
@@ -262,6 +278,12 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
 
     if cfg.hub.enabled:
         add_pages("/h/{host}")
+        for name in unraid_views.PAGES[1:]:   # the other pages a system read from Unraid has
+            app.add_api_route(f"/h/{{host}}/{name}", handler(name, False), methods=["GET"], response_class=HTMLResponse)
+            app.add_api_route(f"/h/{{host}}/partials/{name}", handler(name, True), methods=["GET"],
+                              response_class=HTMLResponse)
+        from .remote_routes import add_remote_routes
+        add_remote_routes(app, cfg, hub_conn, render=render, require_login=require_login, flash=flash, net=net)
 
         @app.get("/", response_class=HTMLResponse)
         async def hosts_page(request: Request):

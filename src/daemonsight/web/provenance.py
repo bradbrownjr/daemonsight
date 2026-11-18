@@ -30,6 +30,8 @@ SECTION_READ = {
     "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
     "cve": "The hub matches this host's installed packages against the Debian security tracker, EPSS scores and "
            "CISA's KEV list; the host downloads nothing",
+    "unraid": "The hub's read-only GraphQL queries to the Unraid API, checked against DaemonSight's Unraid rules",
+    "remote": "The hub's last attempt to read this system's API",
     "findings": "DaemonSight's rules, applied to the latest reading from each source",
     "events": "DaemonSight compares each new reading with the one before it",
 }
@@ -390,9 +392,10 @@ def forward(f: dict) -> dict:
 
 
 PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/services": "Services",
-             "/fail2ban": "fail2ban", "/packages": "Packages", "/vulnerabilities": "Vulnerabilities"}
+             "/fail2ban": "fail2ban", "/packages": "Packages", "/vulnerabilities": "Vulnerabilities",
+             "/disks": "Array & disks", "/containers": "Containers", "/vms": "VMs", "/notifications": "Notifications"}
 
-RULE_SOURCE = {"svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
+RULE_SOURCE = {"unraid": "unraid", "remote": "remote", "svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
                "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "os": "system", "collector": "events",
                "cve": "cve"}
 
@@ -405,3 +408,59 @@ def finding(rule: str, link_href: str | None) -> dict:
         page = PAGE_NAME.get(link_href.split("#", 1)[0].split("?", 1)[0], link_href)
         entries.append(link("Seen on", link_href, f"{page} page"))
     return {"title": rule, "read": SECTION_READ.get(src), "entries": entries}
+
+
+# --- Unraid (read by the hub over GraphQL) -----------------------------------
+
+UNRAID_TITLE = {
+    "unraid_system": "System", "unraid_array": "Array and parity", "unraid_disks": "Disks (SMART)",
+    "unraid_docker": "Containers", "unraid_vms": "Virtual machines", "unraid_notifications": "Notifications",
+    "unraid_ups": "UPS",
+}
+UNRAID_UI = {
+    "unraid_system": "Dashboard", "unraid_array": "Main, Array Operation", "unraid_disks": "Main, click a disk, SMART",
+    "unraid_docker": "Docker", "unraid_vms": "VMs", "unraid_notifications": "the bell icon in the header",
+    "unraid_ups": "Settings, UPS Settings",
+}
+
+
+def unraid_section(source: str, url: str | None = None, interval: int = 60) -> dict:
+    """The panel for one Unraid source: the exact query, how often, and how to look yourself."""
+    from ..remote import unraid
+    query = unraid.QUERY_OF[source]
+    tier = unraid.SOURCES[source][2]
+    every = f"{max(unraid.SLOW_SECONDS, interval) // 60} min" if tier == unraid.SLOW else f"{interval} s"
+    entries = [plain("Unraid web UI", UNRAID_UI[source]), plain("How often", f"The hub reads it every {every}")]
+    if url:
+        body = '{"query":' + _json_str(query) + "}"
+        entries.append(text("The same read-only query, with your Viewer key in $KEY",
+                            f"curl -s -H \"x-api-key: $KEY\" -H 'Content-Type: application/json' -d {q(body)} {q(url + '/graphql')}"))
+        entries.append(plain("curl and a self-signed certificate", "add --cacert with the certificate you pinned, or -k on a network you trust"))
+    return {"title": UNRAID_TITLE[source],
+            "read": f"Unraid's GraphQL API, read-only query (never a mutation): {query}",
+            "entries": entries}
+
+
+def _json_str(value: str) -> str:
+    import json
+    return json.dumps(value)
+
+
+def unraid_disk(d: dict, model: str | None = None) -> dict:
+    entries = [plain("Unraid web UI", "Main, click the disk's name")]
+    if d.get("device"):
+        entries += [cmd("SMART report, on the server", f"smartctl -a {q('/dev/' + d['device'])}")]
+    return {"title": f"Disk {d['name']}" + (f" ({model})" if model else ""),
+            "read": "GraphQL: array { parities disks caches boot } for the status, errors and usage; "
+                    "disks { smartStatus temperature } for SMART", "entries": entries}
+
+
+def unraid_container(c: dict) -> dict:
+    return {"title": f"Container {c['name']}", "read": "GraphQL: docker { containers { ... isUpdateAvailable } }",
+            "entries": [plain("Unraid web UI", "Docker tab"), cmd("On the server", f"docker inspect {q(c['name'])}")]}
+
+
+def unraid_remote(row) -> dict:
+    return {"title": "Last read", "read": "The hub's last attempt to read this server's API",
+            "entries": [plain("Address", row["url"]),
+                        plain("Certificate", "pinned" if row["tls"] == "pin" else "checked against the CA store")]}

@@ -1,0 +1,36 @@
+{% from "_macros.html" import src, src_button, src_panel with context %}
+<div id="live" hx-get="{{ base }}/partials/containers" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card" id="containers" aria-labelledby="ctr-title" data-section{% if not v.rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="ctr-title">Containers</h2>{{ src("src-docker", v.src.docker) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.rows|length }} total</div>
+  </div>
+  {% if v.state.state != 'ok' and not v.rows %}
+  <div class="card-body text-secondary">{{ v.state.reason or v.state.state }}</div>
+  {% elif not v.rows %}
+  <div class="card-body text-secondary">No containers.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="containers">
+      <thead><tr><th data-sort="text">Name</th><th data-sort="text">Image</th><th data-sort="text">State</th><th data-sort="num">Update</th><th data-sort="text">Auto-start</th><th data-sort="text">Published</th></tr></thead>
+      <tbody>
+        {% for c in v.rows %}
+        <tr id="{{ c.anchor }}" data-row>
+          <td data-label="Name"><strong>{{ c.name }}</strong>{{ src("src-c-" ~ loop.index, c.src) }}{% if c.orphaned %}<div class="text-secondary small">no template</div>{% endif %}</td>
+          <td class="font-monospace" data-label="Image">{{ c.image }}</td>
+          <td data-label="State"><span class="badge {{ c.state_badge }}">{{ c.state }}</span><div class="text-secondary small">{{ c.status }}</div></td>
+          <td data-v="{{ c.update_v }}" data-label="Update"><span class="badge {{ c.update_badge }}">{{ c.update }}</span></td>
+          <td data-label="Auto-start">{{ c.auto }}</td>
+          <td class="font-monospace" data-label="Published">{% for p in c.ports %}<div>{{ p.text }}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body text-secondary small">DaemonSight only reads. Update, start or stop a container in the Unraid web UI, on the Docker tab.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No containers match the filter.</div>
+</section>
+{% endif %}
+</div>

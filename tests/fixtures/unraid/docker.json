@@ -1,0 +1,272 @@
+{
+ "data": {
+  "docker": {
+   "containers": [
+    {
+     "names": [
+      "/app-1"
+     ],
+     "image": "registry.example/app-1:latest",
+     "state": "RUNNING",
+     "status": "Up 20 minutes (healthy)",
+     "autoStart": true,
+     "isUpdateAvailable": false,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 8466,
+       "publicPort": 8466,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-2"
+     ],
+     "image": "registry.example/app-2:latest",
+     "state": "RUNNING",
+     "status": "Up 16 hours",
+     "autoStart": false,
+     "isUpdateAvailable": true,
+     "isOrphaned": true,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 9000,
+       "publicPort": 9000,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-3"
+     ],
+     "image": "registry.example/app-3:latest",
+     "state": "RUNNING",
+     "status": "Up 16 hours",
+     "autoStart": false,
+     "isUpdateAvailable": true,
+     "isOrphaned": true,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 4444,
+       "publicPort": 4444,
+       "type": "TCP"
+      },
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 4447,
+       "publicPort": 4447,
+       "type": "TCP"
+      },
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 7656,
+       "publicPort": 7656,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-4"
+     ],
+     "image": "registry.example/app-4:latest",
+     "state": "RUNNING",
+     "status": "Up 36 hours (healthy)",
+     "autoStart": false,
+     "isUpdateAvailable": true,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 3000,
+       "publicPort": 8390,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-5"
+     ],
+     "image": "registry.example/app-5:latest",
+     "state": "RUNNING",
+     "status": "Up 33 hours",
+     "autoStart": false,
+     "isUpdateAvailable": false,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 7777,
+       "publicPort": 7777,
+       "type": "TCP"
+      },
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 8080,
+       "publicPort": 9012,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-6"
+     ],
+     "image": "registry.example/app-6:latest",
+     "state": "RUNNING",
+     "status": "Up 4 days (healthy)",
+     "autoStart": true,
+     "isUpdateAvailable": false,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 8080,
+       "publicPort": 8380,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-7"
+     ],
+     "image": "registry.example/app-7:latest",
+     "state": "RUNNING",
+     "status": "Up 4 weeks",
+     "autoStart": false,
+     "isUpdateAvailable": true,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 8000,
+       "publicPort": 8010,
+       "type": "TCP"
+      },
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 8080,
+       "publicPort": 8180,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-8"
+     ],
+     "image": "registry.example/app-8:latest",
+     "state": "RUNNING",
+     "status": "Up 4 weeks",
+     "autoStart": false,
+     "isUpdateAvailable": true,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 5055,
+       "publicPort": 5055,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-9"
+     ],
+     "image": "registry.example/app-9:latest",
+     "state": "RUNNING",
+     "status": "Up 4 weeks (healthy)",
+     "autoStart": false,
+     "isUpdateAvailable": true,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 8080,
+       "publicPort": 8090,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-10"
+     ],
+     "image": "registry.example/app-10:latest",
+     "state": "RUNNING",
+     "status": "Up 4 weeks",
+     "autoStart": false,
+     "isUpdateAvailable": true,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 11434,
+       "publicPort": 11434,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-11"
+     ],
+     "image": "registry.example/app-11:latest",
+     "state": "RUNNING",
+     "status": "Up 4 weeks",
+     "autoStart": false,
+     "isUpdateAvailable": true,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 443,
+       "publicPort": 11443,
+       "type": "TCP"
+      },
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 5005,
+       "publicPort": 5005,
+       "type": "TCP"
+      },
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 6789,
+       "publicPort": 6789,
+       "type": "TCP"
+      }
+     ]
+    },
+    {
+     "names": [
+      "/app-12"
+     ],
+     "image": "registry.example/app-12:latest",
+     "state": "RUNNING",
+     "status": "Up 4 weeks",
+     "autoStart": true,
+     "isUpdateAvailable": true,
+     "isOrphaned": false,
+     "ports": [
+      {
+       "ip": "0.0.0.0",
+       "privatePort": 8080,
+       "publicPort": 8084,
+       "type": "TCP"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

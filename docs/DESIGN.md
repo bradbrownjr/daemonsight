@@ -113,6 +113,24 @@ DaemonSight knows when it first appeared and when it cleared.
 | `caddy.admin_tcp` | The admin API listens on TCP instead of a Unix socket | Low |
 | `tls.expiring` | A served certificate expires within 14 days (phase 4) | High |
 | `sys.disk` / `sys.memory` | Above 90% for 15 minutes | Medium |
+| `remote.unreachable` | The hub could not read a remote system for 3 polls and at least 3 minutes (see "Unraid"). Its last readings and findings stay as they were | High |
+| `unraid.disk_full` | A disk, or the array's data disks together, is at 90% or more | Medium; High at 95% |
+| `unraid.disk_state` | A disk is disabled, missing, invalid, wrong or emulated (`DISK_DSBL`, `DISK_NP_DSBL`, `DISK_NP_MISSING`, `DISK_INVALID`, `DISK_WRONG`, `DISK_DSBL_NEW`) | High |
+| `unraid.disk_errors` | `numErrors` above zero on an array or cache disk | High |
+| `unraid.disk_temp` | A disk at or over Unraid's own warning (Medium) or critical (High) temperature: the `display` values for hard disks; 60 and 70 C for SSDs and NVMe, which the API doesn't expose; 45 and 55 C for hard disks if `display` can't be read | Medium or High |
+| `unraid.disk_smart` | `smartStatus` is not `OK` for a disk that is not a USB device. The API can't say "failed": it returns `OK` or `UNKNOWN` | Medium |
+| `unraid.array_state` | The array is not `STARTED`: stopped, or in a reconstruction state | High when stopped; Medium otherwise |
+| `unraid.parity_errors` | The last completed parity check found errors | High |
+| `unraid.parity_old` | No completed parity check, or the last one was over 100 days ago and none is running. Not raised while the array is stopped or has no parity disk | Low |
+| `unraid.container_update` | `isUpdateAvailable` on a container. One finding per container | Low |
+| `unraid.notification` | An unread Unraid warning or alert. Alerts first, at most 10 findings, then one "N more" summary. The text is the server's and is cut and escaped | Medium for an alert; Low for a warning |
+| `unraid.ups` | The UPS is on battery (Medium; High at 30% charge or below, or when it reports low battery), charge under 50% (Medium), or its battery needs replacing (Low) | Medium, High or Low |
+
+Hub rules for remote systems (`remote.*`, `unraid.*`) are computed by the hub
+and kept by its reconcile, like `host.*` and `cve.*`; a collector's upload
+may not carry them. Each has no fix command (they are decisions), a basis
+that brings an accepted finding back when it changes (for example `disk3:high`
+when a disk crosses 95%), and a link to the row it is about.
 
 ### Finding fields
 
@@ -266,13 +284,15 @@ rows hourly; the hub prunes every host's. Open findings are never pruned.
 - `snapshots`: source, taken_at, ok, error, data (JSON). The latest row per source is current state.
 - `findings`: rule, key, severity, title, detail, link, fix, basis, first_seen, last_seen, resolved_at.
 - `accepted`: host, rule, key, fingerprint, note, accepted_at, accepted_by. Written by the hub's web process (see "Accepting a finding"). Schema version 4.
+- `remotes` (schema version 5): id, kind (`unraid`), url, enabled, tls (`verify` or `pin`), tls_pin (SHA-256 of the pinned certificate), tls_cert (its PEM), interval, created_at, last_ok, last_error, fails. A remote system is also a row in `hosts` with `hosts.kind` set (collector hosts have `kind` NULL) and a `token_hash` of `remote:<id>`, which no upload token can equal. The API key is not in the database: it is `<data>/remotes/<id>.key`, mode 0600 in a 0700 folder.
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down.
 - `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
 
 Backups (`backup.py`): one owner-only `.tar.gz` with a consistent copy of
 the database (SQLite's online backup API, so the writer keeps running), the
-config, the password hash, the session secret and any upload token, plus a
-manifest. The folder is 0700 and each archive 0600. The hub, and a collector that keeps its own data, make one every
+config, the password hash, the session secret, any upload token and the
+remote systems' key files (`remotes/<id>.key`, checked by name on restore
+and written back 0600), plus a manifest. The folder is 0700 and each archive 0600. The hub, and a collector that keeps its own data, make one every
 `[backup] interval_hours` (24) and keep `keep` (7). A collector that
 uploads skips them unless `interval_hours` is set: the hub's backups hold
 its history. `daemonsight restore` refuses while the writer
@@ -374,7 +394,7 @@ supports ntfy and SMTP email. Daily digest optional.
 
 1. Skeleton: config, SQLite, collector loop, system/systemd/ports/Docker sources, Overview and Services pages, login. Done.
 2. Caddy, fail2ban, nftables sources. Exposure, Routes and fail2ban pages. The `expose`, `route` and `jail` rules. Done.
-   2b. Remote sources: the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware) and the Unraid API (array, disks, containers, VMs). Each shows as its own host. See "Remote sources". Planned.
+   2b. Remote sources: the Unraid API (array, disks, containers, VMs, notifications, UPS), done, and the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware), planned. Each shows as its own host. See "Remote sources".
    2c. The hub: collectors upload to one install that shows every host, with the container image and Unraid template, retention and backups, and updates from the hub. See "Hub". Done.
 3. Package and CVE checks.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
@@ -804,12 +824,15 @@ version comparison applies to Ubuntu versions unchanged.
 
 ## Remote sources (phase 2b)
 
-Appliances that can't run the collector are read over their own APIs by a
-collector on the LAN. Each one is stored under its own `host` id, so the UI
-shows it as another host. On a hub install the hub runs these sources itself.
-Keys live in root-only files under `/etc/daemonsight/`, and the client sends
-only reads. Rows are marked unverified until they have run against your
-devices.
+Appliances that can't run the collector are read over their own APIs. Each
+one is stored under its own `host` id, so the UI shows it as another host.
+The hub runs these sources itself: a background task, started with the hub
+like the CVE loop, polls each enabled system. Systems are added, edited,
+disabled and removed in the hub's web UI (Hosts, "Add a system"); there is no
+config file entry for them. `[remote] enabled = false` switches the polling
+off. Keys are files under the hub's data folder, never in the database or
+`config.toml`, and the client sends only reads. Unraid is done; OPNsense is
+planned and its rows are unverified until they have run against a firewall.
 
 ### OPNsense
 
@@ -837,28 +860,130 @@ they are left out.
 
 ### Unraid
 
-Unraid's API has a `VIEWER` role, "Read-only access to all resources" (enum
-`Role` in the API's generated schema), so this key is read-only on the
-server's side too. GraphQL over HTTPS with an `x-api-key` header. Introspection
-is usually off, so queries are written from the published schema
-(github.com/unraid/api, `api/generated-schema.graphql`).
+Done. The hub reads the Unraid GraphQL API with an `x-api-key` header
+[31][32]. Unraid's API has a `VIEWER` role, "Read-only access to all
+resources" (enum `Role` in `api/generated-schema.graphql`, github.com/unraid/api)
+[33], so the key is read-only on the server's side too. The hub's own client
+is read-only as well (see below).
 
-| Query | Gives |
-|-------|-------|
-| `array` | Array state, capacity, parity and cache disks, `parityCheckStatus` |
-| `array.disks` / `disks` | Per disk: status, temperature, read/write/error counts, `smartStatus`, spinning |
-| `parityHistory` | Last parity checks: date, duration, errors |
-| `docker.containers` | State, ports, auto-start, `isUpdateAvailable` |
-| `vms` | Each VM's state |
-| `notifications` | Unread warnings and alerts Unraid has raised |
-| `shares` | Per share: free, used, cache setting |
-| `upsDevices` | Battery and load, if a UPS is attached |
-| `metrics` | CPU, memory, temperature |
+Data flow:
 
-New rules from these: disk errors or a failed SMART status, a disk above its
-temperature warning, parity check errors, array not started, a container with
-an update available, an unread Unraid alert, a WireGuard peer with no
-handshake in a set time, a gateway down, a port forward to nothing.
+```
+ hub web process (the writer)                       Unraid server
+ ┌──────────────────────────────────────┐   HTTPS   ┌──────────────────────┐
+ │ remote/poll.py   one task per hub    │  POST     │ /graphql             │
+ │  every `interval`: me, system, array,├──────────►│ x-api-key: Viewer key│
+ │  docker, vms, ups; every 5 min: disks│  query    │ (read-only role)     │
+ │  and notifications                   │◄──────────┤                      │
+ │ snapshots unraid_*  ─► unraid_rules  │  JSON     └──────────────────────┘
+ │  ─► findings, events, metrics        │
+ └──────────────────────────────────────┘
+```
+
+**Queries.** All are written from the published schema [33]; none is a
+mutation. Every request body is `{"query": ...}` and nothing else.
+
+| Source (snapshot) | Query | Schema reference |
+|-------|-------|------------------|
+| key check | `me { name roles permissions { resource actions } }` | `Query.me: UserAccount`; `UserAccount.roles: [Role!]!`, `permissions: [Permission!]` |
+| `unraid_system` | `vars { name version }`, `info { os { hostname release kernel uptime } versions { core { unraid api } } cpu { brand cores threads } }`, `metrics { cpu { percentTotal } memory { total available percentTotal swapTotal swapUsed } }` | `Query.vars`, `Query.info`, `Query.metrics` |
+| `unraid_array` | `array { state capacity { kilobytes { free used total } disks { used total } } parityCheckStatus { ... } parities disks caches boot }`, `display { hot max warning critical }`, `parityHistory { date duration speed status errors }` | `UnraidArray`, `ArrayDisk`, `ArrayCapacity`, `ParityCheck`, `Display` |
+| `unraid_disks` | `disks { device type name vendor size interfaceType smartStatus temperature isSpinning }` | `Query.disks: [Disk!]!`, `Disk.smartStatus: DiskSmartStatus` |
+| `unraid_docker` | `docker { containers { names image state status autoStart isUpdateAvailable isOrphaned ports { ip privatePort publicPort type } } }` | `Docker.containers`, `DockerContainer` |
+| `unraid_vms` | `vms { domains { name state } }` (null when VMs are off) | `Vms.domains`, `VmDomain` |
+| `unraid_notifications` | `notifications { overview { unread { info warning alert total } } warningsAndAlerts { id title subject importance timestamp } }` | `Notifications.overview`, `Notifications.warningsAndAlerts` |
+| `unraid_ups` | `upsDevices { id name model status battery { chargeLevel estimatedRuntime health } power { loadPercentage } }` | `Query.upsDevices: [UPSDevice!]!` |
+
+The exact strings are the constants in `src/daemonsight/remote/unraid.py`.
+
+**The key check.** `me` returns the key's own stored roles and any explicit
+permissions (api `user.resolver.ts` and `auth.service.ts`, `validateApiKeyCasbin`),
+so a key can be asked what it can do. The hub accepts a key only when its
+roles are a subset of `{VIEWER}` and none of its explicit permissions has an
+action other than `READ_*`. It runs on "Test connection", on save, and again at
+the start of every poll, so a key that is later given more power stops the
+poll with a clear error instead of being used. The refusal names the roles and
+the resources it could change, and says where to make a Viewer key: Settings
+→ Management Access → API Keys. Nothing else is asked of an over-privileged
+key.
+
+**Read-only in the hub.** `remote/client.py` offers one method, `query`. It
+refuses any document that does not start with `{` or `query`, or that contains
+`mutation` or `subscription`, before sending, follows no redirects, and caps a
+reply at 8 MiB. A test asserts that no request body the hub sends contains
+"mutation".
+
+**TLS.** Verification is on by default, with the system's trust store (httpx
+`verify=True`) [34]. Unraid's own HTTPS certificate is self-signed unless the
+owner installed a real one (Settings → Management Access), so there is a
+second mode: pin one certificate. On Test connection the hub fetches the
+certificate with `ssl.get_server_certificate`, which does not verify it [35],
+and shows its SHA-256 fingerprint to confirm against Unraid's own certificate
+page. Nothing is pinned, and no key is sent, until the form is sent back with
+that fingerprint; the hub then fetches again and refuses if it differs.
+Connections in `pin` mode use an `ssl.SSLContext` whose only trust anchor is the
+stored certificate (`load_verify_locations(cadata=...)`), `CERT_REQUIRED`, TLS
+1.2 or later, and `VERIFY_X509_PARTIAL_CHAIN` so a self-signed leaf counts as a
+trust anchor [35]. Host-name checking is off in that mode, since the pin, not
+the name, says which server this is. The handshake proves the server holds
+the pinned certificate's private key, so there is no gap between "checked" and
+"used". A changed certificate fails the connection before any request, so the
+key is never sent to it. There is no "don't verify" option.
+
+**Polling.** Two tiers, per system:
+
+- Every `interval` (default 60 s, 30 s to 1 hour): `me`, system, array
+  (with `display` and `parityHistory`), docker, vms, ups. These are cheap
+  to ask of the server (the whole set took well under a second on the test server).
+- Every 5 minutes, or `interval` if that is longer: disks (SMART status, about
+  2.4 s on the test server, because it asks each device) and notifications
+  (about 1.1 s).
+
+Requests use httpx timeouts (5 s to connect, 20 s for anything else). A source that fails
+keeps its previous data and records its error on its snapshot; the other
+sources go on. A connection, TLS, authentication or key-check failure ends the
+poll: `remotes.last_error` and `fails` are set, one event ("Could not read this
+system") is written on the first failure, and the system's readings and
+findings stay as they were. After 3 intervals and at least 3 minutes without a
+good read, `remote.unreachable` (High) opens; the next good read resolves it
+and writes "Reading this system again". `host.silent` is not used, since
+nobody uploads for a remote system, and `hub update` skips these hosts.
+
+**Pages.** `/h/<id>/` Overview ("At a glance": version, uptime, array state,
+capacity, CPU, memory, UPS, unread notifications), Array & disks, Containers,
+VMs and Notifications. Cells carry `data-label`, rows have anchors
+(`disk-disk1`, `ctr-<name>`, `vm-<name>`, `notif-<id>`) that findings link to,
+and each section's panel names the GraphQL query, its curl form and the Unraid
+page to compare with. The Hosts page shows "Unraid · API", the address, the
+last poll and the last error. Report and Accept are the same as for any host.
+Text from the server (container names, notification titles) is untrusted: cut
+to a length, stripped of control characters and escaped by the templates.
+
+**Facts about the API that shaped the rules** (checked against the schema and
+a real Unraid 7.3.2 server, read-only):
+
+- `smartStatus` is `OK` or `UNKNOWN` only (api `disks.service.ts` maps
+  anything else to `UNKNOWN`), so "SMART failed" can't be reported; the rule
+  is "SMART status not OK" at Medium, with USB devices (the boot flash)
+  excluded.
+- `numReads` and `numWrites` count I/O requests, not errors ("Count of I/O
+  read requests sent to the device I/O drivers" in the schema), so only
+  `numErrors` makes a finding.
+- `display.hot` and `display.max` are the disk temperature thresholds in
+  degrees C; `display.warning` and `display.critical` are disk usage
+  percentages (default 70 and 90). The SSD thresholds are not exposed;
+  Unraid's shipped defaults are 60 and 70 (webgui `default.cfg`) [36].
+  A threshold set on one disk in Unraid is not visible to the API.
+- `ArrayDisk.temp` is in degrees C and null for a spun-down disk. A
+  disk's usage comes from `fsSize`, `fsFree` and `fsUsed` in kilobytes.
+- `metrics.memory.percentTotal` is used for memory instead of working it out
+  from used and total.
+- `vms` can be null when the VM service is off; that is "not available",
+  not an error.
+
+The parity age limit (100 days) follows Unraid's advice to check "on a
+monthly or quarterly basis" [37]; 90% and 95% for usage are DaemonSight's
+own choice.
 
 ### Provider firewalls
 
@@ -1039,6 +1164,9 @@ The collector must stay light:
 - Whether the Docker source works against Podman's Docker-compatible socket.
 - The Docker source on a real Docker host (alpha or the VPS).
 - The systemd sandboxing in `daemonsight-web.service` inside an unprivileged LXC.
+- Unraid: every query ran against one real server (7.3.2) with an Admin key, read-only, and the fixtures in `tests/fixtures/unraid/` are trimmed copies of those replies. Not seen on a real server: the `me` reply for a Viewer-only key (its shape is read from the API source and the Admin reply, not captured), a failing SMART disk, an array that is stopped, a UPS on battery, and a Viewer key being refused or accepted by each query. The first poll with a real Viewer key is the check.
+- Unraid: the "how to use the API" page lists only the roles admin, connect and guest, while the schema and the CLI example (`--roles ADMIN,VIEWER`) have `VIEWER`; the Viewer role comes from the schema [33] and [32], and a Viewer key was not available to test.
+- Unraid: whether the API gives a threshold for a disk with its own temperature setting, and the SSD thresholds (the schema has no field).
 
 ## Sources
 
@@ -1072,3 +1200,10 @@ The collector must stay light:
 28. CISA Known Exploited Vulnerabilities catalog and its JSON feed: https://www.cisa.gov/known-exploited-vulnerabilities-catalog; licence (CC0 1.0): https://www.cisa.gov/sites/default/files/licenses/kev/license.txt
 29. Debian Policy 5.6.12, Version: https://www.debian.org/doc/debian-policy/ch-controlfields.html#version; dpkg's `verrevcmp` in lib/dpkg/version.c
 30. Ubuntu CVE data (OVAL "recommended"; the JSON API "still a work in progress"): https://ubuntu.com/security/cves/about and https://ubuntu.com/security/oval
+31. Unraid API, using the GraphQL API (the `x-api-key` header, the `/graphql` endpoint on the server's web address): https://docs.unraid.net/API/how-to-use-the-api/
+32. Unraid API, API keys and roles (Settings → Management Access → API Keys): https://docs.unraid.net/API/programmatic-api-key-management/
+33. Unraid API source: `api/generated-schema.graphql` (all types and fields above, `enum Role`), `api/src/unraid-api/graph/user/user.resolver.ts` (`me`), `api/src/unraid-api/auth/auth.service.ts` (`validateApiKeyCasbin`), `api/src/unraid-api/graph/resolvers/disks/disks.service.ts` (`smartStatus`): https://github.com/unraid/api
+34. httpx SSL (`verify` accepts `True` or an `ssl.SSLContext`): https://www.python-httpx.org/advanced/ssl/
+35. Python `ssl`: `get_server_certificate` ("without validation"), `SSLContext.load_verify_locations(cadata=...)`, `VERIFY_X509_PARTIAL_CHAIN`, `CERT_REQUIRED`: https://docs.python.org/3/library/ssl.html
+36. Unraid webgui `emhttp/plugins/dynamix/default.cfg` (`hot`, `max`, `hotssd`, `maxssd`) and `DiskSettings.page`: https://github.com/unraid/webgui
+37. Unraid docs, array health and maintenance (parity checks "on a monthly or quarterly basis"): https://docs.unraid.net/unraid-os/using-unraid-to/manage-storage/array/array-health-and-maintenance/

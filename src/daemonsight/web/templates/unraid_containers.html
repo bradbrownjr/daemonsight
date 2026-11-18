@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Containers · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · Unraid GraphQL API: Docker</div>
+  <h1 class="page-title">Containers</h1>
+</div>
+{% include "partials/unraid_containers.html" %}
+{% endblock %}

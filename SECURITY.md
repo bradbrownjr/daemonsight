@@ -157,18 +157,55 @@ A backup holds the session secret and any upload token as well as the
 database, so keep copies as private as the server. Restoring one brings back
 the password and secret it was made with.
 
-## Remote sources (planned)
+## Remote sources
 
-OPNsense, Unraid and a cloud provider's firewall are read through their own
-APIs.
+The hub reads an Unraid server over its GraphQL API. The hub makes these
+connections, which is the one exception to "nothing connects to a host". OPNsense
+and a cloud provider's firewall are planned and will follow the same rules.
 
-- **A dedicated key for each,** never an admin login. Use Unraid's `VIEWER`
-  role. OPNsense privileges cover reading and writing together, so grant only
-  the pages DaemonSight reads; the list is in [docs/DESIGN.md](docs/DESIGN.md).
-- **Keys live in root-only files** under `/etc/daemonsight/`, never in
-  `config.toml`.
-- **Read requests only.** The client sends no request that changes
-  anything.
+- **What the key can do.** An Unraid API key with the Admin role can start and
+  stop the array, containers and VMs. DaemonSight only needs to read, so the
+  hub accepts a key only if it has the `VIEWER` role and no permission that
+  changes anything. It asks Unraid what the key can do (`me` returns the key's
+  roles and permissions) when you press Test connection, when you save, and at
+  the start of every poll, and it stops using a key that has gained more
+  power. Make the key in Unraid under Settings → Management Access → API Keys:
+  Viewer role only, nothing else. Revoke it there when you remove the system.
+- **Where the key is stored.** In a file, `<data>/remotes/<id>.key`, mode 0600
+  in a 0700 folder, written atomically. It is never in the database,
+  `config.toml`, a page, a log line or an event. The form shows no saved key
+  (leave the field empty to keep it, or type a new one to replace it), and
+  errors are scrubbed of it. Backups include the file, so they are as private
+  as the key; the archive is 0600. Removing the system deletes the file.
+  A hub that is compromised leaks the keys it holds, which is why they must
+  be Viewer keys.
+- **Read requests only, enforced on both sides.** Unraid refuses a write from a
+  Viewer key. The hub's client has one method, which sends `{"query": ...}`
+  and refuses any document that isn't a query (it must begin with `{` or
+  `query` and must not contain `mutation` or `subscription`) before anything
+  is sent. A test asserts that no request body contains "mutation". Redirects
+  are not followed, so the key can't be sent somewhere else, and a reply
+  larger than 8 MiB is refused.
+- **TLS.** Certificates are verified by default. Unraid's own certificate is
+  self-signed unless you installed a real one, so you may pin it: Test
+  connection fetches the certificate, shows its SHA-256 fingerprint and the
+  hub saves it only after you confirm that fingerprint (compare it with
+  Unraid's certificate page). The key is not sent until then. A pinned system
+  trusts that one certificate and no other, and a changed certificate stops
+  the connection before any request, so the key goes nowhere new. There is no
+  "don't verify" setting. A pinned certificate that Unraid renews has to be
+  pinned again.
+- **Add and edit pages** need the login and refuse cross-site requests
+  (`Sec-Fetch-Site`). Removing a system asks you to type its name. A key
+  waiting between Test connection and Save is held in the hub's memory for ten
+  minutes, never in the page, and is used once.
+- **Text from the server is untrusted.** Container names and notification
+  titles are cut to a length, stripped of control characters and escaped, and
+  a remote system can't send rules; the hub makes them.
+- **The address is yours to choose.** The hub connects to the address an
+  administrator typed, over HTTPS only. Anyone who can add a system can make
+  the hub connect to an address on its own network; that is the same trust
+  as the login.
 
 ## The hub
 

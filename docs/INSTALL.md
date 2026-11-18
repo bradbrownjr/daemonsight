@@ -495,6 +495,46 @@ off the hub's gets "Clock is off".
 When the hub is down, each collector keeps its data and sends the backlog
 once the hub is back.
 
+### Add an Unraid server
+
+An Unraid server needs no collector. The hub reads its GraphQL API with a key
+that can only read.
+
+1. In Unraid, open Settings → Management Access → API Keys and add a key.
+   Give it the Viewer role and nothing else: no other role, no extra
+   permissions. Copy it; Unraid shows it once.
+2. On the hub, open Hosts, then "Add a system". Choose Unraid, give it a name,
+   the server's web address (for example `https://tower.example.lan`, the
+   address you use for its web UI; HTTPS only) and paste the key.
+3. Press Test connection. It shows the server's name, Unraid version, array
+   state, the number of disks and containers, and the key's roles. A key with
+   more than Viewer is refused with a message saying so; make a new one.
+4. If Unraid uses its own self-signed certificate, the test says so and shows
+   the certificate's SHA-256 fingerprint. Compare it with the one in Unraid
+   (Settings → Management Access, certificate details), then choose "Pin this
+   certificate". Nothing is sent until you do. If Unraid has a certificate your
+   browser trusts, leave verification on.
+5. Save. The first read happens within a few seconds, and the server appears on
+   the Hosts page as "Unraid · API" with its own pages.
+
+The hub reads every minute by default (the Interval box: 30 to 3600
+seconds). Disk SMART status and notifications are slower to ask for, so they
+are read every 5 minutes, or at the interval if that is longer. Edit
+changes the address, interval or certificate pin, replaces the key (type a new
+one; the saved one is never shown) or turns reading off. Remove asks you to type
+the name, deletes the key file and the server's history. Revoke the key in
+Unraid as well.
+
+If the hub runs as an Unraid container, it has to be able to reach Unraid's own
+address. On the default bridge network it can. On a custom network with its own
+IP address (macvlan or ipvlan), a container can't reach the Unraid host
+itself: use the bridge network, or turn on "Host access to custom networks" in
+Settings → Docker, or point the hub at a different address that reaches the
+server. If Test connection says the server did not answer, check this first.
+
+The poller runs with the hub. To stop all remote reading, set `[remote]
+enabled = false` in `config.toml` and restart.
+
 ### Remove a host
 
 ```bash
@@ -502,6 +542,10 @@ docker exec daemonsight daemonsight hub list
 docker exec daemonsight daemonsight hub revoke vps            # its token stops working
 docker exec daemonsight daemonsight hub revoke vps --purge    # and its data is deleted
 ```
+
+For an Unraid server added by API, the same commands list it and remove it
+(`revoke` deletes its key file; the history goes with `--purge`). The web UI's
+Remove does both.
 
 ## Update
 

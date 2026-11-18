@@ -119,3 +119,8 @@
 # enabled = false
 # max_upload_mb = 8       # largest upload as sent
 # max_unpacked_mb = 48    # and once unpacked
+
+[remote]
+# Only on the hub. Reads systems that have no collector (Unraid) over their API.
+# Add them in the web UI (Hosts, "Add a system"); this only switches reading on or off.
+# enabled = true

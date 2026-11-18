@@ -3,6 +3,7 @@
   <div class="card-header">
     <h2 class="card-title" id="hosts-title">Hosts</h2>
     <div class="card-actions text-secondary d-flex align-items-center gap-2"><span><span class="ds-shown"></span>{{ v.hosts|length }} host{{ "s" if v.hosts|length != 1 }} · {{ v.reporting }} reporting</span>
+      <a class="btn btn-sm" href="/remotes/new">Add a system</a>
       {% if v.behind %}
       <form method="post" action="/hosts/update" class="m-0">
         <input type="hidden" name="host" value="*">
@@ -14,20 +15,28 @@
   {% if not v.hosts %}
   <div class="card-body">
     <p>No hosts yet. Add one on the hub, then put its token on the host:</p>
-    <pre class="mb-0">daemonsight hub add-host &lt;name&gt;</pre>
+    <pre>daemonsight hub add-host &lt;name&gt;</pre>
+    <p class="mb-0">A system with no collector, such as an Unraid server, is read over its API: <a href="/remotes/new">Add a system</a>.</p>
   </div>
   {% else %}
   <div class="table-responsive">
     <table class="table table-vcenter card-table" data-table="hosts">
-      <thead><tr><th data-sort="text">Host</th><th data-sort="text">State</th><th data-sort="num">Last upload</th><th data-sort="num">Findings</th><th data-sort="text">System</th><th data-sort="text">Version</th><th data-sort="text">From</th><th>Report</th></tr></thead>
+      <thead><tr><th data-sort="text">Host</th><th data-sort="text">State</th><th data-sort="num">Last upload or poll</th><th data-sort="num">Findings</th><th data-sort="text">System</th><th data-sort="text">Version</th><th data-sort="text">From</th><th>Report</th></tr></thead>
       <tbody>
         {% for h in v.hosts %}
         <tr data-row>
-          <td data-label="Host"><a href="/h/{{ h.id }}/" class="fw-bold">{{ h.id }}</a>{% if h.role == 'workstation' %} <span class="badge bg-secondary-lt">Workstation</span>{% endif %}</td>
+          <td data-label="Host"><a href="/h/{{ h.id }}/" class="fw-bold">{{ h.id }}</a>{% if h.role == 'workstation' %} <span class="badge bg-secondary-lt">Workstation</span>{% endif %}{% if h.kind %}<div><a href="/remotes/{{ h.id }}/edit" class="small">Edit</a></div>{% endif %}</td>
           <td data-v="{{ h.state }}" data-label="State"><span class="badge {{ h.state_badge }}">{{ h.state }}</span>{% if h.reboot %} <a href="/h/{{ h.id }}/packages#reboot" class="badge bg-orange-lt text-decoration-none">Reboot needed</a>{% endif %}</td>
+          {% if h.kind %}
+          <td data-v="{{ h.seen_v }}" data-label="Last poll">{{ h.seen }}{% if h.error %}<div class="text-red small">{{ h.error }}</div>{% endif %}</td>
+          {% else %}
           <td data-v="{{ h.seen_v }}" data-label="Last upload">{{ h.seen }}</td>
+          {% endif %}
           <td data-v="{{ h.findings_v }}" data-label="Findings">{% for label, cls, n in h.findings %}<span class="badge {{ cls }} me-1">{{ n }} {{ label|lower }}</span>{% else %}<span class="text-secondary">None</span>{% endfor %}</td>
           <td data-label="System">{{ h.os }}{% if h.support.label and not h.support.plain %} <span class="badge {{ h.support.badge }}">{{ h.support.label }}</span>{% endif %}{% if h.kernel or h.uptime %}<div class="text-secondary small">{% if h.kernel %}kernel {{ h.kernel }}{% endif %}{% if h.kernel and h.uptime %} · {% endif %}{% if h.uptime %}up {{ h.uptime }}{% endif %}</div>{% endif %}</td>
+          {% if h.kind %}
+          <td class="small" data-label="Version">{{ h.kind_label }}</td>
+          {% else %}
           <td class="small" data-label="Version">{{ h.version }}
             {% if h.updating %}
             <form method="post" action="/hosts/update" class="m-0 mt-1 d-flex align-items-center gap-2">
@@ -43,6 +52,7 @@
             {% endif %}
             {% if h.update_note %}<div class="text-secondary">{{ h.update_note }}</div>{% endif %}
           </td>
+          {% endif %}
           <td class="font-monospace small" data-label="From">{{ h.address }}</td>
           <td data-label="Report"><a href="/h/{{ h.id }}/report">Report</a></td>
         </tr>

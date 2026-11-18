@@ -24,7 +24,7 @@
       <div class="datagrid-item"><div class="datagrid-title">Uptime</div><div class="datagrid-content">{{ v.host.uptime or 'Unknown' }}</div></div>
       <div class="datagrid-item"><div class="datagrid-title">Role</div><div class="datagrid-content">{{ v.host.role }}</div></div>
       <div class="datagrid-item"><div class="datagrid-title">{{ v.host.last_upload_label }}</div><div class="datagrid-content">{{ v.host.last_upload }}</div></div>
-      <div class="datagrid-item"><div class="datagrid-title">DaemonSight</div><div class="datagrid-content">{{ v.host.version or 'Unknown' }}</div></div>
+      {% if v.host.version %}<div class="datagrid-item"><div class="datagrid-title">DaemonSight</div><div class="datagrid-content">{{ v.host.version }}</div></div>{% endif %}
       <div class="datagrid-item"><div class="datagrid-title">Generated</div><div class="datagrid-content">{{ v.host.generated }}</div></div>
     </div>
   </div>

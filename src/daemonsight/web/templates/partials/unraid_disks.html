@@ -1,0 +1,94 @@
+{% from "_macros.html" import src, src_button, src_panel with context %}
+<div id="live" hx-get="{{ base }}/partials/disks" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card mb-4" id="array" aria-labelledby="array-title" data-section{% if not v.array %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="array-title">Array</h2>{{ src("src-array", v.src.array) }}
+    {% if v.array %}<div class="card-actions"><span class="badge {{ v.array.badge }}">{{ v.array.state }}</span></div>{% endif %}
+  </div>
+  {% if not v.array %}
+  <div class="card-body text-secondary">{{ v.array_state.reason or 'No data yet.' }}</div>
+  {% else %}
+  <div class="card-body">
+    <div class="datagrid">
+      <div class="datagrid-item">
+        <div class="datagrid-title">Capacity</div>
+        <div class="datagrid-content">{{ v.array.used }} of {{ v.array.total }} used{% if v.array.percent is not none %} ({{ '%.0f' % v.array.percent }}%){% endif %}</div>
+        {% if v.array.percent is not none %}<div class="progress progress-sm mt-2"><div class="progress-bar {{ v.array.level }} {{ v.array.pct }}" role="progressbar" aria-label="Array used {{ '%.0f' % v.array.percent }}%"></div></div>{% endif %}
+        <div class="text-secondary small">{{ v.array.free }} free{% if v.array.slots %} · {{ v.array.slots }}{% endif %}</div>
+      </div>
+      {% if v.array.has_parity %}
+      <div class="datagrid-item" id="parity">
+        <div class="datagrid-title">Parity check</div>
+        <div class="datagrid-content">{{ v.array.check }}{% if v.array.check_alert %} · <span class="text-red">{{ v.array.check_alert }}</span>{% endif %}</div>
+      </div>
+      {% endif %}
+      {% if v.array.thresholds.hot %}
+      <div class="datagrid-item">
+        <div class="datagrid-title">Disk temperature limits</div>
+        <div class="datagrid-content">{{ v.array.thresholds.hot }} / {{ v.array.thresholds.max }} °C</div>
+        <div class="text-secondary small">Unraid's warning and critical levels for hard disks</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% if v.history %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="parity-history">
+      <thead><tr><th data-sort="num">Parity check</th><th data-sort="text">Result</th><th data-sort="num">Errors</th><th data-sort="text">Duration</th><th data-sort="text">Speed</th></tr></thead>
+      <tbody>
+        {% for h in v.history %}
+        <tr data-row>
+          <td data-v="{{ h.date_v }}" data-label="Parity check">{{ h.date }}</td>
+          <td data-label="Result">{{ h.status }}</td>
+          <td data-v="{{ h.errors }}" data-label="Errors">{% if h.errors_bad %}<span class="text-red">{{ h.errors }}</span>{% else %}{{ h.errors }}{% endif %}</td>
+          <td data-label="Duration">{{ h.duration }}</td>
+          <td data-label="Speed">{{ h.speed }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No parity checks match the filter.</div>
+</section>
+
+<section class="card" id="disks" aria-labelledby="disks-title" data-section{% if not v.rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="disks-title">Disks</h2>{{ src("src-disks", v.src.disks) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.rows|length }} total</div>
+  </div>
+  {% if v.disks_state.state == 'error' %}
+  <div class="card-body border-bottom"><div class="alert alert-warning m-0">SMART status could not be read: {{ v.disks_state.reason }}</div></div>
+  {% endif %}
+  {% if not v.rows %}
+  <div class="card-body text-secondary">No disks yet.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="disks">
+      <thead><tr><th data-sort="num">Disk</th><th data-sort="text">Role</th><th data-sort="text">Status</th><th data-sort="num">Temperature</th><th data-sort="num">Size</th><th data-sort="num">Used</th><th data-sort="num">Errors</th><th data-sort="text">Reads / writes</th><th data-sort="text">SMART</th><th data-sort="text">Spin</th></tr></thead>
+      <tbody>
+        {% for d in v.rows %}
+        <tr id="{{ d.anchor }}" data-row>
+          <td data-v="{{ d.slot_v }}" data-label="Disk"><strong>{{ d.name }}</strong>{{ src("src-d-" ~ loop.index, d.src) }}<div class="text-secondary small">{{ d.device }}{% if d.model %} · {{ d.model }}{% endif %}</div></td>
+          <td data-label="Role">{{ d.kind }}</td>
+          <td data-label="Status"><span class="badge {{ d.status_badge }}">{{ d.status }}</span></td>
+          <td data-v="{{ d.temp_v }}" data-label="Temperature"><span class="{{ d.temp_class }}">{{ d.temp }}</span></td>
+          <td data-v="{{ d.size_v }}" data-label="Size">{{ d.size }}</td>
+          <td data-v="{{ d.used_v }}" data-label="Used">{% if d.used_detail %}{{ d.used }} <span class="text-secondary small">{{ d.used_detail }}{% if d.fs %} · {{ d.fs }}{% endif %}</span><div class="progress progress-sm mt-1"><div class="progress-bar {{ d.used_level }} {{ d.used_pct }}" role="progressbar" aria-label="{{ d.name }} used {{ d.used }}"></div></div>{% else %}—{% endif %}</td>
+          <td data-v="{{ d.errors_v }}" data-label="Errors">{% if d.errors %}<span class="text-red">{{ d.errors }}</span>{% elif d.errors is none %}—{% else %}0{% endif %}</td>
+          <td data-label="Reads / writes">{{ d.io }}</td>
+          <td data-label="SMART">{% if d.smart_bad %}<span class="text-orange">{{ d.smart|lower }}</span>{% else %}{{ d.smart|lower }}{% endif %}</td>
+          <td data-label="Spin">{{ d.spin }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body text-secondary small">Reads and writes are Unraid's counts of I/O requests, not failures; Errors is the count Unraid raises alarms on. SMART status is OK or unknown: Unraid's API reports nothing else.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No disks match the filter.</div>
+</section>
+{% endif %}
+</div>

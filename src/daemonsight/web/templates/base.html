@@ -33,7 +33,7 @@
     </button>
     <div class="ds-collapsible ds-account ms-auto d-flex align-items-center gap-3">
       {% if host %}<div class="ds-menu-host text-secondary small w-100">{{ host.os or '' }}{% if host.support.label and not host.support.plain %} · <span class="badge {{ host.support.badge }}">{{ host.support.label }}</span>{% endif %}{% if host.kernel %} · kernel {{ host.kernel }}{% endif %}{% if host.uptime %} · up {{ host.uptime }}{% endif %}</div>{% endif %}
-      {% if host %}<span class="text-secondary">{{ 'Collected ' ~ host.collected_ago if host.fresh else 'Collector not reporting · last ' ~ host.collected_ago }}</span>{% endif %}
+      {% if host %}<span class="text-secondary">{{ host.status_text }}</span>{% endif %}
       <form method="post" action="/theme" class="m-0">
         <input type="hidden" name="next" value="{{ path }}">
         <button type="submit" class="btn btn-sm btn-ghost-secondary">{{ 'Light' if theme == 'dark' else 'Dark' }} mode</button>
@@ -48,9 +48,15 @@
     <ul class="nav nav-pills gap-1">
       {% if hub %}
       <li class="nav-item"><a class="nav-link{{ ' active' if page == 'hosts' }}" {% if page == 'hosts' %}aria-current="page"{% endif %} href="/">Hosts</a></li>
+      <li class="nav-item"><a class="nav-link{{ ' active' if page == 'remotes' }}" {% if page == 'remotes' %}aria-current="page"{% endif %} href="/remotes/new">Add a system</a></li>
       {% endif %}
       {% if not hub or base %}
-      {% for key, href, label in [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('packages', '/packages', 'Packages'), ('vulnerabilities', '/vulnerabilities', 'Vulnerabilities'), ('fail2ban', '/fail2ban', 'fail2ban'), ('report', '/report', 'Report')] %}
+      {% if host and host.kind == 'unraid' %}
+      {% set sections = [('overview', '/', 'Overview'), ('disks', '/disks', 'Array & disks'), ('containers', '/containers', 'Containers'), ('vms', '/vms', 'VMs'), ('notifications', '/notifications', 'Notifications'), ('report', '/report', 'Report')] %}
+      {% else %}
+      {% set sections = [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('packages', '/packages', 'Packages'), ('vulnerabilities', '/vulnerabilities', 'Vulnerabilities'), ('fail2ban', '/fail2ban', 'fail2ban'), ('report', '/report', 'Report')] %}
+      {% endif %}
+      {% for key, href, label in sections %}
       {% if key != 'vulnerabilities' or hub %}
       <li class="nav-item"><a class="nav-link{{ ' active' if page == key }}" {% if page == key %}aria-current="page"{% endif %} href="{{ base }}{{ href }}">{{ label }}</a></li>
       {% endif %}

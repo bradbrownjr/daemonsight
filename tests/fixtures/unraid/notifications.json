@@ -1,0 +1,114 @@
+{
+ "data": {
+  "notifications": {
+   "overview": {
+    "unread": {
+     "info": 574,
+     "warning": 186,
+     "alert": 49,
+     "total": 809
+    }
+   },
+   "warningsAndAlerts": [
+    {
+     "id": "deadbeef:Example_notice_1_1700000001.notify",
+     "title": "Example notice 1",
+     "subject": "Warnings have been found with your server.(tower-test)",
+     "importance": "WARNING",
+     "timestamp": "2026-11-01T09:21:00.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_2_1700000002.notify",
+     "title": "Example notice 2",
+     "subject": "Warning [tower-test] - Disk 4 is hot (115  F)",
+     "importance": "WARNING",
+     "timestamp": "2026-10-06T00:57:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_3_1700000003.notify",
+     "title": "Example notice 3",
+     "subject": "Notice [tower-test] - Parity check finished (0 errors)",
+     "importance": "WARNING",
+     "timestamp": "2026-10-01T13:39:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_4_1700000004.notify",
+     "title": "Example notice 4",
+     "subject": "[tower-test] Unclean shutdown detected",
+     "importance": "ALERT",
+     "timestamp": "2026-10-01T13:37:32.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_5_1700000005.notify",
+     "title": "Example notice 5",
+     "subject": "Errors have been found with your server (tower-test).",
+     "importance": "ALERT",
+     "timestamp": "2026-10-01T08:21:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_6_1700000006.notify",
+     "title": "Example notice 6",
+     "subject": "Warning [tower-test] - Disk 3 is hot (115  F)",
+     "importance": "WARNING",
+     "timestamp": "2026-08-03T18:52:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_7_1700000007.notify",
+     "title": "Example notice 7",
+     "subject": "Notice [tower-test] - Parity-Check started",
+     "importance": "WARNING",
+     "timestamp": "2026-08-03T14:59:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_8_1700000008.notify",
+     "title": "Example notice 8",
+     "subject": "Notice [tower-test] - Data-Rebuild started",
+     "importance": "WARNING",
+     "timestamp": "2026-07-20T14:26:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_9_1700000009.notify",
+     "title": "Example notice 9",
+     "subject": "[tower-test] Automatic Correcting Parity-Check canceled (0 errors)",
+     "importance": "ALERT",
+     "timestamp": "2026-07-06T01:00:08.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_10_1700000010.notify",
+     "title": "Example notice 10",
+     "subject": "Alert [tower-test] - Disk 5 is low on space (99%)",
+     "importance": "ALERT",
+     "timestamp": "2026-07-04T03:41:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_11_1700000011.notify",
+     "title": "Example notice 11",
+     "subject": "[tower-test] Automatic Correcting Parity-Check finished (2 errors)",
+     "importance": "ALERT",
+     "timestamp": "2026-06-20T09:24:06.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_12_1700000012.notify",
+     "title": "Example notice 12",
+     "subject": "Notice [tower-test] - Parity check finished (0 errors)",
+     "importance": "WARNING",
+     "timestamp": "2026-06-20T09:20:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_13_1700000013.notify",
+     "title": "Example notice 13",
+     "subject": "Alert [tower-test] - Disk 3 is low on space (98%)",
+     "importance": "ALERT",
+     "timestamp": "2026-05-26T19:42:01.000Z"
+    },
+    {
+     "id": "deadbeef:Example_notice_14_1700000014.notify",
+     "title": "Example notice 14",
+     "subject": "Alert [tower-test] - Disk 3 is low on space (97%)",
+     "importance": "ALERT",
+     "timestamp": "2026-05-26T17:38:01.000Z"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,98 @@
+{
+ "data": {
+  "vars": {
+   "name": "tower-test",
+   "version": "7.3.2"
+  },
+  "array": {
+   "state": "STARTED",
+   "parities": [
+    {
+     "name": "parity"
+    }
+   ],
+   "disks": [
+    {
+     "name": "disk1"
+    },
+    {
+     "name": "disk2"
+    },
+    {
+     "name": "disk3"
+    },
+    {
+     "name": "disk4"
+    },
+    {
+     "name": "disk5"
+    }
+   ],
+   "caches": []
+  },
+  "docker": {
+   "containers": [
+    {
+     "names": [
+      "/app-1"
+     ]
+    },
+    {
+     "names": [
+      "/app-2"
+     ]
+    },
+    {
+     "names": [
+      "/app-3"
+     ]
+    },
+    {
+     "names": [
+      "/app-4"
+     ]
+    },
+    {
+     "names": [
+      "/app-5"
+     ]
+    },
+    {
+     "names": [
+      "/app-6"
+     ]
+    },
+    {
+     "names": [
+      "/app-7"
+     ]
+    },
+    {
+     "names": [
+      "/app-8"
+     ]
+    },
+    {
+     "names": [
+      "/app-9"
+     ]
+    },
+    {
+     "names": [
+      "/app-10"
+     ]
+    },
+    {
+     "names": [
+      "/app-11"
+     ]
+    },
+    {
+     "names": [
+      "/app-12"
+     ]
+    }
+   ]
+  }
+ }
+}

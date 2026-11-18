@@ -106,6 +106,14 @@ class CveConfig:
 
 
 @dataclass
+class RemoteConfig:
+    """On the hub: read systems that have no collector (Unraid) over their
+    own API. The systems are added in the web UI (Hosts, Add a system); this
+    only switches the polling on or off."""
+    enabled: bool = True
+
+
+@dataclass
 class RetentionConfig:
     """How long the database keeps history: on a host its collector prunes,
     on a hub the hub prunes every host's rows. 0 keeps for good."""
@@ -138,6 +146,8 @@ class Config:
     # off or asleep). A workstation that stops uploading is "Offline", a low
     # finding, not a high "Not reporting". Anything else counts as "server".
     role: str = "server"
+    # Set by the hub for a system it reads over an API ("unraid"); not a config key.
+    kind: str = ""
     data_dir: str = "/var/lib/daemonsight"
     # Also write the collector's and web UI's log lines to this file, kept
     # to four files of 5 MB. On a host the journal already has them; the hub
@@ -150,6 +160,7 @@ class Config:
     upload: UploadConfig = field(default_factory=UploadConfig)
     hub: HubConfig = field(default_factory=HubConfig)
     cve: CveConfig = field(default_factory=CveConfig)
+    remote: RemoteConfig = field(default_factory=RemoteConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
     # Web UIs to link from each source's panel, e.g. {caddy = "https://...",

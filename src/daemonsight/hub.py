@@ -26,8 +26,10 @@ from .findings import Finding
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 log = logging.getLogger("daemonsight.hub")
 # Rules the hub opens and closes itself; a collector can't send these, and an
-# upload never closes them: host.* (silence, clock) and cve.* (CVE matching).
-HUB_RULES = ("host.", "cve.")
+# upload never closes them: host.* (silence, clock), cve.* (CVE matching),
+# remote.* (a system the hub reads over its API is unreachable) and unraid.*
+# (what the hub reads from an Unraid server).
+HUB_RULES = ("host.", "cve.", "remote.", "unraid.")
 # The package list is not a snapshot source: see InventoryIn.
 INVENTORY = "inventory"
 SOURCES = ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall", "packages")
@@ -133,7 +135,7 @@ class FindingIn(_Model):
     @classmethod
     def _not_hub_rule(cls, v: str) -> str:
         if v.startswith(HUB_RULES):
-            raise ValueError("host.* and cve.* findings belong to the hub")
+            raise ValueError("host.*, cve.*, remote.* and unraid.* findings belong to the hub")
         return v
 
 
@@ -275,7 +277,13 @@ def add_host(conn, host_id: str) -> str:
     return token
 
 
-def revoke_host(conn, host_id: str, purge: bool = False) -> bool:
+def revoke_host(conn, host_id: str, purge: bool = False, data_dir=None) -> bool:
+    """Stop accepting a host. A system the hub reads over its API is removed
+    whole instead (its remotes row and key file too); `purge` decides whether
+    its history goes."""
+    from .remote import store as remote_store
+    if remote_store.get(conn, host_id) is not None:
+        return remote_store.remove(conn, data_dir, host_id, purge=purge)
     gone = conn.execute("DELETE FROM hosts WHERE id = ?", (host_id,)).rowcount > 0
     if purge:
         for table in ("snapshots", "metrics", "findings", "events", "accepted"):
@@ -288,7 +296,7 @@ def host_for_token(conn, token: str):
     hash, which says nothing useful about the token itself."""
     if not token or len(token) > 200:
         return None
-    return conn.execute("SELECT * FROM hosts WHERE token_hash = ?", (hash_token(token),)).fetchone()
+    return conn.execute("SELECT * FROM hosts WHERE token_hash = ? AND kind IS NULL", (hash_token(token),)).fetchone()
 
 
 # --- reading an upload ------------------------------------------------------
@@ -405,7 +413,7 @@ def hub_revision() -> str | None:
 def request_update(conn, host_id: str, target: str, now: float) -> bool:
     if not REV_RE.match(target or ""):
         raise ValueError(f"not a commit: {target!r}")
-    cur = conn.execute("UPDATE hosts SET update_to=?, update_asked=? WHERE id=?", (target, now, host_id))
+    cur = conn.execute("UPDATE hosts SET update_to=?, update_asked=? WHERE id=? AND kind IS NULL", (target, now, host_id))
     return cur.rowcount == 1
 
 
@@ -416,7 +424,7 @@ def cancel_update(conn, host_id: str) -> bool:
 
 def behind(row, target: str | None) -> bool:
     """A host that has reported, accepts updates, and runs another commit."""
-    return bool(target) and row["last_seen"] is not None and row["remote_update"] != 0 \
+    return bool(target) and row["kind"] is None and row["last_seen"] is not None and row["remote_update"] != 0 \
         and not same_rev(revision(row["version"]), target)
 
 
@@ -472,7 +480,7 @@ def host_role(conn, host: str) -> str:
 def check_silent(conn, now: float, default_interval: float = 60) -> None:
     """Open host.silent for every host that has missed three of its longest
     intervals, or never reported within ten minutes of being added."""
-    for h in conn.execute("SELECT * FROM hosts").fetchall():
+    for h in conn.execute("SELECT * FROM hosts WHERE kind IS NULL").fetchall():
         limit = SILENT_AFTER_INTERVALS * (h["max_interval"] or default_interval)
         if h["last_seen"] is None:
             if now - h["created_at"] > 600:

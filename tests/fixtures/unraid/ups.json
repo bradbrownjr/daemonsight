@@ -1,0 +1,20 @@
+{
+ "data": {
+  "upsDevices": [
+   {
+    "id": "Smart-Battery",
+    "name": "Smart-Battery",
+    "model": "Smart-Battery",
+    "status": "ONLINE",
+    "battery": {
+     "chargeLevel": 100,
+     "estimatedRuntime": 4140,
+     "health": "Good"
+    },
+    "power": {
+     "loadPercentage": 25
+    }
+   }
+  ]
+ }
+}

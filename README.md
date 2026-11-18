@@ -27,6 +27,15 @@ the row they are about, and a port's panel shows the process behind it.
   and a Vulnerabilities page with the CVEs behind it. Debian and Raspberry Pi
   OS hosts get the full list; Fedora hosts report their pending security
   advisories. Ubuntu is next. Hosts download nothing and run no scanner.
+- **Unraid, read over its API.** The hub polls an Unraid server with a
+  Viewer-only API key, with no agent on the server. Add it on the Hosts page
+  ("Add a system"): Test connection shows the server, version, array state
+  and the key's roles, and a key that could change anything is refused. The
+  server gets its own pages (array and disks, containers, VMs, notifications)
+  and findings for full or hot disks, disk errors, a stopped array, an old
+  parity check, container updates, unread alerts and the UPS. Certificates
+  are verified, or you pin one after confirming its fingerprint. See
+  [SECURITY.md](SECURITY.md).
 - **Automatic updates.** The Packages page shows whether unattended-upgrades
   (apt) or dnf5-automatic (Fedora) will install security updates, and a
   low finding says how to turn it on.
@@ -49,8 +58,7 @@ the row they are about, and a port's panel shows the process behind it.
   scheduled backups and `daemonsight restore` cover the database, config and
   secrets.
 
-Remote sources (OPNsense and Unraid APIs), log collection and alerts are
-planned. See [docs/DESIGN.md](docs/DESIGN.md).
+The OPNsense API, log collection and alerts are planned. See [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Install
 

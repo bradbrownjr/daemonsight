@@ -244,12 +244,14 @@ def cmd_hub(args, cfg) -> int:
             print("No hosts. Add one: daemonsight hub add-host <name>")
         for h in rows:
             seen = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(h["last_seen"])) if h["last_seen"] else "never"
-            print(f"{h['id']:<24} last upload {seen:<20} {h['address'] or '':<40} {h['version'] or ''}")
+            what = "last poll  " if h["kind"] else "last upload"
+            where = f"{h['kind']} (API)" if h["kind"] else (h["address"] or "")
+            print(f"{h['id']:<24} {what} {seen:<20} {where:<40} {h['version'] or ''}")
     elif args.hub_command == "revoke":
-        if not hub.revoke_host(conn, args.name, purge=args.purge):
+        if not hub.revoke_host(conn, args.name, purge=args.purge, data_dir=cfg.data_dir):
             print(f"No host named {args.name}.", file=sys.stderr)
             return 1
-        print(f"Revoked {args.name}: its token no longer works." +
+        print(f"Revoked {args.name}: its token or API key no longer works." +
               (" Its data is deleted." if args.purge else " Its data stays until you run this with --purge."))
     return 0
 

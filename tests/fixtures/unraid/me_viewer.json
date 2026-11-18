@@ -1,0 +1,11 @@
+{
+ "data": {
+  "me": {
+   "name": "viewer-key",
+   "roles": [
+    "VIEWER"
+   ],
+   "permissions": []
+  }
+ }
+}

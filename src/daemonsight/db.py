@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from .findings import fingerprint
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -109,7 +109,27 @@ CREATE TABLE IF NOT EXISTS hosts (
     update_to    TEXT,      -- commit the hub asked this host to install
     update_asked REAL,
     update_state TEXT,      -- JSON: the host's last update result
-    remote_update INTEGER   -- 0 when the host turned hub updates off
+    remote_update INTEGER,  -- 0 when the host turned hub updates off
+    kind         TEXT       -- NULL: a collector uploads for it. "unraid": the hub reads it over its API (see remotes)
+);
+
+-- Hub: systems the hub reads over their own API (no collector). One row per
+-- system, with the same id as its hosts row. The API key is not here: it is
+-- a file under <data_dir>/remotes/ (see remote/store.py).
+CREATE TABLE IF NOT EXISTS remotes (
+    id         TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    tls        TEXT NOT NULL DEFAULT 'verify',   -- 'verify' (CA store) or 'pin' (one certificate)
+    tls_pin    TEXT,                             -- SHA-256 of the pinned certificate (DER), hex
+    tls_cert   TEXT,                             -- the pinned certificate, PEM (public)
+    interval   INTEGER NOT NULL DEFAULT 60,      -- seconds between polls
+    created_at REAL NOT NULL,
+    last_poll  REAL,                             -- last attempt
+    last_ok    REAL,                             -- last attempt that worked
+    last_error TEXT,
+    fails      INTEGER NOT NULL DEFAULT 0        -- polls in a row that failed
 );
 """
 
@@ -165,9 +185,10 @@ def migrate(conn: sqlite3.Connection) -> None:
         # Version 2 hosts rows have no update columns.
         have = {r[1] for r in conn.execute("PRAGMA table_info(hosts)")}
         for col, kind in (("update_to", "TEXT"), ("update_asked", "REAL"), ("update_state", "TEXT"),
-                          ("remote_update", "INTEGER")):
+                          ("remote_update", "INTEGER"), ("kind", "TEXT")):
             if col not in have:
                 conn.execute(f"ALTER TABLE hosts ADD COLUMN {col} {kind}")
+        # Version 4 databases have no remotes table (the script above created it) and no hosts.kind.
         # Version 3 findings have no fix or basis; old rows keep NULL until the next run rewrites them.
         have = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
         for col in ("fix", "basis"):

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Virtual machines · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · Unraid GraphQL API: VMs</div>
+  <h1 class="page-title">Virtual machines</h1>
+</div>
+{% include "partials/unraid_vms.html" %}
+{% endblock %}
