@@ -152,7 +152,7 @@ def finding_item(r: dict) -> dict:
     acc = r["accepted"]
     item = {"id": rules.anchor("finding", r["rule"], r["key"]), "rule": r["rule"], "key": r["key"],
             "severity": r["severity"], "title": r["title"], "detail": r["detail"], "link": r["link"],
-            "fix": r["fix"], "step": rules.step_of(r["rule"]) if r["fix"] else None,
+            "fix": r["fix"], "step": rules.step_of(r["rule"], r["key"]) if r["fix"] else None,
             "label": label, "badge": cls, "since": fmt_ago(r["first_seen"]),
             "src": prov.finding(r["rule"], r["link"]), "accepted": None, "changed_note": None}
     if acc:

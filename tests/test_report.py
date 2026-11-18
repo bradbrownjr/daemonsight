@@ -103,6 +103,17 @@ def cve_row(cve, state="fix", source="openssl", kev=False):
             "epss": 0.0, "pctile": 0.0, "kev": kev, "kev_name": None, "ransomware": None, "descr": ""}
 
 
+def test_kernel_cves_join_the_reboot_step():
+    k = [cve_row("CVE-2026-0009", source="linux")]
+    bins = {"linux": ["linux-image-6.1.0-53-cloud-amd64"]}
+    waiting = match.package_findings(k, bins, set(), 0.5, reboot_pending=True)[0]
+    assert waiting.fix == "sudo reboot" and "Running kernel" in waiting.detail
+    assert findings.step_of(waiting.rule, waiting.key) == "reboot"
+    behind = match.package_findings(k, bins, {"linux-image-6.1.0-53-cloud-amd64"}, 0.5)[0]
+    assert behind.fix == "sudo apt upgrade\nsudo reboot"
+    assert findings.step_of("cve.package", "openssl") == "upgrade"
+
+
 def test_cve_package_fix_and_basis():
     one = match.package_findings([cve_row("CVE-2026-0001")], {"openssl": ["libssl3"]}, {"libssl3"}, 0.5)[0]
     two = match.package_findings([cve_row("CVE-2026-0001"), cve_row("CVE-2026-0002")],

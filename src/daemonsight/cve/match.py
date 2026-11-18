@@ -184,7 +184,7 @@ def _describe(c: dict) -> str:
 
 
 def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: set[str],
-                     epss_high: float, backend: str = "apt") -> list[Finding]:
+                     epss_high: float, backend: str = "apt", reboot_pending: bool = False) -> list[Finding]:
     """One finding per source package: High if any open or fixable CVE is on
     CISA's KEV list or has an EPSS score at or above `epss_high`, Medium if a
     fix is available, otherwise none."""
@@ -221,8 +221,17 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
             if backend == "dnf":
                 parts.append("Fedora has security advisories for it. Install the update.")
                 fix = upgrade_cmd({"backend": "dnf"})
+            elif src == "linux" and reboot_pending:
+                # The inventory lists the running kernel, and a newer one is
+                # installed (pkg.reboot is open): the reboot is what applies it.
+                parts.append(f"Running kernel {installed}; fixed in {fv}. A newer kernel is installed: reboot "
+                             "to run it. If this stays after the reboot, that kernel doesn't have the fix yet; "
+                             "install the update.")
+                fix = "sudo reboot"
             else:
-                parts.append(f"Installed {installed}; fixed in {fv}. Install the update.")
+                kernel = src == "linux"
+                parts.append(f"{'Running kernel' if kernel else 'Installed'} {installed}; fixed in {fv}. "
+                             f"Install the update{', then reboot to run it' if kernel else ''}.")
                 fix = upgrade_cmd(None)
                 if names or src:
                     listed = pending & ({src} | set(names))
@@ -231,6 +240,8 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
                                  "check the host's apt sources include the security archive.")
                     if not listed:
                         fix = "sudo apt update\n" + fix
+                if src == "linux":
+                    fix += "\nsudo reboot"
         unfixed = [c for c in items if c["state"] == "nofix"]
         top = ", ".join(_describe(c) for c in items[:TOP_CVES])
         parts.append(f"Top CVEs: {top}" + (f" and {len(items) - TOP_CVES} more." if len(items) > TOP_CVES else "."))

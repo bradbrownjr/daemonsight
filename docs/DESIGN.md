@@ -140,7 +140,7 @@ the card for its step; with no `fix` it is listed as a decision.
 | `pkg.security_updates` | `apt upgrade` or `dnf upgrade --refresh` | upgrade | The set of package names. A new one brings it back. |
 | `pkg.updates` | same | upgrade | Constant. Accepting it means "regular updates may wait here". |
 | `pkg.lists_stale` | `apt update`, only when the finding itself advises it (the Update-Package-Lists case) | upgrade | Constant (the age drifts). |
-| `cve.package` | the upgrade command when a fix exists; apt adds `apt update` first when apt isn't offering it yet. None when no fix exists | upgrade | The set of CVE ids. A new CVE brings it back. |
+| `cve.package` | the upgrade command when a fix exists; apt adds `apt update` first when apt isn't offering it yet. None when no fix exists. For the kernel (`linux`): `sudo reboot` when a newer kernel is already installed (`pkg.reboot` is open), otherwise the upgrade followed by `sudo reboot` | upgrade; reboot for the kernel | The set of CVE ids. A new CVE brings it back. |
 | `pkg.restart` | `needrestart -r a` (apt) or `systemctl restart` with the listed services (dnf) | restart | The set of service names. |
 | `pkg.reboot` | `sudo reboot` | reboot | The newer kernel version, if any. |
 | `pkg.auto_updates_off` | The install or enable commands for the host's system. None when the fix is a config edit | auto-updates | The title. |

@@ -65,7 +65,10 @@ STEP_OF = {
 }
 
 
-def step_of(rule: str) -> str | None:
+def step_of(rule: str, key: str | None = None) -> str | None:
+    # A kernel fix only applies after a reboot, so kernel CVEs join that step.
+    if rule == "cve.package" and key == "linux":
+        return "reboot"
     return STEP_OF.get(rule)
 
 

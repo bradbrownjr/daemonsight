@@ -44,6 +44,12 @@ def _pending_names(conn, host: str) -> set[str]:
     return {u["name"] for u in ups if isinstance(u, dict) and u.get("name")}
 
 
+def _reboot_pending(conn, host: str) -> bool:
+    """A newer kernel is installed and waits for a reboot (pkg.reboot is open)."""
+    return conn.execute("SELECT 1 FROM findings WHERE host = ? AND rule = 'pkg.reboot' AND resolved_at IS NULL",
+                        (host,)).fetchone() is not None
+
+
 def _set_cve_findings(conn, host: str, now: float, current: list[Finding], rules_prefix: str) -> None:
     """Make the host's open findings under one rule prefix match `current`,
     logging an event for each one that opens or clears."""
@@ -145,14 +151,16 @@ class Chore:
         packages: dict[str, list[Finding]] = {}
         if self.dirty:
             packages = await asyncio.to_thread(self._package_findings, invs,
-                                               {h: _pending_names(self.state, h) for h in invs})
+                                               {h: _pending_names(self.state, h) for h in invs},
+                                               {h for h in invs if _reboot_pending(self.state, h)})
         for host in invs:
             if self.dirty:
                 _set_cve_findings(self.state, host, now, packages.get(host, []), "cve.package")
             db.set_finding(self.state, host, now, stale_f, rule="cve.feed_stale", key="feeds")
         self.dirty = False
 
-    def _package_findings(self, invs: dict[str, dict], pending: dict[str, set[str]]) -> dict[str, list[Finding]]:
+    def _package_findings(self, invs: dict[str, dict], pending: dict[str, set[str]],
+                          rebooting: set[str] = frozenset()) -> dict[str, list[Finding]]:
         conn = self.factory()
         out = {}
         try:
@@ -160,7 +168,7 @@ class Chore:
                 bins = {s: b for s, _v, b in inv.get("sources", [])}
                 out[host] = match.package_findings(
                     match.host_cves(conn, host, ("fix", "nofix")), bins, pending.get(host, set()),
-                    self.cfg.cve.epss_high, inv.get("backend", "apt"))
+                    self.cfg.cve.epss_high, inv.get("backend", "apt"), host in rebooting)
         finally:
             conn.close()
         return out
