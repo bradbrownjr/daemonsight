@@ -8,8 +8,10 @@ marked resolved. Rule names and severities follow docs/DESIGN.md.
 from __future__ import annotations
 
 import re
+from datetime import date
 from dataclasses import dataclass
 
+from . import distro
 from .config import Config
 
 
@@ -500,11 +502,58 @@ def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
                     "here may be missing newer ones.", "/packages#lists")]
 
 
+# ---- OS support -------------------------------------------------------------
+
+SOON_DAYS = 180
+
+
+def system_support(data: dict | None, today: date | None = None) -> distro.Support:
+    return distro.evaluate(data or {}, today)
+
+
+def _upgrade(sup: distro.Support) -> str:
+    if not sup.current_version or sup.current_version == sup.version:
+        return ""
+    return f" Upgrading to {sup.current}, the current release, gets full support."
+
+
+def os_lts(snaps, cfg, ctx) -> list[Finding]:
+    sup = system_support(_data(snaps, "system"), ctx.get("today"))
+    if sup.status != "extended" or not sup.until:
+        return []
+    today = ctx.get("today") or date.today()
+    soon = (sup.until - today).days <= SOON_DAYS
+    if sup.distro == "debian":
+        what, label = "LTS", "LTS"
+        detail = (f"Regular security support ended {sup.eol.isoformat()}. LTS covers fewer packages; "
+                  f"see {distro.LTS_URL}.")
+    else:
+        what, label = "ESM", "ESM"
+        detail = (f"Standard support ended {sup.eol.isoformat()}. Security updates now come only through "
+                  f"ESM, part of Ubuntu Pro.")
+    return [Finding("os.lts", "os", "medium" if soon else "low",
+                    f"{sup.name} is on {label} until {sup.until.isoformat()}",
+                    detail + _upgrade(sup), "/#os")]
+
+
+def os_eol(snaps, cfg, ctx) -> list[Finding]:
+    sup = system_support(_data(snaps, "system"), ctx.get("today"))
+    if sup.status not in ("ended", "eol"):
+        return []
+    if sup.status == "ended":
+        detail = (f"Free security support ended {sup.until.isoformat()}. Only paid ELTS covers "
+                  f"{sup.name} now.")
+    else:
+        detail = f"Security support for {sup.name} has ended."
+    return [Finding("os.eol", "os", "high", f"{sup.name} no longer gets security updates",
+                    detail + _upgrade(sup), "/#os")]
+
+
 RULES = [svc_failed, ctr_down, expose_docker_bypass, sys_disk, sys_memory, source_errors,
          expose_unexpected, expose_forward_all, firewall_default_accept, firewall_duplicates,
          route_upstream_down, route_upstream_failing, jail_uncovered,
          jail_log_missing, caddy_admin_tcp, pkg_security_updates, pkg_updates, pkg_reboot,
-         pkg_restart, pkg_lists_stale]
+         pkg_restart, pkg_lists_stale, os_lts, os_eol]
 
 
 def evaluate(snaps: dict, cfg: Config, ctx: dict | None = None) -> list[Finding]:

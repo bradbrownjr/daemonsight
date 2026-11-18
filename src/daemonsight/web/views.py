@@ -6,7 +6,7 @@ import json
 import time
 from dataclasses import replace
 
-from .. import db, findings as rules, hub
+from .. import db, distro, findings as rules, hub
 from ..collector.sources.caddy import is_local
 from . import provenance as prov
 from ..config import Config, ExposureConfig
@@ -102,6 +102,13 @@ def sparkline(points: list[tuple[float, float]], width: int = 200, height: int =
 
 # --- view models -----------------------------------------------------------
 
+def _support(data: dict | None) -> dict:
+    """The OS support status for templates; "label" is empty when unknown."""
+    sup = rules.system_support(data)
+    return {"status": sup.status, "label": sup.label, "plain": sup.plain,
+            "badge": distro.STATUS_BADGE.get(sup.status, "bg-secondary-lt")}
+
+
 def _host(cfg: Config, snaps: dict) -> dict:
     system = snaps.get("system")
     data = system.data if system and system.data else {}
@@ -112,6 +119,7 @@ def _host(cfg: Config, snaps: dict) -> dict:
         "os": data.get("os"),
         "kernel": data.get("kernel"),
         "virt": data.get("virt"),
+        "support": _support(data),
         "uptime": fmt_duration(time.time() - data["boot_time"]) if data.get("boot_time") else None,
         "collected_ago": fmt_ago(system.taken_at) if system else "never",
         "fresh": age is not None and age < stale_after,
@@ -172,6 +180,15 @@ def overview(conn, cfg: Config) -> dict:
         }
 
     glance = []
+    if sysd and sysd.get("os"):
+        sup = _support(sysd)
+        shown = sup["label"] and not sup["plain"]
+        # Red only once the release gets no free security updates; LTS/ESM is a note.
+        red = shown and sup["status"] in ("ended", "eol")
+        note = " · ".join(x for x in (f"Kernel {sysd['kernel']}" if sysd.get("kernel") else "",
+                                       sup["label"] if sup["label"] and not red else "") if x)
+        glance.append({"id": "os", "title": "Operating system", "value": sysd["os"],
+                       "alert": sup["label"] if red else None, "note": note or None})
     sd = snaps.get("systemd")
     if sd and sd.data and sd.data.get("units") is not None:
         counts = sd.data["counts"]
@@ -619,6 +636,8 @@ def hosts_list(conn, cfg: Config) -> dict:
         counts.setdefault(r["host"], {})[r["severity"]] = r["n"]
     silent = {r["host"] for r in conn.execute(
         "SELECT host FROM findings WHERE rule = 'host.silent' AND resolved_at IS NULL")}
+    reboot = {r["host"] for r in conn.execute(
+        "SELECT host FROM findings WHERE rule = 'pkg.reboot' AND resolved_at IS NULL")}
     target = hub.hub_revision()
     rows = []
     for h in conn.execute("SELECT * FROM hosts ORDER BY id"):
@@ -636,6 +655,9 @@ def hosts_list(conn, cfg: Config) -> dict:
             "seen": fmt_ago(h["last_seen"]) if h["last_seen"] else "never",
             "seen_v": h["last_seen"] or 0,
             "os": data.get("os") or "",
+            "kernel": data.get("kernel") or "",
+            "support": _support(data),
+            "reboot": h["id"] in reboot,
             "uptime": fmt_duration(now - data["boot_time"]) if data.get("boot_time") else "",
             "version": h["version"] or "",
             "address": h["address"] or "",

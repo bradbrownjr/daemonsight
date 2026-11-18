@@ -32,6 +32,7 @@
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     <div class="ds-collapsible ds-account ms-auto d-flex align-items-center gap-3">
+      {% if host %}<div class="ds-menu-host text-secondary small w-100">{{ host.os or '' }}{% if host.support.label and not host.support.plain %} · <span class="badge {{ host.support.badge }}">{{ host.support.label }}</span>{% endif %}{% if host.kernel %} · kernel {{ host.kernel }}{% endif %}{% if host.uptime %} · up {{ host.uptime }}{% endif %}</div>{% endif %}
       {% if host %}<span class="text-secondary">{{ 'Collected ' ~ host.collected_ago if host.fresh else 'Collector not reporting · last ' ~ host.collected_ago }}</span>{% endif %}
       <form method="post" action="/theme" class="m-0">
         <input type="hidden" name="next" value="{{ path }}">

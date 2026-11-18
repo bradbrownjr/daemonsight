@@ -273,7 +273,7 @@ PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/se
              "/fail2ban": "fail2ban", "/packages": "Packages"}
 
 RULE_SOURCE = {"svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
-               "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "collector": "events"}
+               "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "os": "system", "collector": "events"}
 
 
 def finding(rule: str, link_href: str | None) -> dict:

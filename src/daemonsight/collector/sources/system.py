@@ -9,6 +9,7 @@ import time
 
 import psutil
 
+from ... import distro
 from . import Source
 
 # Filesystems that hold real data. Everything else (tmpfs, overlay, squashfs
@@ -17,15 +18,16 @@ REAL_FS = {"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "jfs", "reiser
 SKIP_NICS_PREFIX = ("lo", "veth", "docker", "br-", "virbr")
 
 
-def os_name() -> str:
+def read_os_release() -> dict[str, str]:
     try:
         with open("/etc/os-release") as fh:
-            for line in fh:
-                if line.startswith("PRETTY_NAME="):
-                    return line.split("=", 1)[1].strip().strip('"')
+            return distro.parse_os_release(fh.read())
     except OSError:
-        pass
-    return platform.system()
+        return {}
+
+
+def os_name() -> str:
+    return read_os_release().get("PRETTY_NAME") or platform.system()
 
 
 async def detect_virt() -> str | None:
@@ -93,8 +95,10 @@ class SystemSource(Source):
         self._last_net = (now, counters)
 
         load = os.getloadavg()
+        osr = read_os_release()
         return {
-            "os": os_name(),
+            "os": osr.get("PRETTY_NAME") or platform.system(),
+            **distro.os_ident(osr),
             "kernel": platform.release(),
             "virt": self._virt,
             "boot_time": psutil.boot_time(),

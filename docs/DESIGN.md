@@ -58,6 +58,7 @@ capabilities each source needs is listed under "To verify".
 | Area | Source | Interval | Notes |
 |------|--------|----------|-------|
 | CPU, memory, disk, network | psutil: `cpu_percent`, `virtual_memory`, `disk_usage`, `net_io_counters(pernic=True)` | 15 s | Kept as time series. |
+| Operating system | `/etc/os-release`: `PRETTY_NAME`, `ID`, `ID_LIKE`, `VERSION_ID`, `VERSION_CODENAME`; `platform.release()` for the kernel; release dates from the distro-info-data CSVs | 15 s (with the system snapshot) | The snapshot carries `os`, `os_id`, `os_like`, `version_id`, `version_codename` and `kernel`. Only Debian and Ubuntu are judged; Raspberry Pi OS (`raspbian`) is looked up as Debian by codename. Any other ID has no support status and raises no finding. `/usr/share/distro-info/<distro>.csv` is read first when it has the release (it is newer where the `distro-info-data` package is installed); otherwise the copy bundled in `src/daemonsight/data/distro-info/` is used (ISC licence, see its README). Dates are judged against today when a finding is evaluated. [14] |
 | systemd services | D-Bus `org.freedesktop.systemd1.Manager.ListUnits`; per unit `ActiveState`, `SubState`, `ActiveEnterTimestamp`; per service `NRestarts`, `MemoryCurrent`, `CPUUsageNSec` | 30 s | systemd docs: read access is granted to all clients, so this source needs no privilege. [1] |
 | Listening ports | `psutil.net_connections()` (fd, family, type, laddr, raddr, status, pid), or `/proc/net/{tcp,tcp6,udp,udp6}` plus socket inodes | 60 s | PID → owner via `/proc/<pid>/cgroup`: a systemd unit, or `docker-<id>.scope` for a container. Per process it also records the command line (secrets masked, cut to 400 characters), the executable, the user and the start time. [2] |
 | Docker | Engine API on `/var/run/docker.sock`: container list, inspect (`State.Health`, `State.OOMKilled`, port bindings), logs, one-shot stats | 30 s | The client sends GET only. A socket proxy is needed only if the collector itself runs in a container; Tecnativa's blocks POST by default. [3] |
@@ -98,11 +99,19 @@ DaemonSight knows when it first appeared and when it cleared.
 | `pkg.lists_stale` | The package lists are over 3 days old | Low |
 | `cve.fixable_exposed` | A fixable CVE sits in a package or image whose process owns a public listener or Caddy upstream | The CVE's severity, raised one level |
 | `cve.fixable` | Any other fixable CVE | The CVE's severity |
+| `os.lts` | A Debian release is past regular support and inside LTS, or an Ubuntu release is past standard support and inside ESM | Low; Medium within 180 days of the end of LTS or ESM |
+| `os.eol` | A Debian release is past LTS (paid ELTS only, or nothing), or an Ubuntu release is past ESM | High |
 | `svc.failed` | A unit is in `failed` | High |
 | `ctr.down` | A container exited non-zero, is unhealthy, or was OOM-killed | High |
 | `caddy.admin_tcp` | The admin API listens on TCP instead of a Unix socket | Low |
 | `tls.expiring` | A served certificate expires within 14 days (phase 4) | High |
 | `sys.disk` / `sys.memory` | Above 90% for 15 minutes | Medium |
+
+`os.lts` and `os.eol` link to the "Operating system" entry under "At a glance"
+on Overview (`/#os`). Both name the current release (Debian's newest stable,
+Ubuntu's newest LTS) as the upgrade target. The status text is one of
+"Supported", "LTS until <date>", "ESM only (Ubuntu Pro) until <date>", "No free
+security updates (ELTS only, paid) since <date>" or "End of life".
 
 A restart is a moment, not a state, so restarts of units and containers are
 recorded as events under "Recent changes" rather than as findings. So are new
@@ -165,7 +174,19 @@ attributes (`data-bs-theme`, `data-bs-theme-base`, `data-bs-theme-primary`), so
 there is no custom CSS to maintain.
 
 Pages: Overview, Exposure, Caddy routes, Services and containers, fail2ban, Packages.
-On a hub, Hosts is the front page. Vulnerabilities comes with phase 3.
+On a hub, Hosts is the front page.
+
+Hosts page: a host with an open `pkg.reboot` finding shows a "Reboot needed"
+badge in its State cell, linking to that host's Packages page
+(`/h/<host>/packages#reboot`). The System cell shows the OS, the running kernel
+and the uptime; a support status other than "Supported" (such as "LTS until
+2028-06-30") shows as a badge beside the OS. On Overview, "At a glance" lists
+the OS with its support status.
+
+Phone menu: the header chip on a phone shows only the status dot and host name.
+The top of the menu panel holds one line with the OS, its support status when it
+is not plain "Supported", the kernel and the uptime. It appears on host pages
+only, never on the hub's Hosts page. The desktop header is unchanged. Vulnerabilities comes with phase 3.
 
 Row links: a finding links to the row it is about, such as an Exposure port,
 a Caddy site, a forward or a jail (the row's `id` is built by
@@ -593,3 +614,4 @@ to the lines behind them.
 11. Wazuh architecture: https://documentation.wazuh.com/current/getting-started/architecture.html
 12. apt-get(8) (`-s` simulation, `Debug::NoLocking`), Debian 13: https://manpages.debian.org/trixie/apt/apt-get.8.en.html
 13. needrestart(1) and batch mode output: https://github.com/liske/needrestart (man/needrestart.1, README.batch.md)
+14. distro-info-data (release dates, ISC licence): https://salsa.debian.org/debian/distro-info-data and its `debian/copyright`; Debian LTS: https://wiki.debian.org/LTS

@@ -67,8 +67,10 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
   .ds-header .ds-js-only { flex: 1 1 100%; margin-left: 0 !important; }
   .ds-header .container-xl.pb-2 { padding-bottom: .5rem; }
   .ds-header nav { max-width: 100%; }
+  .ds-header .ds-menu-host { display: block; }
 }
 .ds-menu-btn { display: none; }
+.ds-menu-host { display: none; }
 /* Page notes: always open on desktop; a one-line summary on phones. */
 .ds-note-sum { display: none; list-style: none; cursor: pointer; }
 .ds-note-sum::-webkit-details-marker { display: none; }
