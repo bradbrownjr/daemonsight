@@ -30,10 +30,13 @@ class FakeUnraid:
         self.status: int | None = None         # answered for every request
         self.replies = {
             unraid.Q_ME: load(f"me_{role}"), unraid.Q_PROBE: load("probe"), unraid.Q_SYSTEM: load("system"),
-            unraid.Q_ARRAY: load("array"), unraid.Q_DOCKER: load("docker"), unraid.Q_VMS: load("vms"),
+            unraid.Q_ARRAY: load("array"), unraid.Q_DOCKER: load("docker"), unraid.Q_FOLDERS: load("folders"), unraid.Q_VMS: load("vms"),
             unraid.Q_UPS: load("ups"), unraid.Q_DISKS: load("disks"), unraid.Q_NOTIFICATIONS: load("notifications"),
         }
         self.errors: dict[str, list] = {}      # query -> GraphQL errors to add
+        self.release = load("release")         # what releases.unraid.net answers
+        self.release_requests: list[httpx.Request] = []
+        self.release_status = 200
 
     def set(self, query: str, fn) -> None:
         """Change a reply in place: fn receives the data dict."""
@@ -79,6 +82,16 @@ class FakeUnraid:
                     from daemonsight.remote.client import RemoteError
                     raise RemoteError("unreachable", "no certificate")
                 return fake.server_cert
+
+            def public(self_):
+                def handler(request):
+                    fake.release_requests.append(request)
+                    if fake.fail:
+                        raise fake.fail
+                    if request.url.host != "releases.unraid.net":
+                        return httpx.Response(404, text="unknown host")
+                    return httpx.Response(fake.release_status, json=fake.release)
+                return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5, follow_redirects=False)
 
         return FakeNet()
 

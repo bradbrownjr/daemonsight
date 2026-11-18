@@ -1,4 +1,4 @@
-{% from "_macros.html" import src, src_button, src_panel, fix_block, accept_form, unaccept_form with context %}
+{% from "_macros.html" import src, src_button, src_panel, fix_block, howto_block, accept_form, unaccept_form with context %}
 <div id="live" hx-get="{{ base }}/partials/overview" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
 {% set t = v.tiles %}
@@ -72,6 +72,7 @@
           <div class="fw-bold">{% if f.link %}<a href="{{ base }}{{ f.link }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}{{ src("src-fd-" ~ loop.index, f.src) }}</div>
           <div class="text-secondary">{{ f.detail }}</div>
           {% if f.changed_note %}<div class="text-orange small">{{ f.changed_note }}</div>{% endif %}
+          {{ howto_block(f.howto) }}
           {% if f.fix %}{{ fix_block(f.fix) }}{% endif %}
           <div class="d-flex flex-wrap align-items-baseline gap-3 mt-1 small">
             <span class="text-secondary">Since {{ f.since }}</span>

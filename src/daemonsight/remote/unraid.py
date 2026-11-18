@@ -15,13 +15,15 @@ check, before it saves a key and on every poll, that the key is Viewer-only.
 
 Unraid says what a poll costs in time (measured on a 6-disk server with 800
 stored notifications): `disks` runs smartctl on each disk (2.4 s) and
-`notifications` reads the notification files (1.1 s), so those two are read
+`notifications` reads the notification files (1.1 s per list; the two lists
+of alerts and of warnings took 2.1 s together), so those two are read
 every five minutes. Everything else is under 0.7 s and is read every
 `interval` (60 s by default).
 """
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -54,12 +56,32 @@ Q_ARRAY = ("{ array { state capacity { kilobytes { free used total } disks { use
 Q_DOCKER = ("{ docker { containers { names image state status autoStart isUpdateAvailable isOrphaned "
             "ports { ip privatePort publicPort type } } } }")
 
+# Query.docker.organizer: ResolvedOrganizerV1 { version views: [ResolvedOrganizerView { id name rootId flatEntries
+# prefs }] }. FlatOrganizerEntry { id type name parentId depth position path hasChildren childrenIds meta: DockerContainer }
+# is one row of the folder tree, depth first in the owner's order: `type` is "folder" or "container", `position` is the
+# place under its parent, `path` the names from the root, and for a container `meta.names` is the Docker name. The
+# same Docker tab folders the owner arranged. Read on its own, so a version without it (or a failure) leaves the
+# container list working, just flat.
+Q_FOLDERS = ("{ docker { organizer { version views { id name rootId flatEntries { id type name parentId depth position "
+             "path hasChildren childrenIds meta { names } } } } } }")
+
 # Query.vms: Vms { domains: [VmDomain { name state }] }. Null when the VM manager is off.
 Q_VMS = "{ vms { domains { name state } } }"
 
-# Query.notifications: Notifications { overview.unread, warningsAndAlerts: [Notification] } (unread only)
+# Query.notifications: Notifications { overview.unread, list(filter): [Notification] } (unread only).
+# Notification { id title subject description importance link timestamp } is the schema's type; `description`
+# and `link` are String!/String. Why `list` and not `warningsAndAlerts`: that field drops repeats (it keeps one
+# notification per importance, title, subject, description and link) and stops at 50, so thirteen "Unclean
+# shutdown detected" alerts come back as one. `list` returns each file. Its `limit` counts the newest
+# notification FILES, of any importance, before the importance filter is applied
+# (notifications.service.ts: loadNotificationsFromPaths slices the files, then filters), so the limit has to
+# cover the whole inbox (2000 here; `truncated` says when it does not).
+NOTIFICATIONS_SCAN = 2000
+_NOTIFICATION = "id title subject description importance link timestamp"
 Q_NOTIFICATIONS = ("{ notifications { overview { unread { info warning alert total } } "
-                   "warningsAndAlerts { id title subject importance timestamp } } }")
+                   f"alerts: list(filter: {{type: UNREAD, importance: ALERT, offset: 0, limit: {NOTIFICATIONS_SCAN}}}) {{ {_NOTIFICATION} }} "
+                   f"warnings: list(filter: {{type: UNREAD, importance: WARNING, offset: 0, limit: {NOTIFICATIONS_SCAN}}}) {{ {_NOTIFICATION} }} }} }}")
+NOTIFICATIONS_KEPT = 400        # warnings and alerts stored, alerts first and newest first
 
 # Query.upsDevices: [UPSDevice { status battery power }]
 Q_UPS = ("{ upsDevices { id name model status battery { chargeLevel estimatedRuntime health } "
@@ -78,12 +100,15 @@ SOURCES: dict[str, tuple[str, tuple[str, ...], str]] = {
     "unraid_system": (Q_SYSTEM, ("vars", "info", "metrics"), FAST),
     "unraid_array": (Q_ARRAY, ("array", "display", "parityHistory"), FAST),
     "unraid_docker": (Q_DOCKER, ("docker",), FAST),
+    "unraid_folders": (Q_FOLDERS, ("docker",), SLOW),
     "unraid_vms": (Q_VMS, (), FAST),
     "unraid_ups": (Q_UPS, ("upsDevices",), FAST),
     "unraid_disks": (Q_DISKS, ("disks",), SLOW),
     "unraid_notifications": (Q_NOTIFICATIONS, ("notifications",), SLOW),
 }
 SLOW_SECONDS = 300
+# Sources whose failure is not a problem with the system: the Docker folders (an older Unraid has none).
+OPTIONAL = frozenset({"unraid_folders"})
 ALL_QUERIES = [Q_ME, Q_PROBE] + [q for q, _r, _t in SOURCES.values()]
 
 # What each stored source was read with, as shown in its panel.
@@ -245,6 +270,41 @@ def parse_docker(d: dict) -> dict:
     return {"containers": out}
 
 
+FOLDERS_MAX = 200
+
+
+def parse_folders(d: dict) -> dict:
+    """The Docker tab's folders, in the owner's order: {"folders": [{"name", "path", "containers": [Docker names]}]}.
+    The entries come depth first, as Unraid lists them (checked live), so a folder's place in the list is its
+    place on the Docker tab; a nested folder carries its path. Containers directly under the root belong to no
+    folder (the page shows them as Ungrouped, in their order under the root). The view "default" is used when there is one, else the first."""
+    org = ((d.get("docker") or {}).get("organizer")) or {}
+    views = [v for v in (org.get("views") or []) if isinstance(v, dict)]
+    view = next((v for v in views if v.get("id") == "default"), views[0] if views else None)
+    if view is None:
+        return {"available": False, "reason": "Unraid has no Docker folder view."}
+    entries = [e for e in (view.get("flatEntries") or []) if isinstance(e, dict)]
+    root = text(view.get("rootId"), 80)
+    folders: dict[str, dict] = {}
+    for e in entries:
+        fid = text(e.get("id"), 80)
+        if e.get("type") == "folder" and fid != root and len(folders) < FOLDERS_MAX:
+            path = [text(p, 60) for p in (e.get("path") or [])][1:]
+            folders[fid] = {"name": text(e.get("name"), 60) or fid, "path": path or [text(e.get("name"), 60) or fid],
+                            "containers": []}
+    loose: list[str] = []
+    for e in sorted((e for e in entries if e.get("type") == "container"), key=lambda e: num(e.get("position")) or 0):
+        meta = e.get("meta") if isinstance(e.get("meta"), dict) else {}
+        names = meta.get("names") or []
+        name = text(names[0] if names else e.get("name"), 80).lstrip("/")
+        parent = text(e.get("parentId"), 80)
+        if parent in folders and name and len(folders[parent]["containers"]) < 500:
+            folders[parent]["containers"].append(name)
+        elif parent == root and name and len(loose) < 500:
+            loose.append(name)
+    return {"folders": list(folders.values()), "ungrouped": loose}
+
+
 def parse_vms(d: dict, warnings: list[str] | None = None) -> dict:
     vms = d.get("vms")
     if not isinstance(vms, dict):
@@ -255,17 +315,31 @@ def parse_vms(d: dict, warnings: list[str] | None = None) -> dict:
     return {"vms": out}
 
 
+_TAG = re.compile(r"<[^>]*>")
+
+
+def plain(v, n: int) -> str:
+    """Text for a notification: Unraid's own notices put <br> and other markup in descriptions."""
+    s = _TAG.sub(" ", re.sub(r"(?i)<br\s*/?>", " ", str(v if v is not None else "")))
+    return text(" ".join(s.split()), n)
+
+
 def parse_notifications(d: dict) -> dict:
     n = d["notifications"]
     unread = (n.get("overview") or {}).get("unread") or {}
-    items = []
-    for x in (n.get("warningsAndAlerts") or [])[:50]:
-        if not isinstance(x, dict):
-            continue
-        nid = text(x.get("id"), 300)
-        items.append({"id": nid.split(":", 1)[-1], "title": text(x.get("title"), 120), "subject": text(x.get("subject"), 200),
-                      "importance": _upper(x.get("importance")), "time": epoch(x.get("timestamp"))})
-    return {"unread": {k: num(unread.get(k)) or 0 for k in ("info", "warning", "alert", "total")}, "items": items}
+    items, returned = [], {}
+    for name, importance in (("alerts", "ALERT"), ("warnings", "WARNING")):
+        got = [x for x in (n.get(name) or []) if isinstance(x, dict)]
+        returned[importance.lower()] = len(got)
+        for x in got:
+            items.append({"id": text(x.get("id"), 300).split(":", 1)[-1], "title": text(x.get("title"), 120),
+                          "subject": text(x.get("subject"), 200), "description": plain(x.get("description"), 300),
+                          "link": text(x.get("link"), 100), "importance": _upper(x.get("importance")) or importance,
+                          "time": epoch(x.get("timestamp"))})
+    items.sort(key=lambda i: (i["importance"] != "ALERT", -(i["time"] or 0)))
+    counts = {k: num(unread.get(k)) or 0 for k in ("info", "warning", "alert", "total")}
+    return {"unread": counts, "items": items[:NOTIFICATIONS_KEPT], "returned": returned,
+            "truncated": counts["total"] > NOTIFICATIONS_SCAN}
 
 
 def parse_ups(d: dict) -> dict:
@@ -295,6 +369,7 @@ def parse_disks(d: dict) -> dict:
 
 
 PARSERS = {"unraid_system": parse_system, "unraid_array": parse_array, "unraid_docker": parse_docker,
+           "unraid_folders": parse_folders,
            "unraid_vms": parse_vms, "unraid_ups": parse_ups, "unraid_disks": parse_disks,
            "unraid_notifications": parse_notifications}
 

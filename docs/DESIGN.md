@@ -120,17 +120,55 @@ DaemonSight knows when it first appeared and when it cleared.
 | `unraid.disk_temp` | A disk at or over Unraid's own warning (Medium) or critical (High) temperature: the `display` values for hard disks; 60 and 70 C for SSDs and NVMe, which the API doesn't expose; 45 and 55 C for hard disks if `display` can't be read | Medium or High |
 | `unraid.disk_smart` | `smartStatus` is not `OK` for a disk that is not a USB device. The API can't say "failed": it returns `OK` or `UNKNOWN` | Medium |
 | `unraid.array_state` | The array is not `STARTED`: stopped, or in a reconstruction state | High when stopped; Medium otherwise |
-| `unraid.parity_errors` | The last completed parity check found errors | High |
-| `unraid.parity_old` | No completed parity check, or the last one was over 100 days ago and none is running. Not raised while the array is stopped or has no parity disk | Low |
-| `unraid.container_update` | `isUpdateAvailable` on a container. One finding per container | Low |
-| `unraid.notification` | An unread Unraid warning or alert. Alerts first, at most 10 findings, then one "N more" summary. The text is the server's and is cut and escaped | Medium for an alert; Low for a warning |
+| `unraid.parity_errors` | The last completed parity check found errors. The detail says what a sync error is, whether an unclean shutdown was recorded shortly before the check (from the notifications), whether a later check was cancelled or failed (from `parityHistory`) and that the sector numbers are only in Unraid's syslog for that boot. A later clean check ends the finding | High |
+| `unraid.parity_old` | No completed parity check, or the last one was over 100 days ago and none is running. When `parityHistory` shows a check cancelled or failed after the last completed one, the detail says when it started and after how long it stopped. Not raised while the array is stopped or has no parity disk | Low |
+| `unraid.container_updates` | One finding when any container has `isUpdateAvailable`: "N containers have updates", the names (40 shown, then "and N more") and a link to the Containers page. The basis is the sorted names, so an accepted finding returns when a different container needs an update. Replaces the old `unraid.container_update`, one finding per container; its open findings are resolved at the first poll | Low |
+| `unraid.unclean_shutdown` | Unraid's unread alerts with the subject "Unclean shutdown detected" (Parity Check Tuning plugin, or Unraid itself), grouped into one finding: "Unraid shut down uncleanly N times since DATE", every date in the detail. The basis is the set of times, so a new crash brings back an accepted finding | Medium |
+| `unraid.notification` | Every other unread warning or alert, one finding per distinct title (repeats grouped; the detail has the newest subject and description, the count and the newest and oldest date), plus one summary, "N unread Unraid alerts and warnings", for the whole inbox. Notices about conditions DaemonSight checks live are dropped as findings (see "Notifications") but stay on the Notifications page. The text is the server's, cut and escaped | Medium when the group has an alert, Low for warnings; the summary is Low |
+| `unraid.os_update` | The newest stable Unraid release is newer than the version the API reports (see "The newest release"). "Unraid X is available (running Y)", with a link to the release notes. The basis is the new version | Low |
 | `unraid.ups` | The UPS is on battery (Medium; High at 30% charge or below, or when it reports low battery), charge under 50% (Medium), or its battery needs replacing (Low) | Medium, High or Low |
 
 Hub rules for remote systems (`remote.*`, `unraid.*`) are computed by the hub
 and kept by its reconcile, like `host.*` and `cve.*`; a collector's upload
 may not carry them. Each has no fix command (they are decisions), a basis
 that brings an accepted finding back when it changes (for example `disk3:high`
-when a disk crosses 95%), and a link to the row it is about.
+when a disk crosses 95%), a link to the row it is about and a `howto` of plain
+steps. The menu paths in the steps are the ones in Unraid's docs and webgui
+source [38] to [42]; where a path could not be verified the step says "in the
+Unraid web UI".
+
+#### Notifications
+
+Unraid's unread inbox mixes notices DaemonSight already checks live, one-off
+events and everything else. Each notification is classified once
+(`remote/unraid_notify.py`, one pattern table with the sources of the
+formats in its header comment; every pattern was also checked against a real
+inbox of 235 unread warnings and alerts):
+
+| Kind | Title pattern (subject) | What DaemonSight does |
+|------|------------------------|-----------------------|
+| disk usage | `Unraid <disk> disk utilization` | Dropped as a finding; covered by `unraid.disk_full` |
+| disk temperature | `Unraid <disk> temperature` | Dropped; covered by `unraid.disk_temp` |
+| parity check or sync | `Unraid Parity check`, `Parity-Check`, `Parity-Sync`, `Read-Check`; and Parity Check Tuning with a subject like `... Parity-Check finished (N errors)` or `canceled` | Dropped; covered by `unraid.parity_errors` and `unraid.parity_old`, which read `parityHistory` |
+| rebuild or clear | `Unraid Data-Rebuild`, `Unraid Disk-Clear` | Dropped; covered by `unraid.array_state` while it runs |
+| Docker update | `Docker - <name> [<version>]` | Dropped; covered by `unraid.container_updates` |
+| unclean shutdown | any title, subject `... Unclean shutdown detected` | One finding, `unraid.unclean_shutdown` |
+| Fix Common Problems | `Fix Common Problems - <server>` | A finding per title; steps: Settings → User Utilities → Fix Common Problems |
+| SMART attribute | `Unraid <disk> SMART health [<id>]` | A finding per title; steps: the disk's SMART report |
+| disk in error, array errors | `Unraid <disk> error`, `Unraid array errors` | A finding per title |
+| Docker image disk | `Docker high image disk utilization` (or critical) | A finding per title; steps: Container Size, Docker vDisk size |
+| anything else | | A finding per title, with the generic step: read it in Unraid (the bell icon) and archive it once handled |
+
+All of them are listed on the Notifications page with date, title, subject,
+description and what DaemonSight does with each, so nothing is hidden by being
+dropped as a finding. The hub reads them with `list(filter: {type: UNREAD,
+importance: ALERT|WARNING, ...})` rather than `warningsAndAlerts`: that field
+drops repeats (one notification per importance, title, subject, description
+and link) and stops at 50, so thirteen unclean-shutdown alerts came back as
+one, and `list`'s `limit` counts the newest files of any importance before it
+filters, so it is set to 2,000 (`truncated` is shown when the inbox is
+larger). At most 400 are stored, alerts first. Archived notifications drop out
+of the inbox and so out of these findings.
 
 ### Finding fields
 
@@ -140,6 +178,7 @@ when a disk crosses 95%), and a link to the row it is about.
 | `severity`, `title`, `detail`, `link` | What the page shows. `link` is a path on this site (a row's anchor). |
 | `fix` | The exact command or commands that resolve it, one per line. `None` when no single command does: an exposed port needs a decision. Commands that differ by package system (apt or dnf) follow the host's. A line starting with `#` is a comment for the person pasting it. |
 | `basis` | What the finding is about, without numbers that drift. `None` means the title. Accepting a finding is tied to a hash of the rule, key and basis. |
+| `howto` | Optional plain-language steps, one per line, shown under the detail as "What to do" (a numbered list) on the Overview, the report page and the Markdown report. Only the hub's own rules (`unraid.*`, `remote.*`, `cve.feed_stale`) set it. A finding with `howto` and no `fix` is still a decision in the report, with its steps shown. Stored in the `findings` table (schema 6); never in an upload: `FindingIn` has no such field and the collector's upload leaves it out, so older hubs and collectors are unaffected. |
 
 `fix` and `basis` are stored in the `findings` table (NULL for rows from before
 schema 4) and travel in the upload's findings. Both are optional in the upload,
@@ -282,7 +321,7 @@ events and resolved findings for good. The collector prunes its own host's
 rows hourly; the hub prunes every host's. Open findings are never pruned.
 
 - `snapshots`: source, taken_at, ok, error, data (JSON). The latest row per source is current state.
-- `findings`: rule, key, severity, title, detail, link, fix, basis, first_seen, last_seen, resolved_at.
+- `findings`: rule, key, severity, title, detail, link, fix, basis, howto (schema version 6), first_seen, last_seen, resolved_at.
 - `accepted`: host, rule, key, fingerprint, note, accepted_at, accepted_by. Written by the hub's web process (see "Accepting a finding"). Schema version 4.
 - `remotes` (schema version 5): id, kind (`unraid`), url, enabled, tls (`verify` or `pin`), tls_pin (SHA-256 of the pinned certificate), tls_cert (its PEM), interval, created_at, last_ok, last_error, fails. A remote system is also a row in `hosts` with `hosts.kind` set (collector hosts have `kind` NULL) and a `token_hash` of `remote:<id>`, which no upload token can equal. The API key is not in the database: it is `<data>/remotes/<id>.key`, mode 0600 in a 0700 folder.
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down.
@@ -891,7 +930,8 @@ mutation. Every request body is `{"query": ...}` and nothing else.
 | `unraid_disks` | `disks { device type name vendor size interfaceType smartStatus temperature isSpinning }` | `Query.disks: [Disk!]!`, `Disk.smartStatus: DiskSmartStatus` |
 | `unraid_docker` | `docker { containers { names image state status autoStart isUpdateAvailable isOrphaned ports { ip privatePort publicPort type } } }` | `Docker.containers`, `DockerContainer` |
 | `unraid_vms` | `vms { domains { name state } }` (null when VMs are off) | `Vms.domains`, `VmDomain` |
-| `unraid_notifications` | `notifications { overview { unread { info warning alert total } } warningsAndAlerts { id title subject importance timestamp } }` | `Notifications.overview`, `Notifications.warningsAndAlerts` |
+| `unraid_notifications` | `notifications { overview { unread { info warning alert total } } alerts: list(filter: {type: UNREAD, importance: ALERT, offset: 0, limit: 2000}) { id title subject description importance link timestamp } warnings: list(filter: {... WARNING ...}) { same fields } }` | `Notifications.overview`, `Notifications.list(filter: NotificationFilter!)`, `Notification` (`description: String!`, `link: String`), `NotificationFilter { importance type offset limit }` |
+| `unraid_folders` | `docker { organizer { version views { id name rootId flatEntries { id type name parentId depth position path hasChildren childrenIds meta { names } } } } }` | `Docker.organizer: ResolvedOrganizerV1!`, `ResolvedOrganizerView`, `FlatOrganizerEntry` |
 | `unraid_ups` | `upsDevices { id name model status battery { chargeLevel estimatedRuntime health } power { loadPercentage } }` | `Query.upsDevices: [UPSDevice!]!` |
 
 The exact strings are the constants in `src/daemonsight/remote/unraid.py`.
@@ -936,8 +976,9 @@ key is never sent to it. There is no "don't verify" option.
   (with `display` and `parityHistory`), docker, vms, ups. These are cheap
   to ask of the server (the whole set took well under a second on the test server).
 - Every 5 minutes, or `interval` if that is longer: disks (SMART status, about
-  2.4 s on the test server, because it asks each device) and notifications
-  (about 1.1 s).
+  2.4 s on the test server, because it asks each device), notifications
+  (about 1.1 s per list, 2.1 s for alerts and warnings) and the Docker folders.
+- Once a day, for the whole hub: the newest stable release (below).
 
 Requests use httpx timeouts (5 s to connect, 20 s for anything else). A source that fails
 keeps its previous data and records its error on its snapshot; the other
@@ -949,13 +990,38 @@ good read, `remote.unreachable` (High) opens; the next good read resolves it
 and writes "Reading this system again". `host.silent` is not used, since
 nobody uploads for a remote system, and `hub update` skips these hosts.
 
+**Docker folders.** `unraid_folders` is the Docker tab's folder tree. The
+Containers page groups the containers by folder in the owner's order, with a
+count per folder (a nested folder is headed "Parent / Child"), and puts the rest
+in "Ungrouped", in their order under the root. Every container appears exactly
+once; a name in a folder that Docker no longer has is ignored. It is the one
+source whose failure is not shown as a source problem: an older Unraid has no
+`organizer`, and then the page lists the containers flat with a note.
+
+**The newest release.** The API has no update field (no release or update
+field on `Query`, `Info` or `Vars` in `generated-schema.graphql` [33]). Unraid's
+own "Update OS" check, `UnraidCheck.php` in the Unraid API repository [43],
+reads `https://releases.unraid.net/os` with the query `branch`, `current_version`
+and, for a registered server, `update_exp` (its license expiry). The page is
+public and needs no account. DaemonSight does not send the server's details:
+the hub asks for `https://releases.unraid.net/os?branch=stable`, the same
+request for every server, once a day (a failed fetch is retried after six
+hours) and only while an Unraid system is enabled, with the User-Agent
+`DaemonSight/<version>` and nothing else. The reply (`version`, `date`,
+`changelogPretty`) is kept in the `meta` table; only a stable `x.y.z` version
+and a release-notes address on `docs.unraid.net` or `releases.unraid.net` are
+accepted. `unraid.os_update` compares it with `vars.version`. Menu path:
+Tools → Update OS (`Update.page`, title "Update OS"; the notice Unraid sends
+links to `/Tools/Update`) [43]. Boot device backup: Main, Boot Device (called
+Flash before 7.3.0), Boot Device Backup [41].
+
 **Pages.** `/h/<id>/` Overview ("At a glance": version, uptime, array state,
 capacity, CPU, memory, UPS, unread notifications), Array & disks, Containers,
 VMs and Notifications. Cells carry `data-label`, rows have anchors
 (`disk-disk1`, `ctr-<name>`, `vm-<name>`, `notif-<id>`) that findings link to,
 and each section's panel names the GraphQL query, its curl form and the Unraid
-page to compare with. The Hosts page shows "Unraid · API", the address, the
-last poll and the last error. Report and Accept are the same as for any host.
+page to compare with. The Hosts page shows "Unraid <version> · API" (and "<new> available" when a newer stable release is out), the address, the
+last poll and the last error. At a glance shows the version the same way. Report and Accept are the same as for any host.
 Text from the server (container names, notification titles) is untrusted: cut
 to a length, stripped of control characters and escaped by the templates.
 
@@ -1167,6 +1233,7 @@ The collector must stay light:
 - Unraid: every query ran against one real server (7.3.2) with an Admin key, read-only, and the fixtures in `tests/fixtures/unraid/` are trimmed copies of those replies. Not seen on a real server: the `me` reply for a Viewer-only key (its shape is read from the API source and the Admin reply, not captured), a failing SMART disk, an array that is stopped, a UPS on battery, and a Viewer key being refused or accepted by each query. The first poll with a real Viewer key is the check.
 - Unraid: the "how to use the API" page lists only the roles admin, connect and guest, while the schema and the CLI example (`--roles ADMIN,VIEWER`) have `VIEWER`; the Viewer role comes from the schema [33] and [32], and a Viewer key was not available to test.
 - Unraid: whether the API gives a threshold for a disk with its own temperature setting, and the SSD thresholds (the schema has no field).
+- Unraid: the notification, folder and release queries ran against the real server with an Admin key, read-only; a Viewer key reading `Notifications.list` and `Docker.organizer` was not tried. The release page was fetched without parameters and with `branch=stable`; its reply shape is what the fixture copies. Unverified: the exact label of the notification bell's "Archive all" (taken from the brief; the webgui source has no such string in the files searched), whether an acknowledged SMART attribute (the Dashboard's orange icon) still sends a notification when it changes again (the SMART docs say so), and that a history entry's `date` is the time the check ended (observed: it matches the finish notice within seconds).
 
 ## Sources
 
@@ -1207,3 +1274,9 @@ The collector must stay light:
 35. Python `ssl`: `get_server_certificate` ("without validation"), `SSLContext.load_verify_locations(cadata=...)`, `VERIFY_X509_PARTIAL_CHAIN`, `CERT_REQUIRED`: https://docs.python.org/3/library/ssl.html
 36. Unraid webgui `emhttp/plugins/dynamix/default.cfg` (`hot`, `max`, `hotssd`, `maxssd`) and `DiskSettings.page`: https://github.com/unraid/webgui
 37. Unraid docs, array health and maintenance (parity checks "on a monthly or quarterly basis"): https://docs.unraid.net/unraid-os/using-unraid-to/manage-storage/array/array-health-and-maintenance/
+38. Unraid docs, unclean shutdowns (Settings → Syslog Server, Settings → UPS Settings, "Unsafe Shutdown" starts a parity check, shutdown time-outs): https://docs.unraid.net/unraid-os/troubleshooting/common-issues/unclean-shutdowns/
+39. Unraid docs, capture diagnostics and logs (persistent logs: Settings → Syslog Server, "Mirror syslog to boot drive", remote and local syslog server; "if the system crashes, the system log will be lost"; Tools → Diagnostics, Tools → Syslog): https://docs.unraid.net/unraid-os/troubleshooting/diagnostics/capture-diagnostics-and-logs/ and the page's source `emhttp/plugins/dynamix/SyslogSettings.page` in https://github.com/unraid/webgui
+40. Unraid docs, shares (Shares tab, click a share: Allocation method, Split level, Minimum free space; changes affect only new files; split level takes priority over free space): https://docs.unraid.net/unraid-os/using-unraid-to/manage-storage/shares/ ; SMART reports: https://docs.unraid.net/unraid-os/system-administration/monitor-performance/smart-reports-and-disk-health/ ; replacing disks: https://docs.unraid.net/unraid-os/using-unraid-to/manage-storage/array/replacing-disks-in-array/ ; system crashes (Memtest86+): https://docs.unraid.net/unraid-os/troubleshooting/common-issues/system-crashes-and-stability/
+41. Unraid docs, secure your boot drive (Boot Device Backup): https://docs.unraid.net/unraid-os/system-administration/secure-your-server/secure-your-boot-drive/ ; array health (Check, "Write corrections to parity", first 100 error addresses, 4 KiB blocks, Settings → Scheduler → Parity Check): see [37]
+42. Unraid webgui, `emhttp/plugins/dynamix/scripts/monitor` (the notification titles and subjects), `plugins/dynamix.docker.manager/DockerContainers.page` (Check for Updates, Update All, Container Size buttons), `DockerSettings.page` (Docker vDisk size), `scripts/dockerupdate` (Docker update notice), `ParityCheck.page` (Settings → Scheduler → Parity Check): https://github.com/unraid/webgui ; Parity Check Tuning plugin, `parity.check.tuning.php` (its notices): https://github.com/itimpi/parity.check.tuning ; Fix Common Problems, `scripts/scan.php` and `FixProblems.page` (menu Utilities; "Investigate at Settings / User Utilities / Fix Common Problems"): https://github.com/Squidly271/fix.common.problems
+43. Unraid API repository, `plugin/source/dynamix.unraid.net/usr/local/emhttp/plugins/dynamix.plugin.manager/include/UnraidCheck.php` (`BASE_RELEASES_URL`, the request parameters), `.../scripts/unraidcheck`, `.../Update.page` (title "Update OS"), and `api/src/unraid-api/graph/resolvers/notifications/notifications.service.ts` (`getWarningsAndAlerts` and `loadNotificationsFromPaths`): https://github.com/unraid/api ; the release page: https://releases.unraid.net/os

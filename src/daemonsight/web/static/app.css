@@ -34,6 +34,9 @@ tr:target > td:first-child { box-shadow: inset 4px 0 0 var(--tblr-primary); }
 tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
 @keyframes ds-flash { 0%, 40% { background: rgba(var(--tblr-primary-rgb), .3); } }
 @media (prefers-reduced-motion: reduce) { tr.ds-flash > td { animation: none; } }
+/* A folder heading inside a table (the containers page): one line spanning the table. */
+.ds-group-head > th { background: var(--tblr-bg-surface-secondary, rgba(128,128,128,.08)); font-size: .8rem; font-weight: 600; }
+.ds-group { scroll-margin-top: 4rem; }
 /* Phones: each table row becomes a stacked card, one labelled line per cell. */
 @media (max-width: 767.98px) {
   .card-table, .card-table tbody, .card-table tr, .card-table td { display: block; width: 100%; }
@@ -48,6 +51,7 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
     color: var(--tblr-secondary); font-size: .75rem; line-height: 1.5; padding-top: .1rem;
     text-transform: uppercase; letter-spacing: .04em; }
   .card-table tr > td[colspan] { padding-left: 1rem; }
+  .card-table tbody th { display: block; width: 100%; padding: .4rem 1rem; }
   .table-responsive { overflow-x: visible; }
   tr:target { box-shadow: inset 4px 0 0 var(--tblr-primary); }
   tr:target > td:first-child { box-shadow: none; }

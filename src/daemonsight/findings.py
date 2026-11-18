@@ -32,6 +32,8 @@ class Finding:
     `basis` is what the finding is about, apart from numbers that drift (ages,
     counts): an accepted finding comes back when its basis changes. None means
     the title.
+    `howto` is plain-language steps, one per line, shown as "What to do". Only
+    the hub's own rules (unraid.*, remote.*) set it; collectors don't upload it.
     """
     rule: str
     key: str
@@ -41,6 +43,7 @@ class Finding:
     link: str | None = None
     fix: str | None = None
     basis: str | None = None
+    howto: str | None = None
 
 
 # Where a fix sits in the report's steps, by rule. Steps run in this order;

@@ -1,0 +1,353 @@
+{
+ "data": {
+  "docker": {
+   "organizer": {
+    "version": 1,
+    "views": [
+     {
+      "id": "default",
+      "name": "Default",
+      "rootId": "root",
+      "flatEntries": [
+       {
+        "id": "root",
+        "type": "folder",
+        "name": "Root",
+        "parentId": null,
+        "depth": 0,
+        "position": 0,
+        "path": [
+         "root"
+        ],
+        "hasChildren": true,
+        "childrenIds": [
+         "Folder One",
+         "Folder Two",
+         "/app-7",
+         "/app-8",
+         "/app-9",
+         "/app-10",
+         "/app-11",
+         "/app-12"
+        ],
+        "meta": null
+       },
+       {
+        "id": "Folder One",
+        "type": "folder",
+        "name": "Folder One",
+        "parentId": "root",
+        "depth": 1,
+        "position": 0,
+        "path": [
+         "root",
+         "Folder One"
+        ],
+        "hasChildren": true,
+        "childrenIds": [
+         "/app-3",
+         "/app-1",
+         "/app-4"
+        ],
+        "meta": null
+       },
+       {
+        "id": "/app-3",
+        "type": "container",
+        "name": "/app-3",
+        "parentId": "Folder One",
+        "depth": 2,
+        "position": 0,
+        "path": [
+         "root",
+         "Folder One",
+         "/app-3"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-3"
+         ]
+        }
+       },
+       {
+        "id": "/app-1",
+        "type": "container",
+        "name": "/app-1",
+        "parentId": "Folder One",
+        "depth": 2,
+        "position": 1,
+        "path": [
+         "root",
+         "Folder One",
+         "/app-1"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-1"
+         ]
+        }
+       },
+       {
+        "id": "/app-4",
+        "type": "container",
+        "name": "/app-4",
+        "parentId": "Folder One",
+        "depth": 2,
+        "position": 2,
+        "path": [
+         "root",
+         "Folder One",
+         "/app-4"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-4"
+         ]
+        }
+       },
+       {
+        "id": "Folder Two",
+        "type": "folder",
+        "name": "Folder Two",
+        "parentId": "root",
+        "depth": 1,
+        "position": 1,
+        "path": [
+         "root",
+         "Folder Two"
+        ],
+        "hasChildren": true,
+        "childrenIds": [
+         "/app-5",
+         "/app-2",
+         "Sub folder",
+         "/gone-1"
+        ],
+        "meta": null
+       },
+       {
+        "id": "/app-5",
+        "type": "container",
+        "name": "/app-5",
+        "parentId": "Folder Two",
+        "depth": 2,
+        "position": 0,
+        "path": [
+         "root",
+         "Folder Two",
+         "/app-5"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-5"
+         ]
+        }
+       },
+       {
+        "id": "/app-2",
+        "type": "container",
+        "name": "/app-2",
+        "parentId": "Folder Two",
+        "depth": 2,
+        "position": 1,
+        "path": [
+         "root",
+         "Folder Two",
+         "/app-2"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-2"
+         ]
+        }
+       },
+       {
+        "id": "Sub folder",
+        "type": "folder",
+        "name": "Sub folder",
+        "parentId": "Folder Two",
+        "depth": 2,
+        "position": 2,
+        "path": [
+         "root",
+         "Folder Two",
+         "Sub folder"
+        ],
+        "hasChildren": true,
+        "childrenIds": [
+         "/app-6"
+        ],
+        "meta": null
+       },
+       {
+        "id": "/app-6",
+        "type": "container",
+        "name": "/app-6",
+        "parentId": "Sub folder",
+        "depth": 3,
+        "position": 0,
+        "path": [
+         "root",
+         "Folder Two",
+         "Sub folder",
+         "/app-6"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-6"
+         ]
+        }
+       },
+       {
+        "id": "/gone-1",
+        "type": "container",
+        "name": "/gone-1",
+        "parentId": "Folder Two",
+        "depth": 2,
+        "position": 3,
+        "path": [
+         "root",
+         "Folder Two",
+         "/gone-1"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/gone-1"
+         ]
+        }
+       },
+       {
+        "id": "/app-7",
+        "type": "container",
+        "name": "/app-7",
+        "parentId": "root",
+        "depth": 1,
+        "position": 2,
+        "path": [
+         "root",
+         "/app-7"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-7"
+         ]
+        }
+       },
+       {
+        "id": "/app-8",
+        "type": "container",
+        "name": "/app-8",
+        "parentId": "root",
+        "depth": 1,
+        "position": 3,
+        "path": [
+         "root",
+         "/app-8"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-8"
+         ]
+        }
+       },
+       {
+        "id": "/app-9",
+        "type": "container",
+        "name": "/app-9",
+        "parentId": "root",
+        "depth": 1,
+        "position": 4,
+        "path": [
+         "root",
+         "/app-9"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-9"
+         ]
+        }
+       },
+       {
+        "id": "/app-10",
+        "type": "container",
+        "name": "/app-10",
+        "parentId": "root",
+        "depth": 1,
+        "position": 5,
+        "path": [
+         "root",
+         "/app-10"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-10"
+         ]
+        }
+       },
+       {
+        "id": "/app-11",
+        "type": "container",
+        "name": "/app-11",
+        "parentId": "root",
+        "depth": 1,
+        "position": 6,
+        "path": [
+         "root",
+         "/app-11"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-11"
+         ]
+        }
+       },
+       {
+        "id": "/app-12",
+        "type": "container",
+        "name": "/app-12",
+        "parentId": "root",
+        "depth": 1,
+        "position": 7,
+        "path": [
+         "root",
+         "/app-12"
+        ],
+        "hasChildren": false,
+        "childrenIds": [],
+        "meta": {
+         "names": [
+          "/app-12"
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   }
+  }
+ }
+}

@@ -29,7 +29,7 @@ import time
 from .. import db
 from ..config import Config
 from ..findings import Finding
-from . import store, unraid
+from . import release, store, unraid
 from .client import Graph, Net, RemoteError
 
 log = logging.getLogger("daemonsight.remote")
@@ -37,6 +37,14 @@ UNREACHABLE_AFTER_INTERVALS = 3
 UNREACHABLE_MIN_SECONDS = 180
 MAX_PARALLEL = 4
 RULE_PREFIX = "unraid."
+
+
+HOWTO_UNREACHABLE = "\n".join((
+    "Check that the system is on and on the network: ping its address from the machine the hub runs on",
+    "Open Hosts and Edit this system: check its address and that the API key is still right",
+    "In Unraid, Settings \u2192 Management Access \u2192 API Keys shows whether the key still exists; it must have the Viewer role only",
+    "If you pinned its certificate and Unraid's certificate changed, pin the new one in the same form",
+    "The finding goes away at the next good read"))
 
 
 def _put_source(conn, host: str, source: str, now: float, ok: bool, error: str | None, data: dict | None) -> None:
@@ -53,6 +61,7 @@ def _rule_inputs(conn, host: str) -> dict[str, dict | None]:
     for src in unraid.SOURCES:
         s = snaps.get(src)
         out[src.removeprefix("unraid_")] = s.data if s and s.data and s.data.get("available") is not False else None
+    out["release"] = release.stored(conn)
     return out
 
 
@@ -71,7 +80,8 @@ def _set_unreachable(conn, row, now: float, error: str | None) -> None:
             f = Finding("remote.unreachable", "unreachable", "high", "Can't read this system",
                         f"The hub has not read this system for {int(now - base)} seconds (last good read: {since}). "
                         f"Last error: {error} Check that it is on, that its address and key are right "
-                        "(Hosts, Edit) and, for a pinned certificate, that it hasn't changed.", "/")
+                        "(Hosts, Edit) and, for a pinned certificate, that it hasn't changed.", "/", None, None,
+                        HOWTO_UNREACHABLE)
     change = db.set_finding(conn, host, now, f, rule="remote.unreachable", key="unreachable")
     if change == "opened":
         db.add_event(conn, host, now, "remote_unreachable", f.title, severity="high", detail=error, link="/")
@@ -194,6 +204,7 @@ async def loop(cfg: Config, conn, net: Net | None = None) -> None:
     await asyncio.sleep(3)     # let the web server finish starting
     while True:
         try:
+            await release.refresh(conn, net)       # once a day, public page, nothing about the server is sent
             await run_once(conn, cfg, net)
         except Exception:
             log.exception("Remote chore failed")

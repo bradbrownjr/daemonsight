@@ -199,9 +199,24 @@ and a cloud provider's firewall are planned and will follow the same rules.
   (`Sec-Fetch-Site`). Removing a system asks you to type its name. A key
   waiting between Test connection and Save is held in the hub's memory for ten
   minutes, never in the page, and is used once.
-- **Text from the server is untrusted.** Container names and notification
-  titles are cut to a length, stripped of control characters and escaped, and
-  a remote system can't send rules; the hub makes them.
+- **Text from the server is untrusted.** Container names, Docker folder names
+  and notification titles, subjects, descriptions and links are cut to a length
+  (title 120, subject 200, description 300, link 100 characters; at most 400
+  notifications are kept), stripped of control characters (and, in descriptions,
+  of HTML tags), and escaped by the templates and, in the Markdown report, by the report's own
+  escaping. A notification's link is shown as text, never as a link. A finding
+  made from a notification repeats that text in its detail, cut again to 900
+  characters. A remote system can't send rules or "What to do" steps; the hub
+  makes them, and a collector's upload has no field for them.
+- **One request that is not to your server.** Once a day the hub reads Unraid's
+  public release page, `https://releases.unraid.net/os?branch=stable`, to learn
+  the newest stable version. The request is the same for every server: no key,
+  no address, no server name, no version, no license date (Unraid's own check
+  sends the version and the license expiry; DaemonSight does not), and only a
+  generic `User-Agent: DaemonSight/<version>`. The reply is size-limited and
+  only a stable version number and a release-notes address on `docs.unraid.net`
+  or `releases.unraid.net` are used. It runs only while an Unraid system is
+  enabled.
 - **The address is yours to choose.** The hub connects to the address an
   administrator typed, over HTTPS only. Anyone who can add a system can make
   the hub connect to an address on its own network; that is the same trust

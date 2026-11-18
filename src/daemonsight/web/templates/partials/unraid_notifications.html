@@ -11,19 +11,24 @@
   {% else %}
   <div class="table-responsive">
     <table class="table table-vcenter card-table" data-table="notifications">
-      <thead><tr><th data-sort="text">Level</th><th data-sort="text">Notification</th><th data-sort="num">When</th></tr></thead>
+      <thead><tr><th data-sort="text">Level</th><th data-sort="num">Date (UTC)</th><th data-sort="text">Notification</th><th data-sort="text">In DaemonSight</th></tr></thead>
       <tbody>
         {% for n in v.rows %}
         <tr id="{{ n.anchor }}" data-row>
           <td data-label="Level"><span class="badge {{ n.level_badge }}">{{ n.level }}</span></td>
-          <td data-label="Notification"><strong>{{ n.title }}</strong><div class="text-secondary">{{ n.subject }}</div></td>
-          <td data-v="{{ n.when_v }}" data-label="When">{{ n.when }}</td>
+          <td data-v="{{ n.date_v }}" data-label="Date">{{ n.date }}</td>
+          <td data-label="Notification"><strong>{{ n.title }}</strong><div class="text-secondary">{{ n.subject }}</div>{% if n.description %}<div class="text-secondary small">{{ n.description }}</div>{% endif %}</td>
+          <td data-label="In DaemonSight"><span class="badge {{ n.state_badge }}">{{ n.state }}</span><div class="text-secondary small">{{ n.how }}</div></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-  <div class="card-body text-secondary small">The text is Unraid's own. Read and archive notifications in the Unraid web UI; DaemonSight only reads.</div>
+  <div class="card-body text-secondary small">
+    The text is Unraid's own. Every unread warning and alert is listed, newest alerts first. {{ v.covered }} {{ 'is' if v.covered == 1 else 'are' }} covered by a live check (disk usage, temperature, parity, container updates) and not a finding of their own; the others are grouped into findings, one per title.
+    {% if v.missing %}Unraid has {{ v.missing }} more unread than this list holds.{% endif %}
+    Read and archive notifications in the Unraid web UI; DaemonSight only reads. Archived ones drop out here.
+  </div>
   {% endif %}
   <div class="card-body text-secondary ds-nomatch">No notifications match the filter.</div>
 </section>

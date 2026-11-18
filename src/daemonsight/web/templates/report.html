@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import fix_block, accept_form, unaccept_form with context %}
+{% from "_macros.html" import fix_block, howto_block, accept_form, unaccept_form with context %}
 {% block title %}Report · {{ v.host.id }} · DaemonSight{% endblock %}
 {% block content %}
 <div class="mb-4 d-flex flex-wrap justify-content-between align-items-end gap-3">
@@ -62,6 +62,7 @@
       <div class="ds-min0 flex-fill">
         <div class="fw-bold">{% if f.href %}<a href="{{ f.href }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}</div>
         <div class="text-secondary">{{ f.detail }}</div>
+        {{ howto_block(f.howto) }}
         {% if f.changed_note %}<div class="text-orange small">{{ f.changed_note }}</div>{% endif %}
         <div class="mt-1">{{ accept_form(f, "d-") }}</div>
       </div>
@@ -88,6 +89,7 @@
           <td data-label="Finding">
             <div class="fw-bold">{% if f.href %}<a href="{{ f.href }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}</div>
             <div class="text-secondary">{{ f.detail }}</div>
+            {{ howto_block(f.howto) }}
             {% if f.changed_note %}<div class="text-orange small">{{ f.changed_note }}</div>{% endif %}
             {{ accept_form(f) }}
           </td>

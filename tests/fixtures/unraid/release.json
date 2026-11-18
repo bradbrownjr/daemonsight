@@ -1,0 +1,10 @@
+{
+ "version": "7.4.0",
+ "name": "Unraid 7.4.0",
+ "date": "2026-11-09",
+ "date0": "2026-11-09",
+ "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+ "changelog": "https://releases.unraid.net/dl/changelog/github/unraid/docs/main/docs/unraid-os/release-notes/7.4.0.md",
+ "changelogPretty": "https://docs.unraid.net/unraid-os/release-notes/7.4.0/",
+ "isEligible": true
+}

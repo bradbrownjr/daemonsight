@@ -369,12 +369,74 @@ def test_container_update_column_says_what_it_is(polled):
     assert re.search(r'data-label="Update"><span class="badge [^"]+">(Available|Current|Unknown)</span>', html)
 
 
+def test_what_to_do_shows_on_the_overview_the_report_and_the_markdown(polled):
+    html = polled.get("/h/tower/").text
+    fid = 'id="finding-unraid.container_updates-all"'
+    assert fid in html and "What to do" in html
+    block = html[html.index(fid):]
+    block = block[:block.index("data-row", 10)]
+    assert "<ol" in block and "<li>In the Unraid web UI, open the Docker tab and press Check for Updates</li>" in block
+    assert "<li>Update the containers you want one at a time, or press Update All</li>" in block
+    # The report page: findings with steps and no command stay under "Decide", with their steps.
+    rep = polled.get("/h/tower/report").text
+    decide = rep[rep.index('id="decide"'):rep.index('id="all"')]
+    assert "disk1 is 95% full" in decide and "What to do" in decide and "Allocation method" in decide
+    assert "<ol" in rep[rep.index('id="all"'):]
+    md = polled.get("/h/tower/report.md").text
+    assert "  What to do:" in md and "  1. In the Unraid web UI, open the Docker tab and press Check for Updates" in md
+    assert "  2. Update the containers you want one at a time, or press Update All" in md
+    decide_md = md[md.index("## Decide"):md.index("## All findings")]
+    assert "What to do:" in decide_md and "1. " in decide_md
+
+
+def test_what_to_do_is_escaped_like_the_rest(polled, hub_cfg):
+    conn = conn_of(hub_cfg)
+    conn.execute("UPDATE findings SET howto=? WHERE rule='unraid.container_updates'", ("<b>bold</b> step\n1. second *step*",))
+    html = polled.get("/h/tower/").text
+    assert "<b>bold</b>" not in html and "&lt;b&gt;bold&lt;/b&gt; step" in html
+    md = polled.get("/h/tower/report.md").text
+    assert r"1. \<b\>bold\</b\> step" in md and r"2. \1. second \*step\*" in md
+
+
+def test_collector_uploads_carry_no_howto(hub_cfg):
+    from daemonsight.collector import upload
+    assert "howto" not in hub.FindingIn.model_fields
+    row = {"rule": "pkg.updates", "key": "u", "severity": "low", "title": "t", "detail": "d", "link": None,
+           "fix": "sudo apt upgrade", "basis": "b", "howto": "steps"}
+    assert "howto" not in upload._finding_payload(row)
+    with pytest.raises(Exception):
+        hub.FindingIn(rule="pkg.updates", key="u", severity="low", title="t", detail="d", howto="steps")
+
+
+def test_the_notifications_page_lists_every_unread_alert_with_what_becomes_of_it(polled):
+    html = polled.get("/h/tower/notifications").text
+    assert "Date (UTC)" in html and "2026-10-01" in html and "System crashed" in html       # date, description
+    assert "Investigate at Settings / User Utilities / Fix Common Problems" in html
+    assert "Covered by a live check" in html and "unraid.disk_full" in html and "unraid.disk_temp" in html
+    assert "Finding" in html and "56 listed" in html and "49 alerts, 186 warnings" in html
+    assert "more unread than this list holds" in html          # the fixture holds 56 of 235
+    cells = re.findall(r"<td[^>]*>", html)
+    assert cells and all("data-label=" in t for t in cells)
+    ids = re.findall(r'<tr id="(notif-[^"]*)"', html)
+    assert len(ids) == 56 and len(set(ids)) == 56
+
+
+def test_the_old_per_container_findings_resolve(hub_cfg, fake, c):
+    save(c)
+    conn = conn_of(hub_cfg)
+    conn.execute("INSERT INTO findings (host, rule, key, severity, title, detail, first_seen, last_seen) "
+                 "VALUES ('tower', 'unraid.container_update', 'app-1', 'low', 'An update is available for app-1', 'd', 1, 2)")
+    poll_now(hub_cfg, fake, time.time())
+    rules = {f["rule"] for f in db.open_findings(conn, "tower")}
+    assert "unraid.container_update" not in rules and "unraid.container_updates" in rules
+
+
 def test_pages_have_labelled_cells_row_anchors_and_source_panels(polled):
     for path, anchors, query in (
             ("/h/tower/disks", ("array", "parity", "disk-parity", "disk-disk1", "disk-flash"), "array { state"),
             ("/h/tower/containers", ("ctr-app-1",), "docker { containers"),
             ("/h/tower/vms", ("vm-vm-1",), "vms { domains"),
-            ("/h/tower/notifications", (), "warningsAndAlerts")):
+            ("/h/tower/notifications", (), "importance: ALERT")):
         r = polled.get(path)
         assert r.status_code == 200, path
         html = r.text
@@ -442,7 +504,7 @@ def test_report_and_accept_work_unchanged(polled, hub_cfg):
 
 def test_untrusted_text_from_the_server_is_escaped(polled, hub_cfg, fake):
     evil = "<script>alert(1)</script>"
-    fake.set(unraid.Q_NOTIFICATIONS, lambda d: d["notifications"]["warningsAndAlerts"][0].update(title=evil, subject=evil))
+    fake.set(unraid.Q_NOTIFICATIONS, lambda d: d["notifications"]["alerts"][0].update(title=evil, subject=evil, description=evil))
     fake.set(unraid.Q_DOCKER, lambda d: d["docker"]["containers"][0].update(names=["/" + evil], image=evil))
     poll_now(hub_cfg, fake, time.time() + 400)
     for path in ("/h/tower/notifications", "/h/tower/containers", "/h/tower/", "/h/tower/report"):

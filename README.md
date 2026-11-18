@@ -31,11 +31,17 @@ the row they are about, and a port's panel shows the process behind it.
   Viewer-only API key, with no agent on the server. Add it on the Hosts page
   ("Add a system"): Test connection shows the server, version, array state
   and the key's roles, and a key that could change anything is refused. The
-  server gets its own pages (array and disks, containers, VMs, notifications)
-  and findings for full or hot disks, disk errors, a stopped array, an old
-  parity check, container updates, unread alerts and the UPS. Certificates
-  are verified, or you pin one after confirming its fingerprint. See
-  [SECURITY.md](SECURITY.md).
+  server gets its own pages (array and disks, containers grouped by your
+  Docker folders, VMs, notifications with the date and text of every unread
+  alert) and findings for full or hot disks, disk errors, a stopped array, an
+  old parity check (with what the check found and when one was cancelled),
+  unclean shutdowns (counted and dated), one finding for all container
+  updates, a newer Unraid release, unread alerts grouped by title, and the
+  UPS. Each finding from the hub's own rules has a "What to do" list of plain
+  steps. Notices that DaemonSight already checks live (disk usage,
+  temperature, parity checks) are not repeated as findings but stay listed on
+  the Notifications page. Certificates are verified, or you pin one after
+  confirming its fingerprint. See [SECURITY.md](SECURITY.md).
 - **Automatic updates.** The Packages page shows whether unattended-upgrades
   (apt) or dnf5-automatic (Fedora) will install security updates, and a
   low finding says how to turn it on.

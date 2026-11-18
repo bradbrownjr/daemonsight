@@ -154,9 +154,9 @@ def test_migration_from_schema_3(tmp_path):
     raw.executescript(V3_SCHEMA)
     raw.close()
     conn = db.connect_writer(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 6
     cols = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
-    assert {"fix", "basis"} <= cols
+    assert {"fix", "basis", "howto"} <= cols       # schema 6 added howto
     # Schema 5: remote systems.
     assert "kind" in {r[1] for r in conn.execute("PRAGMA table_info(hosts)")}
     assert {"id", "kind", "url", "enabled", "tls", "tls_pin", "interval", "last_ok", "last_error", "fails"} <= \
@@ -164,7 +164,7 @@ def test_migration_from_schema_3(tmp_path):
     assert {r[1] for r in conn.execute("PRAGMA table_info(accepted)")} == {
         "host", "rule", "key", "fingerprint", "note", "accepted_at", "accepted_by"}
     row = conn.execute("SELECT * FROM findings").fetchone()
-    assert row["fix"] is None and row["basis"] is None  # old rows get NULL
+    assert row["fix"] is None and row["basis"] is None and row["howto"] is None  # old rows get NULL
     # The next run rewrites the row with the new fields.
     db.reconcile_findings(conn, "h", 3, [Finding("pkg.updates", "updates", "low", "2 updates waiting", "d",
                                                  None, "sudo apt upgrade", "updates")])
@@ -180,6 +180,32 @@ def test_reader_copes_with_an_unmigrated_database(tmp_path):
     conn = db.connect_reader(path)
     active, held = db.findings_state(conn, "h")
     assert [d["rule"] for d in active] == ["pkg.updates"] and active[0]["fix"] is None and held == []
+    assert active[0]["howto"] is None           # a reader that finds no howto column still works
+
+
+V5_SCHEMA = """
+CREATE TABLE findings (id INTEGER PRIMARY KEY, host TEXT NOT NULL, rule TEXT NOT NULL, key TEXT NOT NULL,
+    severity TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL, link TEXT, first_seen REAL NOT NULL,
+    last_seen REAL NOT NULL, resolved_at REAL, fix TEXT, basis TEXT);
+INSERT INTO findings (host, rule, key, severity, title, detail, first_seen, last_seen)
+    VALUES ('h', 'unraid.disk_full', 'disk1', 'high', 'disk1 is 96% full', 'd', 1, 2);
+PRAGMA user_version=5;
+"""
+
+
+def test_migration_from_schema_5_adds_howto(tmp_path):
+    path = tmp_path / "v5.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(V5_SCHEMA)
+    raw.close()
+    conn = db.connect_writer(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert "howto" in {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
+    assert conn.execute("SELECT howto FROM findings").fetchone()["howto"] is None
+    db.reconcile_findings(conn, "h", 3, [Finding("unraid.disk_full", "disk1", "high", "disk1 is 96% full", "d",
+                                                 None, None, "disk1:high", "one\ntwo")])
+    assert conn.execute("SELECT howto FROM findings").fetchone()["howto"] == "one\ntwo"
+    db.migrate(conn)
 
 
 # ---- accepting findings on a hub --------------------------------------------

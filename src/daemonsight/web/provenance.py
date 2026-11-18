@@ -400,7 +400,25 @@ RULE_SOURCE = {"unraid": "unraid", "remote": "remote", "svc": "systemd", "ctr": 
                "cve": "cve"}
 
 
+def os_release() -> dict:
+    """The panel for the newest stable Unraid release, which is not read from the server's API."""
+    from ..remote import release
+    return {"title": "Newest stable Unraid release",
+            "read": "The Unraid API has no update field. The hub reads Unraid's public release page once a day and "
+                    "compares it with the version the API reports. The request is the same for every server, with only "
+                    "a generic User-Agent, DaemonSight/<version>; nothing about this server is sent",
+            "entries": [cmd("Check it yourself", f"curl -s {q(release.URL)}"),
+                        {"kind": "url", "label": "How Unraid's own check works", "text": "UnraidCheck.php in the Unraid API repository",
+                         "href": "https://github.com/unraid/api/blob/main/plugin/source/dynamix.unraid.net/usr/local/emhttp/plugins/dynamix.plugin.manager/include/UnraidCheck.php"},
+                        plain("Unraid web UI", "Tools, Update OS")]}
+
+
 def finding(rule: str, link_href: str | None) -> dict:
+    if rule == "unraid.os_update":
+        panel = os_release()
+        panel["entries"].insert(0, {"kind": "url", "label": "Rule", "text": f"{rule} in DESIGN.md",
+                                    "href": "https://github.com/bradbrownjr/daemonsight/blob/main/docs/DESIGN.md#findings"})
+        return panel
     src = RULE_SOURCE.get(rule.split(".", 1)[0], "findings")
     entries = [{"kind": "url", "label": "Rule", "text": f"{rule} in DESIGN.md",
                 "href": "https://github.com/bradbrownjr/daemonsight/blob/main/docs/DESIGN.md#findings"}]
@@ -414,12 +432,12 @@ def finding(rule: str, link_href: str | None) -> dict:
 
 UNRAID_TITLE = {
     "unraid_system": "System", "unraid_array": "Array and parity", "unraid_disks": "Disks (SMART)",
-    "unraid_docker": "Containers", "unraid_vms": "Virtual machines", "unraid_notifications": "Notifications",
+    "unraid_docker": "Containers", "unraid_folders": "Docker folders", "unraid_vms": "Virtual machines", "unraid_notifications": "Notifications",
     "unraid_ups": "UPS",
 }
 UNRAID_UI = {
     "unraid_system": "Dashboard", "unraid_array": "Main, Array Operation", "unraid_disks": "Main, click a disk, SMART",
-    "unraid_docker": "Docker", "unraid_vms": "VMs", "unraid_notifications": "the bell icon in the header",
+    "unraid_docker": "Docker", "unraid_folders": "Docker (the folders you arranged)", "unraid_vms": "VMs", "unraid_notifications": "the bell icon in the header",
     "unraid_ups": "Settings, UPS Settings",
 }
 

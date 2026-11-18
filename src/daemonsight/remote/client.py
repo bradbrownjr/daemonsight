@@ -143,6 +143,12 @@ class Net:
             verify = pinned_context(pem)
         return httpx.AsyncClient(verify=verify, timeout=TIMEOUT, follow_redirects=False)
 
+    def public(self) -> httpx.AsyncClient:
+        """A client for a public page (no key, normal CA check, no redirects)."""
+        if self.transport is not None:
+            return httpx.AsyncClient(transport=self.transport, timeout=TIMEOUT, follow_redirects=False)
+        return httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False)
+
     async def certificate(self, url: str) -> str:
         host, port = host_port(url)
         try:

@@ -9,7 +9,7 @@ import time
 
 from .. import db, findings as rules
 from ..config import Config
-from ..remote import store, unraid, unraid_rules
+from ..remote import release, store, unraid, unraid_notify, unraid_rules
 from . import provenance as prov
 from . import views
 from .views import _sortval, fmt_ago, fmt_bytes, fmt_duration, level_class, pct_class
@@ -40,7 +40,7 @@ def _panels(conn, cfg: Config) -> tuple[str | None, int]:
 
 
 def _states(snaps: dict) -> dict:
-    return {name: views._source_state(snaps, name) for name in unraid.SOURCES}
+    return {name: views._source_state(snaps, name) for name in unraid.SOURCES if name not in unraid.OPTIONAL}
 
 
 def _check_line(pc: dict | None, hist: list[dict]) -> tuple[str, str | None]:
@@ -85,8 +85,10 @@ def overview(conn, cfg: Config) -> dict:
 
     glance = []
     if sysd:
+        latest = release.stored(conn)
         note = " · ".join(x for x in (f"Kernel {sysd['kernel']}" if sysd.get("kernel") else "",
-                                           f"API {sysd['api_version']}" if sysd.get("api_version") else "") if x)
+                                           f"API {sysd['api_version']}" if sysd.get("api_version") else "",
+                                           f"{latest['version']} available" if release.newer(latest, sysd.get("version")) else "") if x)
         glance.append({"id": "os", "title": "Unraid", "value": sysd.get("version") or "?", "note": note or None})
         if sysd.get("boot_time"):
             glance.append({"title": "Uptime", "value": fmt_duration(time.time() - sysd["boot_time"]), "alert": None})
@@ -225,8 +227,31 @@ def containers(conn, cfg: Config) -> dict:
                       for p in c.get("ports", []) if p.get("public") is not None and p.get("private") is not None],
             "src": prov.unraid_container(c),
         })
-    return {"host": views._host(cfg, snaps), "rows": rows, "state": views._source_state(snaps, "unraid_docker"),
+    return {"host": views._host(cfg, snaps), "rows": rows, "groups": _groups(rows, _data(snaps, "unraid_folders")),
+            "folders_state": views._source_state(snaps, "unraid_folders"),
+            "state": views._source_state(snaps, "unraid_docker"),
             "src": {"docker": prov.unraid_section("unraid_docker", url, interval)}}
+
+
+def _groups(rows: list[dict], folders: dict | None) -> list[dict]:
+    """The container rows grouped by the folders on Unraid's Docker tab, in the owner's order, then "Ungrouped".
+    Every row appears exactly once. Without folder data (an older Unraid, or the read failed) there is one group
+    with no heading."""
+    if not folders or not folders.get("folders"):
+        return [{"title": None, "anchor": None, "rows": rows, "count": len(rows)}]
+    by_name = {r["name"]: r for r in rows}
+    placed: set[str] = set()
+    groups = []
+    for n, f in enumerate(folders["folders"]):
+        members = [by_name[c] for c in f["containers"] if c in by_name and c not in placed]
+        placed.update(r["name"] for r in members)
+        groups.append({"title": " / ".join(f["path"]), "anchor": rules.anchor("folder", n, f["name"]),
+                       "rows": members, "count": len(members)})
+    order = {n: i for i, n in enumerate(folders.get("ungrouped") or [])}
+    rest = sorted((r for r in rows if r["name"] not in placed), key=lambda r: (order.get(r["name"], len(order)), r["name"].lower()))
+    if rest or not groups:
+        groups.append({"title": "Ungrouped", "anchor": "folder-ungrouped", "rows": rest, "count": len(rest)})
+    return groups
 
 
 def vms(conn, cfg: Config) -> dict:
@@ -248,11 +273,20 @@ def notifications(conn, cfg: Config) -> dict:
     snaps = db.get_snapshots(conn, host)
     nt = _data(snaps, "unraid_notifications")
     url, interval = _panels(conn, cfg)
-    rows = [{"anchor": rules.anchor("notif", i["id"][:60]), "title": i["title"] or "(no title)", "subject": i["subject"],
-             "level": i["importance"].lower(), "level_badge": "bg-red text-red-fg" if i["importance"] == "ALERT" else "bg-yellow-lt",
-             "when": fmt_ago(i["time"]) if i["time"] else "—", "when_v": _sortval(i["time"])}
-            for i in (nt or {}).get("items", [])]
+    rows = []
+    for i in (nt or {}).get("items", []):
+        state, how = unraid_notify.disposition(i)
+        rows.append({"anchor": rules.anchor("notif", i["id"][:60]), "title": i["title"] or "(no title)", "subject": i["subject"],
+                     "description": i.get("description") or "", "link": i.get("link") or "",
+                     "level": i["importance"].lower(),
+                     "level_badge": "bg-red text-red-fg" if i["importance"] == "ALERT" else "bg-yellow-lt",
+                     "date": unraid_notify.day(i["time"]) if i["time"] else "—", "date_v": _sortval(i["time"]),
+                     "state": "Covered by a live check" if state == "covered" else "Finding",
+                     "state_badge": "bg-secondary-lt" if state == "covered" else "bg-azure-lt", "how": how})
+    unread = (nt or {}).get("unread") or {}
+    listed_of = (unread.get("alert") or 0) + (unread.get("warning") or 0)
     return {"host": views._host(cfg, snaps), "rows": rows, "unread": (nt or {}).get("unread"),
+            "covered": sum(1 for r in rows if r["state"] != "Finding"), "missing": max(0, listed_of - len(rows)),
             "state": views._source_state(snaps, "unraid_notifications"),
             "src": {"notifications": prov.unraid_section("unraid_notifications", url, interval)}}
 

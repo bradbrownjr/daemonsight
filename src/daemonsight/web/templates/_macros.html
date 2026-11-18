@@ -75,6 +75,11 @@
 <div class="ds-fix"><pre class="ds-fix-code"><code class="ds-copy-text">{{ text }}</code></pre><button type="button" class="btn btn-sm ds-copy">Copy</button></div>
 {%- endmacro %}
 
+{# The plain-language steps of a finding (hub rules only), numbered. #}
+{% macro howto_block(steps) -%}
+{% if steps %}<div class="ds-howto mt-1"><div class="subheader">What to do</div><ol class="ps-4 mb-1">{% for s in steps %}<li>{{ s }}</li>{% endfor %}</ol></div>{% endif %}
+{%- endmacro %}
+
 {# Accept a finding with a note. A plain form: it works without scripts. Only
    a hub can write, so a single host's pages have none. #}
 {% macro accept_form(f, where="") -%}

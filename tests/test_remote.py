@@ -144,7 +144,8 @@ def test_parse_the_rest():
     assert any(c["update"] for c in d["containers"]) and d["containers"][0]["ports"][0]["type"] == "TCP"
     assert [v["state"] for v in parsed("unraid_vms")["vms"]].count("SHUTOFF") == 5
     n = parsed("unraid_notifications")
-    assert n["unread"]["alert"] == 49 and len(n["items"]) == 14 and n["items"][0]["time"] > 1.7e9
+    assert n["unread"]["alert"] == 49 and len(n["items"]) == 56 and n["items"][0]["time"] > 1.7e9
+    assert n["items"][0]["importance"] == "ALERT" and n["items"][0]["description"] and n["items"][0]["link"].startswith("/")
     assert parsed("unraid_ups")["devices"][0]["status"] == "ONLINE"
     disks = parsed("unraid_disks")["disks"]
     assert disks[1]["device"] == "sdb" and disks[1]["smart"] == "OK" and disks[0]["interface"] == "USB"
@@ -156,10 +157,16 @@ def test_vms_that_are_off_are_unavailable_not_an_error():
 
 
 def test_text_from_the_server_is_cut_and_cleaned():
-    d = {"notifications": {"overview": {"unread": {}}, "warningsAndAlerts": [
-        {"id": "x:y", "title": "t" * 500 + "\x1b[31m", "subject": "a\x00b", "importance": "ALERT", "timestamp": None}]}}
+    d = {"notifications": {"overview": {"unread": {}}, "alerts": [
+        {"id": "x:y", "title": "t" * 500 + "\x1b[31m", "subject": "a\x00b", "importance": "ALERT", "timestamp": None,
+         "description": "d" * 900 + "<br>x", "link": "/Main" * 80}], "warnings": []}}
     item = unraid.parse_notifications(d)["items"][0]
     assert len(item["title"]) == 120 and item["subject"] == "ab" and "\x1b" not in item["title"]
+    assert len(item["description"]) == 300 and len(item["link"]) == 100
+    tagged = {"notifications": {"overview": {"unread": {}}, "alerts": [
+        {"id": "x:y", "title": "t", "subject": "s", "importance": "ALERT", "timestamp": None,
+         "description": "Errors<br>found <b>here</b>\nand there", "link": None}], "warnings": []}}
+    assert unraid.parse_notifications(tagged)["items"][0]["description"] == "Errors found here and there"
 
 
 # --- the key may only read -------------------------------------------------------------
@@ -247,11 +254,13 @@ def test_fixture_data_findings_and_their_links():
     old = by_rule(f, "unraid.parity_old")
     assert old and old[0].severity == "low" and "days ago" in old[0].title      # the last good check is August
     assert not by_rule(f, "unraid.parity_errors")      # the last completed check had 0 errors
-    assert len(by_rule(f, "unraid.container_update")) == sum(1 for c in parsed("unraid_docker")["containers"] if c["update"])
-    notes = by_rule(f, "unraid.notification")
-    assert len(notes) == 11 and notes[-1].key == "more" and notes[0].severity == "medium"
+    updates = by_rule(f, "unraid.container_updates")
+    assert len(updates) == 1 and not by_rule(f, "unraid.container_update")
+    assert updates[0].title == f"{sum(1 for c in parsed('unraid_docker')['containers'] if c['update'])} containers have updates"
+    assert by_rule(f, "unraid.unclean_shutdown") and by_rule(f, "unraid.notification")
     for x in f:
         assert x.fix is None and x.basis, x.rule            # decisions: no command, and a basis
+        assert x.howto and all(ln.strip() for ln in x.howto.split("\n")), x.rule     # every Unraid rule says what to do
         assert x.link.startswith("/") and not x.link.startswith("//")
         assert len(x.key) <= 300 and len(x.title) <= 300 and len(x.detail) <= 4000
 
@@ -355,24 +364,23 @@ def test_parity_check_errors_and_age():
     assert not by_rule(rules_for(array=lambda a: a.update(disks=[d for d in a["disks"] if d["kind"] != "parity"])), "unraid.parity_old")
 
 
-def test_container_updates_are_low_and_a_decision():
-    f = by_rule(rules_for(), "unraid.container_update")
-    assert f and all(x.severity == "low" and x.fix is None and "Docker tab" in x.detail for x in f)
-    assert f[0].link.startswith("/containers#ctr-")
-    assert not by_rule(rules_for(docker=lambda d: [c.update(update=False) for c in d["containers"]]), "unraid.container_update")
-    assert not by_rule(rules_for(docker=lambda d: [c.update(update=None) for c in d["containers"]]), "unraid.container_update")
+def test_container_updates_are_one_low_finding_with_the_names():
+    f = by_rule(rules_for(), "unraid.container_updates")
+    names = sorted((c["name"] for c in parsed("unraid_docker")["containers"] if c["update"]), key=str.lower)
+    assert len(f) == 1 and f[0].severity == "low" and f[0].fix is None and f[0].link == "/containers" and f[0].key == "all"
+    assert f[0].title == f"{len(names)} containers have updates" and all(n in f[0].detail for n in names)
+    assert f[0].basis == ",".join(names)            # a new container with an update brings back an accepted finding
+    assert "Check for Updates" in f[0].howto and "Update All" in f[0].howto and ":latest" in f[0].howto
+    one = by_rule(rules_for(docker=lambda d: [c.update(update=(i == 1)) for i, c in enumerate(d["containers"])]),
+                  "unraid.container_updates")
+    assert one[0].title == "1 container has an update"
+    assert not by_rule(rules_for(docker=lambda d: [c.update(update=False) for c in d["containers"]]), "unraid.container_updates")
+    assert not by_rule(rules_for(docker=lambda d: [c.update(update=None) for c in d["containers"]]), "unraid.container_updates")
 
-
-def test_unread_warnings_and_alerts_are_capped_and_untrusted_text_is_clipped():
-    f = by_rule(rules_for(), "unraid.notification")
-    assert len(f) == unraid_rules.NOTIFICATIONS_MAX + 1
-    assert [x.severity for x in f[:5]] == ["medium"] * 5           # alerts first
-    assert f[-1].title == "4 more unread warnings and alerts"
-    def one(n):
-        n["items"] = [{"id": "a" * 400, "title": "t" * 120, "subject": "s" * 200, "importance": "WARNING", "time": 1.0}]
-    only = by_rule(rules_for(notifications=one), "unraid.notification")
-    assert len(only) == 1 and only[0].severity == "low" and len(only[0].key) == 200 and len(only[0].title) < 160
-    assert not by_rule(rules_for(notifications=lambda n: n.update(items=[])), "unraid.notification")
+    def many(d):
+        d["containers"] = [{"name": f"c{i:03d}", "image": "x", "state": "RUNNING", "update": True} for i in range(55)]
+    big = by_rule(rules_for(docker=many), "unraid.container_updates")[0]
+    assert big.title == "55 containers have updates" and "c039" in big.detail and "c040" not in big.detail and "and 15 more" in big.detail
 
 
 def test_ups_on_battery_and_low_charge():
@@ -475,7 +483,9 @@ def test_a_poll_stores_every_source_and_opens_findings(conn, cfg, fake):
     assert r["last_ok"] == NOW and r["last_error"] is None and r["fails"] == 0
     assert conn.execute("SELECT last_seen, version FROM hosts WHERE id='tower'").fetchone()["version"] == "Unraid 7.3.2"
     rules = {f["rule"] for f in db.open_findings(conn, "tower")}
-    assert {"unraid.disk_full", "unraid.parity_old", "unraid.container_update", "unraid.notification"} <= rules
+    assert {"unraid.disk_full", "unraid.parity_old", "unraid.container_updates", "unraid.notification",
+            "unraid.unclean_shutdown"} <= rules
+    assert not any(r == "unraid.container_update" for r in rules)
     assert db.metric_series(conn, "tower", "cpu.percent", 0)[0][0] == NOW
     assert any(e["title"].startswith("Disk") or e["title"] for e in db.recent_events(conn, "tower"))
     # The first request each poll is `me`.
@@ -560,7 +570,7 @@ def test_one_failing_source_keeps_its_data_and_the_others_go_on(conn, cfg, fake)
     assert not d.ok and "docker is down" in d.error and d.data == before      # the last data stays
     assert db.get_snapshot(conn, "tower", "unraid_array").taken_at == NOW + 60
     assert store.get(conn, "tower")["fails"] == 0           # the server itself answered
-    assert any(f["rule"] == "unraid.container_update" for f in db.open_findings(conn, "tower"))
+    assert any(f["rule"] == "unraid.container_updates" for f in db.open_findings(conn, "tower"))
 
 
 def test_a_field_error_with_data_is_a_warning_not_a_failure(conn, cfg, fake):
@@ -573,10 +583,10 @@ def test_a_field_error_with_data_is_a_warning_not_a_failure(conn, cfg, fake):
 def test_findings_clear_when_the_server_fixes_things(conn, cfg, fake):
     add(conn, cfg)
     poll_at(conn, cfg, fake, NOW)
-    assert any(f["rule"] == "unraid.container_update" for f in db.open_findings(conn, "tower"))
+    assert any(f["rule"] == "unraid.container_updates" for f in db.open_findings(conn, "tower"))
     fake.set(unraid.Q_DOCKER, lambda d: [c.update(isUpdateAvailable=False) for c in d["docker"]["containers"]])
     poll_at(conn, cfg, fake, NOW + 60)
-    assert not any(f["rule"] == "unraid.container_update" for f in db.open_findings(conn, "tower"))
+    assert not any(f["rule"] == "unraid.container_updates" for f in db.open_findings(conn, "tower"))
     assert any(e["title"].startswith("Resolved:") for e in db.recent_events(conn, "tower", 100))
 
 

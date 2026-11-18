@@ -176,7 +176,8 @@ def finding_item(r: dict) -> dict:
     acc = r["accepted"]
     item = {"id": rules.anchor("finding", r["rule"], r["key"]), "rule": r["rule"], "key": r["key"],
             "severity": r["severity"], "title": r["title"], "detail": r["detail"], "link": r["link"],
-            "fix": r["fix"], "step": rules.step_of(r["rule"], r["key"]) if r["fix"] else None,
+            "fix": r["fix"], "howto": [ln.strip() for ln in (r.get("howto") or "").split("\n") if ln.strip()],
+            "step": rules.step_of(r["rule"], r["key"]) if r["fix"] else None,
             "label": label, "badge": cls, "since": fmt_ago(r["first_seen"]),
             "src": prov.finding(r["rule"], r["link"]), "accepted": None, "changed_note": None}
     if acc:
@@ -945,8 +946,12 @@ def _remote_row(conn, h, r, now: float, findings, findings_v) -> dict:
     else:
         state, badge = "Reachable", "bg-green-lt"
     host = urlsplit(r["url"]).netloc
+    from ..remote import release
+    ver = data.get("version")
+    latest = release.stored(conn)
     return {
-        "id": h["id"], "kind": r["kind"], "kind_label": "Unraid \u00b7 API", "state": state, "state_badge": badge,
+        "id": h["id"], "kind": r["kind"], "kind_label": f"Unraid {ver} \u00b7 API" if ver else "Unraid \u00b7 API",
+        "os_update": latest["version"] if release.newer(latest, ver) else "", "state": state, "state_badge": badge,
         "role": "server", "seen": fmt_ago(r["last_poll"]) if r["last_poll"] else "never", "seen_v": r["last_poll"] or 0,
         "error": (r["last_error"] or "")[:200] if r["fails"] else "",
         "os": f"Unraid {data['version']}" if data.get("version") else "Unraid",

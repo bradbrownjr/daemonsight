@@ -270,4 +270,7 @@ def stale_finding(stale: list[tuple[str, float | None]], titles: dict[str, str])
     return Finding("cve.feed_stale", "feeds", "low", "CVE data is out of date",
                    "The hub hasn't fetched: " + ", ".join(parts) + ". Matches and scores here may be old. Check the "
                    "hub's outbound HTTPS to these sites, and the feed status on the Vulnerabilities page.",
-                   "/vulnerabilities#feeds")
+                   "/vulnerabilities#feeds", None, None,
+                   "Open the Vulnerabilities page and read the feed status for the feed that failed\n"
+                   "Check that the machine the hub runs on can reach that site over HTTPS (DNS, firewall, proxy)\n"
+                   "The finding goes away after the next successful fetch")

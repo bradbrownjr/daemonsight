@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from .findings import fingerprint
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS findings (
     last_seen   REAL NOT NULL,
     resolved_at REAL,
     fix         TEXT,   -- command(s) that resolve it, one per line; NULL when none does
-    basis       TEXT    -- what an acceptance is tied to; NULL means the title
+    basis       TEXT,   -- what an acceptance is tied to; NULL means the title
+    howto       TEXT    -- plain-language steps, one per line (hub rules only); NULL when none
 );
 CREATE UNIQUE INDEX IF NOT EXISTS findings_open
     ON findings (host, rule, key) WHERE resolved_at IS NULL;
@@ -194,7 +195,8 @@ def migrate(conn: sqlite3.Connection) -> None:
         # Version 4 databases have no remotes table (the script above created it) and no hosts.kind.
         # Version 3 findings have no fix or basis; old rows keep NULL until the next run rewrites them.
         have = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
-        for col in ("fix", "basis"):
+        # Version 5 findings have no howto.
+        for col in ("fix", "basis", "howto"):
             if col not in have:
                 conn.execute(f"ALTER TABLE findings ADD COLUMN {col} TEXT")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -271,15 +273,15 @@ def reconcile_findings(conn, host: str, ts: float, current: list,
             seen.add(ident)
             if ident in open_rows:
                 conn.execute(
-                    "UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, last_seen=? "
+                    "UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, howto=?, last_seen=? "
                     "WHERE id=?",
-                    (f.severity, f.title, f.detail, f.link, f.fix, f.basis, ts, open_rows[ident]["id"]),
+                    (f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, ts, open_rows[ident]["id"]),
                 )
             else:
                 conn.execute(
-                    "INSERT INTO findings (host, rule, key, severity, title, detail, link, fix, basis, "
-                    "first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (host, f.rule, f.key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, ts, ts),
+                    "INSERT INTO findings (host, rule, key, severity, title, detail, link, fix, basis, howto, "
+                    "first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (host, f.rule, f.key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, ts, ts),
                 )
                 changes.append(("opened", f))
         for ident, row in open_rows.items():
@@ -307,12 +309,12 @@ def set_finding(conn, host: str, ts: float, f, *, rule: str, key: str) -> str | 
             return "resolved"
         return None
     if row:
-        conn.execute("UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, last_seen=? "
-                     "WHERE id=?", (f.severity, f.title, f.detail, f.link, f.fix, f.basis, ts, row["id"]))
+        conn.execute("UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, howto=?, last_seen=? "
+                     "WHERE id=?", (f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, ts, row["id"]))
         return None
-    conn.execute("INSERT INTO findings (host, rule, key, severity, title, detail, link, fix, basis, "
-                 "first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                 (host, rule, key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, ts, ts))
+    conn.execute("INSERT INTO findings (host, rule, key, severity, title, detail, link, fix, basis, howto, "
+                 "first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (host, rule, key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, ts, ts))
     return "opened"
 
 
@@ -354,10 +356,11 @@ def open_findings(conn, host: str) -> list[sqlite3.Row]:
 
 def _finding_dict(r: sqlite3.Row) -> dict:
     """A findings row as a dict. A database the collector hasn't migrated yet
-    (the web process only reads it) lacks the fix and basis columns."""
+    (the web process only reads it) lacks the fix, basis and howto columns."""
     d = dict(r)
     d.setdefault("fix", None)
     d.setdefault("basis", None)
+    d.setdefault("howto", None)
     return d
 
 

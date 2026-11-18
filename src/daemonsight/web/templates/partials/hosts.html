@@ -35,7 +35,7 @@
           <td data-v="{{ h.findings_v }}" data-label="Findings">{% for label, cls, n in h.findings %}<span class="badge {{ cls }} me-1">{{ n }} {{ label|lower }}</span>{% else %}<span class="text-secondary">None</span>{% endfor %}</td>
           <td data-label="System">{{ h.os }}{% if h.support.label and not h.support.plain %} <span class="badge {{ h.support.badge }}">{{ h.support.label }}</span>{% endif %}{% if h.kernel or h.uptime %}<div class="text-secondary small">{% if h.kernel %}kernel {{ h.kernel }}{% endif %}{% if h.kernel and h.uptime %} · {% endif %}{% if h.uptime %}up {{ h.uptime }}{% endif %}</div>{% endif %}</td>
           {% if h.kind %}
-          <td class="small" data-label="Version">{{ h.kind_label }}</td>
+          <td class="small" data-label="Version">{{ h.kind_label }}{% if h.os_update %}<div class="text-secondary">{{ h.os_update }} available</div>{% endif %}</td>
           {% else %}
           <td class="small" data-label="Version">{{ h.version }}
             {% if h.updating %}

@@ -51,19 +51,24 @@
 
   function sortTable(table) {
     var key = table.getAttribute("data-table");
-    var body = table.tBodies[0];
     var head = table.tHead && table.tHead.rows[0];
-    if (!body || !head) return;
+    if (!table.tBodies.length || !head) return;
     var state = sorts[key];
     var col = state ? state.col : -1;
     each(head.cells, function (th, i) {
       if (!th.hasAttribute("data-sort")) return;
       th.setAttribute("aria-sort", i === col ? (state.dir > 0 ? "ascending" : "descending") : "none");
     });
+    var numeric = col >= 0 && head.cells[col] && head.cells[col].getAttribute("data-sort") === "num";
+    // A table may hold several bodies (the containers, one per folder): each is sorted on its own, so a folder
+    // heading stays above its rows.
+    each(table.tBodies, function (body) { sortBody(body, col, state, numeric); });
+  }
+
+  function sortBody(body, col, state, numeric) {
     var rows = Array.prototype.filter.call(body.rows, function (r) { return r.hasAttribute("data-row"); });
     // Remember the server's order so "unsorted" can restore it.
     each(rows, function (r, i) { if (!r.hasAttribute("data-i")) r.setAttribute("data-i", String(i)); });
-    var numeric = col >= 0 && head.cells[col] && head.cells[col].getAttribute("data-sort") === "num";
     rows.sort(function (a, b) {
       if (col >= 0) {
         var va = cellValue(a, col, numeric), vb = cellValue(b, col, numeric);
@@ -161,6 +166,11 @@
       });
       var noMatch = terms.length > 0 && rows.length > 0 && shown === 0;
       section.toggleAttribute("data-nomatch", noMatch);
+      // A folder heading goes when the filter hides every row under it.
+      each(section.querySelectorAll("tbody[data-group]"), function (body) {
+        var visible = body.querySelectorAll("[data-row]:not(.ds-filtered)").length;
+        each(body.querySelectorAll(".ds-group-head"), function (h) { h.classList.toggle("ds-filtered", visible === 0 && terms.length > 0); });
+      });
       var count = section.querySelector(".ds-shown");
       if (count) count.textContent = terms.length && rows.length ? shown + " match · " : "";
     });

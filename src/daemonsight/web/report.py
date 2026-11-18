@@ -162,6 +162,8 @@ def _finding_md(it: dict, *, fix: bool, step: bool = False) -> list[str]:
     parts = []
     if it["detail"]:
         parts.append(md_text(it["detail"]))
+    if it.get("howto"):
+        parts.append("What to do:\n\n" + "\n".join(f"{n}. {md_text(step)}" for n, step in enumerate(it["howto"], 1)))
     if it["changed_note"]:
         parts.append(f"_{md_text(it['changed_note'])}_")
     if it.get("href"):
@@ -169,7 +171,7 @@ def _finding_md(it: dict, *, fix: bool, step: bool = False) -> list[str]:
     if step and it.get("step_title"):
         parts.append(f"Step: {md_text(it['step_title'])}")
     for part in parts:
-        out += ["", f"  {part}"]
+        out += ["", *("  " + ln if ln else "" for ln in part.split("\n"))]
     if fix and it["fix"]:
         out += ["", *("  " + ln for ln in md_code(it["fix"]).split("\n"))]
     out.append("")
