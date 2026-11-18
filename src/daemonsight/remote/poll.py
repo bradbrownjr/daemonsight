@@ -18,6 +18,10 @@ Per system, one poll:
      last data, and shows its age and error on the page; it never ends the poll.
   3. Rules (unraid_rules.py) make the open `unraid.*` findings match.
 
+An OPNsense firewall is polled the same way but over REST (`poll_opnsense`): each source of opnsense.SOURCES that is
+due is one GET (or two) through the GET-only client; a source the user may not read (403) stores "needs privilege X"
+and the others carry on; opnsense_rules.py makes the open `opnsense.*` findings match.
+
 Unreachable: a poll that can't read the server leaves every stored reading as
 it was and records `last_error`. After three intervals (and at least three
 minutes) without a good poll the hub opens `remote.unreachable` (High).
@@ -36,15 +40,22 @@ import time
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import release, store, unraid
-from .client import Graph, Net, RemoteError
+from . import opnsense, release, roles, store, unraid
+from .client import Graph, Net, RemoteError, Rest
 
 log = logging.getLogger("daemonsight.remote")
 UNREACHABLE_AFTER_INTERVALS = 3
 UNREACHABLE_MIN_SECONDS = 180
 MAX_PARALLEL = 4
-RULE_PREFIX = "unraid."
+RULE_PREFIX = {"unraid": "unraid.", "opnsense": "opnsense."}
 
+
+HOWTO_UNREACHABLE_OPNSENSE = "\n".join((
+    "Check that the firewall is on and reachable: ping its address from the machine the hub runs on",
+    "Open Hosts and Edit this system: check its address (https, with the web GUI's port) and that the key and secret are still right",
+    "In OPNsense, System \u2192 Access \u2192 Users shows whether the user and its API key still exist",
+    "If you pinned its certificate and the firewall's certificate changed, pin the new one in the same form",
+    "The finding goes away at the next good read"))
 
 HOWTO_UNREACHABLE = "\n".join((
     "Check that the system is on and on the network: ping its address from the machine the hub runs on",
@@ -88,7 +99,7 @@ def _set_unreachable(conn, row, now: float, error: str | None) -> None:
                         f"The hub has not read this system for {int(now - base)} seconds (last good read: {since}). "
                         f"Last error: {error} Check that it is on, that its address and key are right "
                         "(Hosts, Edit) and, for a pinned certificate, that it hasn't changed.", "/", None, None,
-                        HOWTO_UNREACHABLE)
+                        HOWTO_UNREACHABLE_OPNSENSE if row["kind"] == "opnsense" else HOWTO_UNREACHABLE)
     change = db.set_finding(conn, host, now, f, rule="remote.unreachable", key="unreachable")
     if change == "opened":
         db.add_event(conn, host, now, "remote_unreachable", f.title, severity="high", detail=error, link="/")
@@ -106,16 +117,22 @@ def _record_failure(conn, row, now: float, error: str) -> None:
 
 def _record_success(conn, row, now: float, system: dict | None) -> None:
     host = row["id"]
+    kind = row["kind"]
     was_down = (row["fails"] or 0) > 0
     conn.execute("UPDATE remotes SET last_poll=?, last_ok=?, last_error=?, fails=0 WHERE id=?", (now, now, None, host))
     version = (system or {}).get("version")
     conn.execute("UPDATE hosts SET last_seen=?, version=COALESCE(?, version) WHERE id=?",
-                 (now, f"Unraid {version}" if version else None, host))
+                 (now, f"{store.KINDS.get(kind, kind)} {version}" if version else None, host))
     if was_down:
         _event(conn, host, now, "remote_back", "Reading this system again")
     _set_unreachable(conn, store.get(conn, host), now, None)
-    current = unraid_rules_evaluate(conn, host, now)
-    for change, f in db.reconcile_findings(conn, host, now, current, only_prefix=RULE_PREFIX):
+    reconcile(conn, host, kind, now)
+
+
+def reconcile(conn, host: str, kind: str, now: float) -> None:
+    """Make the open findings of this kind of system match what its stored readings say now, with events."""
+    current = opnsense_rules_evaluate(conn, host, now) if kind == "opnsense" else unraid_rules_evaluate(conn, host, now)
+    for change, f in db.reconcile_findings(conn, host, now, current, only_prefix=RULE_PREFIX.get(kind, "unraid.")):
         if change == "opened":
             db.add_event(conn, host, now, "finding_opened", f.title, severity=f.severity, detail=f.detail, link=f.link)
         else:
@@ -125,6 +142,21 @@ def _record_success(conn, row, now: float, system: dict | None) -> None:
 def unraid_rules_evaluate(conn, host: str, now: float) -> list[Finding]:
     from . import unraid_rules
     return unraid_rules.evaluate(_rule_inputs(conn, host), now)
+
+
+def opnsense_inputs(conn, host: str) -> dict[str, dict | None]:
+    """Each OPNsense source's stored data by short name, None when it can't be read (no privilege, not installed)."""
+    snaps = db.get_snapshots(conn, host)
+    out: dict[str, dict | None] = {}
+    for name in opnsense.SOURCES:
+        s = snaps.get(name)
+        out[name.removeprefix(opnsense.SNAPSHOT_PREFIX)] = s.data if s and s.data and s.data.get("available") is not False else None
+    return out
+
+
+def opnsense_rules_evaluate(conn, host: str, now: float) -> list[Finding]:
+    from . import opnsense_rules
+    return opnsense_rules.evaluate(opnsense_inputs(conn, host), now, roles.load_overrides(conn, host), opnsense.collector_hosts(conn))
 
 
 async def _sample_stats(graph: Graph, docker: dict | None, key: str, now: float) -> tuple[bool, str | None, dict | None]:
@@ -152,6 +184,9 @@ async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -
     """One poll of one system. Never raises."""
     now = time.time() if now is None else now
     host = row["id"]
+    if row["kind"] == "opnsense":
+        await poll_opnsense(conn, cfg, row, net, now)
+        return
     key = store.read_key(cfg.data_dir, host)
     if key is None:
         if store.get(conn, host) is not None:
@@ -227,6 +262,73 @@ async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -
         old = db.get_snapshot(conn, host, "unraid_system")
         system = old.data if old else None
     _record_success(conn, current, now, system)
+
+
+async def poll_opnsense(conn, cfg: Config, row, net: Net, now: float) -> None:
+    """One poll of one OPNsense firewall. Never raises. A source the user may not read stores "needs privilege X" and
+    the rest go on; a refused key, a TLS failure, or a firewall that can't be reached at all ends the poll."""
+    host = row["id"]
+    creds = store.read_credentials(cfg.data_dir, host)
+    if creds is None:
+        if store.get(conn, host) is not None:
+            _record_failure(conn, row, now, "The API key file is missing or unreadable. Edit the system and enter the key and secret again.")
+        return
+    key, secret = creds
+    results: dict[str, tuple[bool, str | None, dict | None]] = {}
+    try:
+        rest = Rest(row["url"], key, secret, net.http(row["tls"], row["tls_cert"]), opnsense.ALLOWED)
+    except RemoteError as exc:
+        _record_failure(conn, row, now, opnsense.error_text(exc, key, secret))
+        return
+    try:
+        try:
+            snaps = db.get_snapshots(conn, host)
+            for name, src in opnsense.SOURCES.items():
+                prev = snaps.get(name)
+                if not opnsense.due(now, prev.taken_at if prev else None, src.tier, row["interval"]):
+                    continue
+                try:
+                    results[name] = (True, None, await opnsense.read_source(rest, src))
+                except RemoteError as exc:
+                    if exc.kind in ("auth", "tls") or (exc.kind == "unreachable" and not any(r[0] for r in results.values())):
+                        raise
+                    if exc.kind == "forbidden":
+                        results[name] = (False, f"Needs privilege {src.privilege}", opnsense.forbidden_data(src))
+                    elif exc.kind == "missing" and src.optional:
+                        results[name] = (True, None, opnsense.not_installed_data(src))
+                    else:
+                        results[name] = (False, opnsense.error_text(exc, key, secret), None)
+                except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                    results[name] = (False, f"Unexpected reply: {type(exc).__name__}", None)
+        finally:
+            await rest.aclose()
+    except RemoteError as exc:
+        current = store.get(conn, host)
+        if current is not None and current["enabled"]:
+            _record_failure(conn, current, now, opnsense.error_text(exc, key, secret))
+        return
+    except Exception as exc:  # a bug here must not stop the other systems
+        log.exception("Reading %s failed", host)
+        current = store.get(conn, host)
+        if current is not None:
+            _record_failure(conn, current, now, f"Unexpected error: {type(exc).__name__}")
+        return
+    current = store.get(conn, host)
+    if current is None or not current["enabled"]:   # removed or disabled while we waited
+        return
+    fw = results.get("opnsense_firmware")
+    if fw and fw[0] and fw[2] and fw[2].get("available") is not False:
+        old = db.get_snapshot(conn, host, "opnsense_firmware")
+        was = (old.data or {}).get("pending_since") if old and old.data else None
+        fw[2]["pending_since"] = (was or now) if fw[2].get("count") else None
+    for name, (ok, error, data) in results.items():
+        _put_source(conn, host, name, now, ok, error, data)
+    snaps = db.get_snapshots(conn, host)
+    if "opnsense_system" in results and results["opnsense_system"][0] and results["opnsense_system"][2].get("memory"):
+        db.add_metrics(conn, host, now, {"mem.percent": results["opnsense_system"][2]["memory"].get("percent")})
+    fwd = snaps.get("opnsense_firmware")
+    version = fwd.data.get("version") if fwd and fwd.data and fwd.data.get("available") is not False else None
+    _record_success(conn, current, now, {"version": version})
 
 
 async def run_once(conn, cfg: Config, net: Net, now: float | None = None) -> int:

@@ -1,0 +1,32 @@
+{
+ "Version": "1.80.0",
+ "BackendState": "Running",
+ "AuthURL": "",
+ "TailscaleIPs": [
+  "100.64.0.10"
+ ],
+ "Health": [],
+ "Self": {
+  "HostName": "fw",
+  "TailscaleIPs": [
+   "100.64.0.10"
+  ],
+  "AllowedIPs": [
+   "100.64.0.10/32",
+   "10.20.0.0/24"
+  ],
+  "PrimaryRoutes": [
+   "10.20.0.0/24"
+  ],
+  "ExitNodeOption": false,
+  "Online": true
+ },
+ "Peer": {
+  "nodekey:a": {
+   "HostName": "laptop"
+  },
+  "nodekey:b": {
+   "HostName": "phone"
+  }
+ }
+}

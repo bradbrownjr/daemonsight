@@ -5,6 +5,7 @@
 {% if t %}
 {{ src_panel("src-system", v.src.system) }}
 <section id="system" class="ds-tiles mb-4" aria-label="System health">
+  {% if t.cpu %}
   <div class="card card-sm"><div class="card-body">
     <div class="subheader">CPU · {{ t.cpu.count }} {{ 'threads' if v.host.kind else 'vCPU' }}{{ src_button("src-system", "System health") }}</div>
     <div class="d-flex align-items-baseline gap-2 mt-1">
@@ -15,9 +16,10 @@
     <svg class="ds-spark mt-2" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="2" points="{{ t.cpu.spark }}"></polyline></svg>
     {% endif %}
   </div></div>
+  {% endif %}
 
   <div class="card card-sm"><div class="card-body">
-    <div class="subheader">Memory</div>
+    <div class="subheader">Memory{% if not t.cpu %}{{ src_button("src-system", "Resources") }}{% endif %}</div>
     <div class="d-flex align-items-baseline gap-2 mt-1">
       <span class="h1 m-0">{{ '%.0f' % t.mem.percent }}%</span>
       <span class="text-secondary">{{ t.mem.used }} of {{ t.mem.total }}</span>
@@ -103,6 +105,40 @@
     <div class="card-body text-secondary ds-nomatch">No findings match the filter.</div>
     <div class="card-body text-secondary ds-status-empty">Nothing needs attention. Accepted findings are hidden by the filter above; choose All to list them.</div>
   </section>
+
+  {% if v.firmware %}
+  {{ src_panel("src-firmware", v.src.firmware) }}
+  <section class="card mt-4" id="firmware" aria-labelledby="firmware-title" data-section>
+    <div class="card-header">
+      <h2 class="card-title" id="firmware-title">Pending firmware updates</h2>{{ src_button("src-firmware", "Firmware") }}
+      <div class="card-actions text-secondary">{{ v.firmware.count }} waiting{% if v.firmware.new %} · to {{ v.firmware.new }}{% endif %}{% if v.firmware.reboot %} · <span class="text-orange">reboot needed</span>{% endif %}</div>
+    </div>
+    <div class="card-body text-secondary small">From the firewall's last firmware check ({{ v.firmware.last_check or 'time unknown' }}){% if v.firmware.since %}; the hub has seen updates waiting since {{ v.firmware.since }}{% endif %}. DaemonSight never starts a check.</div>
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table" data-table="opn-firmware">
+        <thead><tr><th data-sort="text">Package</th><th data-sort="text">Now</th><th data-sort="text">New</th><th data-sort="text">What</th></tr></thead>
+        <tbody>
+          {% for p in v.firmware.rows %}<tr data-row><td class="font-monospace" data-label="Package">{{ p.name }}</td><td data-label="Now">{{ p.old }}</td><td data-label="New">{{ p.new }}</td><td data-label="What">{{ p.reason }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if v.resources %}
+  <section class="card mt-4" id="resources" aria-labelledby="resources-title" data-section>
+    <div class="card-header"><h2 class="card-title" id="resources-title">Disks and temperatures</h2>{{ src("src-resources", v.src.resources) }}</div>
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table" data-table="opn-resources">
+        <thead><tr><th data-sort="text">Mount</th><th data-sort="text">Type</th><th data-sort="num">Used</th></tr></thead>
+        <tbody>
+          {% for d in v.resources.disks %}<tr data-row><td class="font-monospace" data-label="Mount">{{ d.mount }}</td><td data-label="Type">{{ d.type }}</td><td data-label="Used">{{ d.used }} of {{ d.total }}{% if d.percent is not none %} ({{ '%.0f' % d.percent }}%){% endif %}</td></tr>{% endfor %}
+          {% for t in v.resources.temps %}<tr data-row><td class="font-monospace" data-label="Sensor">{{ t.device }}</td><td data-label="Type">temperature</td><td data-label="Reading"><span class="{{ t.class }}">{{ '%.0f' % t.celsius }} °C</span></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
   </div>
 
   <div class="ds-side-col">

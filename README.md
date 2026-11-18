@@ -44,6 +44,19 @@ the row they are about, and a port's panel shows the process behind it.
   a few seconds every minute, and the Overview lists the five busiest by CPU
   and by memory. Certificates are verified, or you pin one after confirming
   its fingerprint. See [SECURITY.md](SECURITY.md).
+- **OPNsense, read over its API.** The hub polls an OPNsense firewall with a
+  dedicated user's API key and secret, no agent on the firewall. Its pages
+  list the pass rules on internet-facing interfaces, port forwards, Caddy
+  sites, WireGuard peers, Tailscale, gateways, interfaces and services, with
+  findings for pending firmware, a gateway down or lossy, a WireGuard peer
+  that has not connected for a day or an instance with no peer, any-to-any
+  and floating pass rules, forwards with no port, forwards and Caddy sites
+  pointing at a host where nothing listens, a stopped service, and a full
+  disk or hot sensor. Interface roles (WAN, LAN, VPN, other) decide what is
+  "internet-facing" and you can correct them. A forward that reaches a host
+  also shows on that host's Exposure page. OPNsense has no read-only
+  privilege, so the hub's client sends GET only and the key's user should hold
+  only the listed privileges. See [SECURITY.md](SECURITY.md).
 - **Automatic updates.** The Packages page shows whether unattended-upgrades
   (apt) or dnf5-automatic (Fedora) will install security updates, and a
   low finding says how to turn it on.
@@ -95,7 +108,7 @@ the row they are about, and a port's panel shows the process behind it.
   stays in the config file. On a host without a hub the page shows the
   running values read-only. See [docs/INSTALL.md](docs/INSTALL.md#the-settings-page).
 
-The OPNsense API, log collection and alerts are planned. See [docs/DESIGN.md](docs/DESIGN.md).
+Log collection, alerts, and OPNsense DHCP leases and firewall logs are planned. See [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Install
 

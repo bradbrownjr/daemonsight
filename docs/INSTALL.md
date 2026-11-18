@@ -157,7 +157,7 @@ restarting:
 | CVE checks | Enabled, check every N hours, the EPSS score that makes a finding High |
 | Retention | Chart points (hours), Recent changes (days), cleared findings (days); 0 keeps for good |
 | Backups | Hours between scheduled backups (blank is automatic, 0 is off), how many to keep |
-| Remote systems | Whether the hub reads Unraid systems at all |
+| Remote systems | Whether the hub reads Unraid and OPNsense systems at all |
 
 Each setting shows its default, the range it accepts and where its current
 value comes from:
@@ -662,7 +662,7 @@ once the hub is back.
 ### Add an Unraid server
 
 An Unraid server needs no collector. The hub reads its GraphQL API with a key
-that can only read. The Add a system page shows these steps next to the form,
+that can only read. The Add a system form has these steps in a folded guide,
 with links to Unraid's own docs on API keys
 (https://docs.unraid.net/API/programmatic-api-key-management/).
 
@@ -691,6 +691,57 @@ one; the saved one is never shown) or turns reading off. Remove asks you to type
 the name, deletes the key file and the server's history. Revoke the key in
 Unraid as well.
 
+### Add an OPNsense firewall
+
+The hub reads the firewall's REST API with an API key and secret. No agent runs
+on the firewall. OPNsense has no read-only privilege: each privilege covers a
+whole page, read and write alike. DaemonSight only sends GET requests, but the
+key could do more than that, so give it a dedicated user with only the
+privileges below. The Add a system form has these steps in a folded guide, with
+links to OPNsense's docs on API keys and users
+(https://docs.opnsense.org/development/how-tos/api.html,
+https://docs.opnsense.org/manual/how-tos/user-local.html).
+
+1. In OPNsense, open System, Access, Users and add a user such as `daemonsight`.
+   Leave it out of every group (admins in particular) and give it a password
+   nobody will use.
+2. In that user's Effective Privileges, add only these:
+   - Lobby: Dashboard (CPU, memory, disk, temperature)
+   - Status: Interfaces
+   - System: Gateways
+   - VPN: WireGuard: Status
+   - Status: Services
+   - Firewall: Rules [new] (also lists the classic rules)
+   - Firewall: NAT: Destination NAT
+   - System: Firmware (pending updates; it is the broadest, since it also covers
+     installing updates, so leave it out if you'd rather the key could not)
+   - Services: Caddy (only with the os-caddy plugin)
+   - Tailscale (only with the os-tailscale plugin)
+
+   A privilege you leave out turns off only the page it feeds; the others work.
+3. Save, edit the user again and create an API key (the + in API keys). OPNsense
+   downloads a text file once with two lines: `key=...` and `secret=...`.
+4. On the hub, open Hosts, then "Add a system", choose OPNsense, give it a name,
+   the web GUI's address with its port (for example `https://fw.example.lan:8443`,
+   HTTPS only) and paste the key and the secret.
+5. Press Test connection. It lists every source as Readable, "Needs privilege X"
+   or "Plugin not installed". A user that can read none of them is refused.
+6. If the firewall uses its own self-signed certificate, the test shows its
+   SHA-256 fingerprint. Compare it with the firewall's (System, Settings,
+   Administration shows the certificate; or run `openssl s_client` from another
+   machine), then choose to trust it. Nothing is sent until you do.
+7. Save. The first read happens within a few seconds, and the firewall appears on
+   the Hosts page as "OPNsense · API" with Overview, Firewall, VPN, Gateways &
+   interfaces and Report pages.
+
+The hub reads every minute by default (30 to 3600 seconds). Firmware, rules,
+port forwards and Caddy are read every 5 minutes, or at the interval if that is
+longer. On the Gateways & interfaces page you can correct an interface's role
+(WAN, LAN, VPN, other); the findings about "internet-facing" rules and forwards
+follow the roles, not the interface names. Roles are saved in the hub, not on
+the firewall. Edit, Remove and the certificate pin work as for Unraid; delete the
+user's API key in OPNsense as well when you remove the system.
+
 If the hub runs as an Unraid container, it has to be able to reach Unraid's own
 address. On the default bridge network it can. On a custom network with its own
 IP address (macvlan or ipvlan), a container can't reach the Unraid host
@@ -710,7 +761,7 @@ docker exec daemonsight daemonsight hub revoke vps            # its token stops 
 docker exec daemonsight daemonsight hub revoke vps --purge    # and its data is deleted
 ```
 
-For an Unraid server added by API, the same commands list it and remove it
+For an Unraid server or OPNsense firewall added by API, the same commands list it and remove it
 (`revoke` deletes its key file; the history goes with `--purge`). The web UI's
 Remove does both.
 

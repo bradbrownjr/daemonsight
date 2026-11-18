@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}VPN · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · OPNsense REST API: WireGuard and Tailscale</div>
+  <h1 class="page-title">VPN</h1>
+</div>
+{% include "partials/opn_vpn.html" %}
+{% endblock %}

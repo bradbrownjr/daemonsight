@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_macros.html" import src %}
+{% block title %}Gateways &amp; interfaces · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · OPNsense REST API: gateways, interfaces, services</div>
+  <h1 class="page-title">Gateways &amp; interfaces</h1>
+</div>
+{% include "partials/opn_network.html" %}
+{% if can_accept and v.interfaces %}
+{# Outside the live part, so a refresh doesn't undo a choice that isn't saved yet. #}
+<section class="card mb-4" id="roles" aria-labelledby="roles-title">
+  <div class="card-header"><h2 class="card-title" id="roles-title">Interface roles</h2></div>
+  <form method="post" action="{{ base }}/roles" class="m-0">
+    <div class="card-body">
+      <p class="text-secondary">DaemonSight works each role out from what the firewall reports; set one here when it is wrong. It is stored in the hub, never sent to the firewall.</p>
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table" data-table="roles">
+          <thead><tr><th>Interface</th><th>Worked out as</th><th><label for="role-first">Role</label></th></tr></thead>
+          <tbody>
+            {% for i in v.interfaces if i.id %}
+            <tr>
+              <td data-label="Interface"><strong>{{ i.name }}</strong> <span class="text-secondary font-monospace">{{ i.device }}</span></td>
+              <td data-label="Worked out as">{{ i.auto_label }} <span class="text-secondary small">({{ i.why if not i.overridden else 'see Interfaces above' }})</span></td>
+              <td data-label="Role">
+                <select class="form-select form-select-sm" name="role-{{ i.id }}"{% if loop.first %} id="role-first"{% endif %} aria-label="Role of {{ i.name }}">
+                  <option value="auto"{% if not i.overridden %} selected{% endif %}>Automatic</option>
+                  {% for key, label in v.ROLES %}<option value="{{ key }}"{% if i.overridden and i.role_key == key %} selected{% endif %}>{{ label }}</option>{% endfor %}
+                </select>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer"><button type="submit" class="btn btn-primary">Save roles</button></div>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

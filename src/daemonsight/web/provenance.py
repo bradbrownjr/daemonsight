@@ -28,6 +28,7 @@ SECTION_READ = {
     "fail2ban": "fail2ban control socket: status, status <jail> and get <jail> commands",
     "firewall": "iptables-save and ip6tables-save, and nft -j list ruleset for native nft tables",
     "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
+    "opnsense": "The OPNsense REST API, read by the hub with GET requests only (a dedicated user's API key)",
     "cve": "The hub matches this host's installed packages against the Debian security tracker, EPSS scores and "
            "CISA's KEV list; the host downloads nothing",
     "outside": "Shodan, asked by the hub about this host's public addresses: its free InternetDB, or the Shodan API "
@@ -447,9 +448,10 @@ def forward(f: dict) -> dict:
 
 PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/services": "Services",
              "/fail2ban": "fail2ban", "/packages": "Packages", "/vulnerabilities": "Vulnerabilities",
-             "/disks": "Array & disks", "/containers": "Containers", "/vms": "VMs", "/notifications": "Notifications"}
+             "/disks": "Array & disks", "/containers": "Containers", "/vms": "VMs", "/notifications": "Notifications",
+             "/firewall": "Firewall", "/vpn": "VPN", "/network": "Gateways & interfaces"}
 
-RULE_SOURCE = {"unraid": "unraid", "remote": "remote", "svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
+RULE_SOURCE = {"unraid": "unraid", "opnsense": "opnsense", "remote": "remote", "svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
                "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "os": "system", "collector": "events",
                "cve": "cve", "outside": "outside"}
 
@@ -549,3 +551,38 @@ def unraid_remote(row) -> dict:
     return {"title": "Last read", "read": "The hub's last attempt to read this server's API",
             "entries": [plain("Address", row["url"]),
                         plain("Certificate", "pinned" if row["tls"] == "pin" else "checked against the CA store")]}
+
+
+# --- OPNsense (read by the hub over REST, GET only) --------------------------------------------------------
+
+def opnsense_section(source: str, url: str | None = None, interval: int = 60) -> dict:
+    """The panel for one OPNsense source: the exact GET requests, how often, the page in OPNsense's own UI, and
+    curl commands with placeholders ($KEY and $SECRET: the real ones are never shown anywhere)."""
+    from ..remote import opnsense
+    src = opnsense.SOURCES[source]
+    every = f"{max(opnsense.SLOW_SECONDS, interval) // 60} min" if src.tier == opnsense.SLOW else f"{interval} s"
+    paths = [opnsense.PATHS[k] for k in src.paths]
+    entries = [plain("OPNsense web UI", src.menu), plain("Privilege it needs", src.privilege),
+               plain("How often", f"The hub reads it every {every}")]
+    if url and opnsense.UI_PATH.get(source):
+        entries.append({"kind": "url", "label": "Open in OPNsense", "href": url + opnsense.UI_PATH[source],
+                        "text": url + opnsense.UI_PATH[source]})
+    for path in paths:
+        entries.append(text("The same read-only request, with the key in $KEY and the secret in $SECRET",
+                            f"curl -s -u \"$KEY:$SECRET\" {q((url or 'https://FIREWALL') + path)}"))
+    if url:
+        entries.append(plain("curl and a self-signed certificate", "add --cacert with the certificate you pinned, or -k on a network you trust"))
+    return {"title": src.title, "read": "OPNsense REST API, GET only: " + ", ".join(paths), "entries": entries}
+
+
+def opnsense_row(title: str, source: str, url: str | None, extra: list[dict] | None = None) -> dict:
+    """The panel for one table row: which source it came from, and the page in OPNsense where it can be changed."""
+    from ..remote import opnsense
+    src = opnsense.SOURCES[source]
+    entries = [plain("OPNsense web UI", src.menu)]
+    if url and opnsense.UI_PATH.get(source):
+        entries.append({"kind": "url", "label": "Open in OPNsense", "href": url + opnsense.UI_PATH[source],
+                        "text": url + opnsense.UI_PATH[source]})
+    entries += extra or []
+    entries.append(plain("Read from", f"{', '.join(opnsense.PATHS[k] for k in src.paths)} (GET)"))
+    return {"title": title, "read": f"The hub's reading of {src.title.lower()}: see the card's panel for the request", "entries": entries}

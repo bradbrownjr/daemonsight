@@ -1,0 +1,40 @@
+{
+ "product": {
+  "product_name": "OPNsense",
+  "product_version": "26.1.2_3",
+  "product_latest": "26.1.5",
+  "product_series": "26.1"
+ },
+ "product_version": "26.1.2_3",
+ "status": "update",
+ "status_msg": "There are 2 updates available, total download size is 3 MiB.",
+ "status_reboot": "0",
+ "needs_reboot": "0",
+ "os_version": "FreeBSD 14.3-RELEASE-p2",
+ "last_check": "Mon Nov 16 06:00:00 UTC 2026",
+ "connection": "ok",
+ "repository": "ok",
+ "upgrade_major_version": "",
+ "upgrade_major_message": "",
+ "all_packages": {
+  "opnsense": {
+   "name": "opnsense",
+   "old": "26.1.2_3",
+   "new": "26.1.5",
+   "reason": "upgrade"
+  },
+  "os-example-devel": {
+   "name": "os-example-devel",
+   "old": "1.2",
+   "new": "1.3",
+   "reason": "upgrade"
+  }
+ },
+ "all_sets": {},
+ "new_packages": [],
+ "upgrade_packages": [],
+ "upgrade_sets": [],
+ "downgrade_packages": [],
+ "reinstall_packages": [],
+ "remove_packages": []
+}

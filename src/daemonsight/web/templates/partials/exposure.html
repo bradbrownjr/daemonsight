@@ -33,7 +33,7 @@
         <tr data-row id="{{ r.anchor }}">
           <td class="font-monospace" data-v="{{ r.port_v }}" data-label="Port">{{ r.port }}{{ src("src-l-" ~ loop.index, r.src) }}</td>
           <td class="font-monospace" data-label="Bound to">{{ r.addresses }}</td>
-          <td data-label="Reach"><span class="badge {{ r.reach_badge }}">{{ r.reach }}</span></td>
+          <td data-label="Reach"><span class="badge {{ r.reach_badge }}">{{ r.reach }}</span>{% for v_ in r.via %}<div class="small"><a href="{{ v_.href }}">{{ v_.text }}</a></div>{% endfor %}</td>
           <td data-label="Firewall"><span class="badge {{ r.fw_badge }}">{{ r.fw }}</span><div class="text-secondary small">{{ r.fw_why }}</div></td>
           <td data-label="Process">{{ r.process }}</td>
           <td data-label="Owner">{{ r.owner }}</td>

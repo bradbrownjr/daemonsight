@@ -32,6 +32,7 @@
         {% if e.kind in ('cmd', 'file', 'text') %}<code class="ds-copy-text">{{ e.value }}</code><button type="button" class="btn btn-sm ds-copy">Copy</button>
         {% elif e.kind == 'plain' %}{{ e.value }}
         {% elif e.kind == 'link' %}<a href="{{ base }}{{ e.href }}" class="ds-pop-link">{{ e.text }}</a>
+        {% elif e.kind == 'hublink' %}<a href="{{ e.href }}" class="ds-pop-link">{{ e.text }}</a>
         {% else %}<a href="{{ e.href }}" target="_blank" rel="noopener noreferrer">{{ e.text }}</a>{% endif %}
       </dd>
       {% endfor %}

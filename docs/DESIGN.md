@@ -600,7 +600,7 @@ supports ntfy and SMTP email. Daily digest optional.
 
 1. Skeleton: config, SQLite, collector loop, system/systemd/ports/Docker sources, Overview and Services pages, login. Done.
 2. Caddy, fail2ban, nftables sources. Exposure, Routes and fail2ban pages. The `expose`, `route` and `jail` rules. Done.
-   2b. Remote sources: the Unraid API (array, disks, containers, VMs, notifications, UPS), done, and the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware), planned. Each shows as its own host. See "Remote sources".
+   2b. Remote sources: the Unraid API (array, disks, containers, VMs, notifications, UPS), done, and the OPNsense API (firewall rules and port forwards, Caddy, gateways, WireGuard, Tailscale, firmware), done. Each shows as its own host. See "Remote sources".
    2c. The hub: collectors upload to one install that shows every host, with the container image and Unraid template, retention and backups, and updates from the hub. See "Hub". Done.
 3. Package and CVE checks.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
@@ -1299,32 +1299,172 @@ like the CVE loop, polls each enabled system. Systems are added, edited,
 disabled and removed in the hub's web UI (Hosts, "Add a system"); there is no
 config file entry for them. `[remote] enabled = false`, or "Read remote systems"
 on the Settings page, switches the polling off; the loop reads it every pass. Keys are files under the hub's data folder, never in the database or
-`config.toml`, and the client sends only reads. Unraid is done; OPNsense is
-planned and its rows are unverified until they have run against a firewall.
+`config.toml`, and the client sends only reads. Unraid and OPNsense are done.
 
 ### OPNsense
 
-OPNsense privileges cover a whole page, read and write alike; there is no
-read-only variant. The key therefore can change what these privileges cover,
-and DaemonSight's client is limited to GET in code. Use a dedicated user that
-has only these privileges (names from the firewall's own `ACL.xml` files):
+Done. The hub reads the OPNsense REST API with HTTP basic auth: the API key is
+the user name and the API secret the password
+(https://docs.opnsense.org/development/how-tos/api.html). Every request is a
+GET. Each source below is stored as an `opnsense_*` snapshot, polled by
+`remote/poll.py`, turned into findings by `remote/opnsense_rules.py`, and shown on
+the firewall's own pages (Overview, Firewall, VPN, Gateways & interfaces,
+Report).
 
-| Privilege | Endpoints read | Gives |
-|-----------|----------------|-------|
-| Services: Caddy | `/api/caddy/reverse_proxy/get`, `/api/caddy/service/status` | Sites and handlers: domain, upstream host/port/scheme, access list, health check settings. Cross-checks: a site pointing at a LAN host and port where nothing listens; an internet-facing site with no access list |
-| Firewall: NAT: Destination NAT | `/api/firewall/d_nat/search_rule` | Port forwards: which LAN host and port each WAN port reaches. Cross-checks: a forward to a host where nothing listens; a forward with no destination port, which catches every port of that protocol |
-| Firewall: Rules [new] | `/api/firewall/filter/search_rule` | Rules created through the API or the new UI. Cross-checks: floating pass-all rules, rules with no description |
-| System: Gateways | `/api/routes/gateway/status` | WAN gateway up/down, loss, latency |
-| VPN: WireGuard: Status | `/api/wireguard/service/show` | Each tunnel's peers and last handshake, so a peer that stops connecting or comes unlinked shows up |
-| Status: Interfaces | `/api/interfaces/overview/export` | Interface state and addresses |
-| Status: Services | `/api/core/service/search` | Which firewall services are running |
-| System: Firmware | `/api/core/firmware/status` | Pending updates and whether a reboot is needed (the GET form of this endpoint is unverified) |
-| Lobby: Dashboard | `/api/diagnostics/system/system_resources`, `system_disk`, `system_temperature` | CPU, memory, disk, temperatures |
-| Tailscale | `/api/tailscale/status/*` | Whether the subnet routes and exit node are still advertised |
+**What the key can do.** OPNsense has no read-only privilege. A privilege covers a
+whole page, read and write alike: `ACL.xml` lists patterns such as
+`api/firewall/d_nat/*`, with no split by method
+(github.com/opnsense/core, `src/opnsense/mvc/app/models/OPNsense/*/ACL/ACL.xml`;
+the plugins have their own in github.com/opnsense/plugins). A key with the
+privileges below can therefore also change what those pages cover, and nothing
+on the server side limits it to reading. DaemonSight's client is limited to GET in
+code (see "Read-only in the hub"). The key's user should be dedicated, in no
+group, and hold only these privileges. Whether the key has more than that is not
+something the API can say (there is no `me` call), so it is documented, not
+checked.
 
-Legacy rules (the classic per-interface pages) are not in the new filter API;
-they need the config backup endpoint, which is effectively full access, so
-they are left out.
+Privilege names are the `<name>` entries from `ACL.xml`, and each endpoint is
+matched by a pattern of the same file.
+
+| Source (snapshot) | Privilege | Endpoints (all GET) | ACL pattern | Kept | Cadence |
+|-------------------|-----------|---------------------|-------------|------|---------|
+| `opnsense_system` | Lobby: Dashboard | `/api/diagnostics/system/system_resources`, `system_disk`, `system_temperature` | `api/diagnostics/system/system_*` | Memory use, each mount's use, sensor temperatures | `interval` |
+| `opnsense_interfaces` | Status: Interfaces | `/api/interfaces/overview/export` | `api/interfaces/overview/*` | Identifier, label, device, status, addresses, upstream gateways | `interval` |
+| `opnsense_gateways` | System: Gateways | `/api/routes/gateway/status` | `api/routes/gateway/status` | Name, address, state, loss, round trip, monitor address | `interval` |
+| `opnsense_wireguard` | VPN: WireGuard: Status | `/api/wireguard/service/show` | `api/wireguard/service/*` | Instances, peers, last handshake, traffic, keepalive; public keys cut to 8 characters | `interval` |
+| `opnsense_services` | Status: Services | `/api/core/service/search` | `api/core/service/*` | Which enabled services run | `interval` |
+| `opnsense_tailscale` | Tailscale | `/api/tailscale/status/status`, `/api/tailscale/settings/get` | `api/tailscale/status/*`, `api/tailscale/settings/*` | State, version, routes, exit node, and the subnets and exit node the settings advertise; peers as a count only | `interval` |
+| `opnsense_firmware` | System: Firmware | `/api/core/firmware/status` | `api/core/firmware/*` | Version, pending packages and sets, new version, reboot needed, last check | 5 min |
+| `opnsense_rules` | Firewall: Rules [new] | `/api/firewall/filter/search_rule` | `api/firewall/filter/*` | Rules: interface, action, source, destination, port, description | 5 min |
+| `opnsense_nat` | Firewall: NAT: Destination NAT | `/api/firewall/d_nat/search_rule` | `api/firewall/d_nat/*` | Port forwards: interface, protocol, ports, target (alias resolved) | 5 min |
+| `opnsense_caddy` | Services: Caddy | `/api/caddy/reverse_proxy/get`, `/api/caddy/service/status` | `api/caddy/*` | Sites, handlers, upstreams, access lists | 5 min |
+
+The cadence is `interval` (30 to 3600 s, default 60) or five minutes if that is
+longer, as for Unraid.
+
+**Verified against a real firewall (read-only).** Each endpoint above was
+requested with GET on one firewall (OPNsense 26.7 with os-caddy and
+os-tailscale) and answered 200 with the shape the parsers expect. The sample
+replies were used only to see the shapes. The test fixtures
+(`tests/fixtures/opnsense/`) are synthetic: documentation addresses
+(RFC 5737, RFC 1918), made-up names, no real host, domain, key or peer. A path
+under a plugin that is not installed answers 404 with
+`{"errorMessage": ...}`, which is shown as "Plugin not installed". 403 for a
+missing privilege is from the source (`ApiControllerBase::beforeExecuteRoute`
+answers `{"status": 403, "message": "Forbidden"}`); it was not tried against a
+restricted user on the real firewall, so the shape of that reply and the
+"needs privilege X" display rest on the source and the tests.
+
+**GETs that act.** Some OPNsense GET endpoints still do something. Before an
+endpoint went into the table its controller was read in github.com/opnsense/core
+or github.com/opnsense/plugins. `/api/core/firmware/status` is the one the older
+notes called unverified: in `FirmwareController::statusAction` a GET returns the
+cached result of the last check (`firmware product`, `product_check`), and only a
+POST runs `firmware probe`, so DaemonSight reads what the firewall last found
+and never starts a check. Endpoints that look like reads but act, such as
+`/api/core/firmware/check` and `/api/tailscale/status/net`, are not in the list
+and the client refuses them. `/api/tailscale/settings/get` is the inherited
+read-only `getAction`.
+
+**Classic rules are in the list.** An earlier note said classic (legacy)
+per-interface rules are not in the new filter API and would need the config
+backup. That is wrong: `search_rule` returns them with `legacy` set, and the
+automatic rules OPNsense generates (anti-lockout, default deny) with
+`is_automatic`. Both appear; the generated ones are counted and left out of the
+lists. A classic rule names its interface by label ("WAN"), a new one by
+identifier ("wan"), and both are matched.
+
+**What is left out of what the API returns.** The parsers copy named fields and
+nothing else, because some replies hold secrets: `caddy/reverse_proxy/get`
+returns the whole Caddy model, including the DNS provider API key and the ACME
+e-mail; `wireguard/service/show` returns public keys; the Tailscale status
+returns peer names. None of those is stored. A test plants a secret in the Caddy reply and checks
+it is not in what the parser keeps.
+
+**Interface roles** (`remote/roles.py`, shared so another product can use it).
+"Internet-facing" never means "called WAN". Each interface gets one role, worked
+out in this order and overridable per system:
+
+1. the owner's override (Gateways & interfaces page, stored in the hub's `meta`
+   table, never sent to the firewall);
+2. a tunnel device (wg, tun, tap, ovpn, ipsec, tailscale, gif, gre, zt, ppp, vti):
+   VPN, even with a gateway attached (a tunnel's gateway is the far end);
+3. named WAN (`wan`, `wan2`) or with an upstream gateway: WAN, the only role
+   that counts as untrusted;
+4. loopback and internal devices (lo, enc, pflog, pfsync): other;
+5. unassigned device: other; with an address and no gateway: LAN; otherwise
+   other.
+
+A rule or forward is on an untrusted interface when it is bound to a WAN
+interface, or to none (floating rules and forwards with no interface apply to
+all of them).
+
+**Findings.** Each has a "What to do" list, a basis for Accept and a link to
+its row. Accepted, Changed and Unexpected labels are shown inline in every
+table; nothing is hidden.
+
+| Rule | Severity | When |
+|------|----------|------|
+| `opnsense.updates` | Low; Medium at 5 packages or a new release; High at 20 packages or waiting more than 30 days | The last firmware check found updates. "Waiting" counts from when the hub first saw them. The basis is the package names and versions, so a new update brings an accepted finding back |
+| `opnsense.reboot` | Medium | The pending update needs a reboot |
+| `opnsense.gateway` | High down; Medium degraded | Gateway down, loss of 10% or more, or round trip of 300 ms or more |
+| `opnsense.wg_no_peer` | High | An instance with no peer (an unlinked peer vanishes from the reply, so this is how it shows) |
+| `opnsense.wg_peer_stale` | Medium with keepalive, else Low | No handshake for a day, or never |
+| `opnsense.rule_any` | High | A pass rule on a WAN interface from any source to any destination (or to the firewall), any port |
+| `opnsense.rule_floating_any` | High | The same as a floating rule |
+| `opnsense.rule_no_descr` | Low | A pass rule on a WAN interface, or floating, with no description |
+| `opnsense.nat_all_ports` | High | A forward on a WAN interface with no destination port: every port of that protocol |
+| `opnsense.nat_dead` | Medium | A forward to a host a collector reports on, where nothing listens on the target port. Only when the target is one address that a collector host owns and the port is a plain number; anything else is skipped silently |
+| `opnsense.caddy_down` | High | Caddy is enabled with sites and its service is not running |
+| `opnsense.caddy_no_acl` | Info | Internet-facing sites with no access list or password: one finding listing them. A firewall rule on a WAN interface must let 80, 443 or the site's own port reach the firewall. Public sites are legitimate, so this is a list to check |
+| `opnsense.caddy_dead_upstream` | Medium | A site proxies to a collector host's address and port where nothing listens |
+| `opnsense.tailscale` | High not running; Medium for a subnet or exit node the settings advertise but Tailscale does not list as approved | Only when the plugin is enabled in its settings |
+| `opnsense.service_stopped` | Medium | An enabled service is not running |
+| `opnsense.disk_full` | Medium at 90%; High at 95% | Any real mount |
+| `opnsense.temperature` | Medium at 80 C; High at 90 C | Any sensor |
+
+The thresholds are DaemonSight's own choices (OPNsense publishes none for
+updates, loss, latency, disk or temperature), apart from the gateway alarm states
+OPNsense reports itself (`scripts/routes/gateway_status.php`). Caddy has no
+per-site upstream health in its API, so "upstream is down" is limited to the
+hub-host check above plus "Caddy is not running".
+
+**Cross-host.** A port forward or an internet-facing Caddy site whose target is
+an address of a host the hub has collector data for appears on that host's
+Exposure page under the port: "Reached from the internet through OPNsense port
+forward X on fw", linked to the forward's row. It matches by address and only
+plain port numbers; an alias that can't be resolved or a range is left out,
+never guessed.
+
+**Not built.** DHCP leases and firewall logs. Their toggles on the Settings
+page are not there either; they come with the code that reads them. Open
+follow-ups: a FortiGate source on the same `roles.py`; hub-side DHCP
+reservation checks; the Overview's two-column layout is shared with the other
+host kinds and was not reworked here (see "Layout and wording rules").
+
+**Read-only in the hub.** `remote/client.py` has `Rest`: it has no method that
+sends anything but GET (`get` asks httpx for a GET with no body and no
+Content-Type), it refuses any path that is not in `opnsense.PATHS` (compared as a
+whole string, so a query string or a trailing slash is refused), follows no
+redirects, caps a reply at 8 MiB, and scrubs the key and secret from every
+error. Tests send a real poll and a probe through a fake firewall that fails on
+any request that is not a GET, has a body or has a Content-Type, and check that
+the paths are all in the list. OPNsense answers an empty body that claims to be
+JSON with 400 "Invalid JSON syntax" (`ApiControllerBase::parseJsonBodyData`),
+which is why no Content-Type is sent.
+
+**TLS and key files** work as for Unraid (verify, or pin one certificate after
+confirming its fingerprint). The key and secret are two lines of
+`<data>/remotes/<id>.key`, mode 0600 in a 0700 folder. A missing privilege
+(403) never fails the whole system: that source shows "needs privilege X" and
+the rest carry on. A key that every source refuses is rejected at Test
+connection.
+
+Sources: OPNsense API docs https://docs.opnsense.org/development/how-tos/api.html;
+users and privileges https://docs.opnsense.org/manual/how-tos/user-local.html;
+core source https://github.com/opnsense/core (ACL.xml, `Menu.xml`, the API
+controllers named above); plugin source https://github.com/opnsense/plugins
+(`www/caddy`, `security/tailscale`).
 
 ### Unraid
 

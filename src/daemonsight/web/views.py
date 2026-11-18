@@ -162,9 +162,29 @@ def _unraid_host(cfg: Config, snaps: dict) -> dict:
     }
 
 
+def _opnsense_host(cfg: Config, snaps: dict) -> dict:
+    """The header facts for an OPNsense firewall the hub reads over its API."""
+    fw = snaps.get("opnsense_firmware")
+    fwd = fw.data if fw and fw.data and fw.data.get("available") is not False else {}
+    seen = snaps.get("opnsense_interfaces") or snaps.get("opnsense_gateways") or fw
+    now = time.time()
+    fresh = seen is not None and now - seen.taken_at < cfg.collector.interval_system * 4
+    ago = fmt_ago(seen.taken_at) if seen else "never"
+    return {
+        "id": cfg.host_id, "kind": cfg.kind, "kind_label": "OPNsense",
+        "os": f"OPNsense {fwd['version']}" if fwd.get("version") else "OPNsense",
+        "kernel": fwd.get("os") or None, "virt": None,
+        "support": {"status": "supported", "label": "", "plain": True, "badge": "bg-secondary-lt"},
+        "uptime": None, "collected_ago": ago, "fresh": fresh,
+        "status_text": f"Read {ago}" if fresh else f"Not reachable \u00b7 last read {ago}",
+    }
+
+
 def _host(cfg: Config, snaps: dict) -> dict:
     if cfg.kind == "unraid":
         return _unraid_host(cfg, snaps)
+    if cfg.kind == "opnsense":
+        return _opnsense_host(cfg, snaps)
     system = snaps.get("system")
     data = system.data if system and system.data else {}
     age = time.time() - system.taken_at if system else None
@@ -518,6 +538,9 @@ def exposure(conn, cfg: Config) -> dict:
     port_findings = {f["key"]: f for f in active + held if f["rule"] in ("expose.unexpected", "expose.docker_bypass")}
     forward_findings = {f["key"]: f for f in active + held if f["rule"] == "expose.forward_all"}
     lo, hi = _eph(snaps)
+    from ..remote import opnsense as opn_mod
+    own_ips = {a["ip"] for a in ports.get("addresses", []) if isinstance(a, dict) and a.get("ip")}
+    through = opn_mod.reach_by_listener(conn, own_ips) if own_ips else {}
     public_keys = {(r["proto"], r["port"]) for r in rules.public_listeners(snaps, {"eph": _eph(snaps)})}
     ctr_names = {c["id"]: c["name"] for c in (_snap_data(snaps, "docker") or {}).get("containers", [])}
     rows = []
@@ -538,6 +561,12 @@ def exposure(conn, cfg: Config) -> dict:
                      and fw["state"] != "forwarded" and not (r["proto"] == "udp" and lo <= r["port"] <= hi))
         status = status_of(key in expected, port_findings.get(key)) if reachable else None
         jail = _jail_for(jails, unit, r.get("process"), cfg.exposure.jail_covers) if internet else None
+        via = through.get((r["proto"], r["port"]), [])
+        panel = prov.listener(r, ctr_names, _snap_data(snaps, "caddy"))
+        for v_ in via[:6]:
+            panel["entries"].append({"kind": "hublink", "label": "Reached from the internet through",
+                                     "href": f"/h/{v_['fw']}/firewall#{v_['anchor']}",
+                                     "text": (f"OPNsense port forward {v_['name']}" if v_["how"] == "forward" else f"Caddy site {v_['name']}") + f" on {v_['fw']}"})
         rows.append({
             "port": key, "port_v": r["port"], "addresses": ", ".join(r["addresses"]),
             "reach": {"internet": "Internet", "lan": "LAN"}.get(where, where),
@@ -547,7 +576,10 @@ def exposure(conn, cfg: Config) -> dict:
             "status": status,
             "jail": (jail or "None") if internet else "—", "jail_bad": internet and not jail,
             "anchor": rules.anchor("port", r["port"], r["proto"]),
-            "src": {**prov.listener(r, ctr_names, _snap_data(snaps, "caddy")), "finding": port_findings.get(key),
+            "via": [{"text": ("Reached from the internet through OPNsense port forward " + v_["name"] if v_["how"] == "forward"
+                              else "Reached from the internet through Caddy site " + v_["name"]) + f" on {v_['fw']}",
+                     "href": f"/h/{v_['fw']}/firewall#{v_['anchor']}"} for v_ in via[:3]],
+            "src": {**panel, "finding": port_findings.get(key),
                     "anchor": rules.anchor("port", r["port"], r["proto"])},
         })
     docker = []
@@ -1109,8 +1141,9 @@ def hosts_list(conn, cfg: Config) -> dict:
 
 def _remote_row(conn, h, r, now: float, findings, findings_v) -> dict:
     """A Hosts page row for a system the hub reads over its API."""
-    snap = db.get_snapshot(conn, h["id"], "unraid_system")
-    data = snap.data if snap and snap.data else {}
+    opn = r["kind"] == "opnsense"
+    snap = db.get_snapshot(conn, h["id"], "opnsense_firmware" if opn else "unraid_system")
+    data = snap.data if snap and snap.data and snap.data.get("available") is not False else {}
     if not r["enabled"]:
         state, badge = "Disabled", "bg-secondary-lt"
     elif r["last_ok"] is None and not r["last_error"]:
@@ -1122,14 +1155,16 @@ def _remote_row(conn, h, r, now: float, findings, findings_v) -> dict:
     host = urlsplit(r["url"]).netloc
     from ..remote import release
     ver = data.get("version")
-    latest = release.stored(conn)
+    latest = release.stored(conn) if not opn else None
+    label = "OPNsense" if opn else "Unraid"
     return {
-        "id": h["id"], "kind": r["kind"], "kind_label": f"Unraid {ver} \u00b7 API" if ver else "Unraid \u00b7 API",
-        "os_update": latest["version"] if release.newer(latest, ver) else "", "state": state, "state_badge": badge,
+        "id": h["id"], "kind": r["kind"], "kind_label": f"{label} {ver} \u00b7 API" if ver else f"{label} \u00b7 API",
+        "os_update": (data.get("new_version") or "") if opn and data.get("count") else (latest["version"] if release.newer(latest, ver) else ""),
+        "state": state, "state_badge": badge,
         "role": "server", "seen": fmt_ago(r["last_poll"]) if r["last_poll"] else "never", "seen_v": r["last_poll"] or 0,
         "error": (r["last_error"] or "")[:200] if r["fails"] else "",
-        "os": f"Unraid {data['version']}" if data.get("version") else "Unraid",
-        "kernel": data.get("kernel") or "", "support": _support({}), "reboot": False,
+        "os": f"{label} {data['version']}" if data.get("version") else label,
+        "kernel": ("" if opn else data.get("kernel")) or "", "support": _support({}), "reboot": bool(opn and data.get("needs_reboot")),
         "uptime": fmt_duration(now - data["boot_time"]) if data.get("boot_time") else "",
         "version": "", "address": host, "rev": None, "can_update": False, "updating": "", "update_note": "",
         "findings": findings, "findings_v": findings_v,

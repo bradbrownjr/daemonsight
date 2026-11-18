@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Firewall · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · OPNsense REST API: rules on internet-facing interfaces, port forwards, Caddy sites</div>
+  <h1 class="page-title">Firewall</h1>
+</div>
+{% include "partials/opn_firewall.html" %}
+{% endblock %}

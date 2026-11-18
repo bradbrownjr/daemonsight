@@ -200,9 +200,10 @@ the password and secret it was made with.
 
 ## Remote sources
 
-The hub reads an Unraid server over its GraphQL API. The hub makes these
-connections, which is the one exception to "nothing connects to a host". OPNsense
-and a cloud provider's firewall are planned and will follow the same rules.
+The hub reads an Unraid server over its GraphQL API and an OPNsense firewall
+over its REST API. The hub makes these connections, which is the one exception to
+"nothing connects to a host". A cloud provider's firewall is planned and will
+follow the same rules.
 
 - **What the key can do.** An Unraid API key with the Admin role can start and
   stop the array, containers and VMs. DaemonSight only needs to read, so the
@@ -281,6 +282,32 @@ and a cloud provider's firewall are planned and will follow the same rules.
   administrator typed, over HTTPS only. Anyone who can add a system can make
   the hub connect to an address on its own network; that is the same trust
   as the login.
+- **OPNsense keys are not read-only.** OPNsense has no read-only privilege: each
+  privilege covers a whole page, read and write alike (the `ACL.xml` files in
+  github.com/opnsense/core list patterns such as `api/firewall/d_nat/*` with no
+  split by method). A key with the privileges DaemonSight needs can also change
+  the firewall rules, port forwards, Caddy sites and firmware those pages
+  control, and nothing on the firewall limits it to reading. Protection is in
+  two places. The hub's client has no way to send anything but GET: one method
+  asks for a GET with no body, and it refuses any path that is not on a fixed
+  list of 14 endpoints (a whole-string compare, so a query string or another
+  endpoint is refused before anything is sent), follows no redirects and caps a
+  reply at 8 MiB. Tests fail on any other method and on any path outside the
+  list. And the key belongs to a dedicated user in no group with only the listed
+  privileges. DaemonSight cannot check what a key may do (there is no `me`
+  call), so that is on you. The most powerful of the privileges is System:
+  Firmware (it covers installing updates and rebooting); leaving it out costs
+  only the pending-updates finding. A hub that is compromised leaks the keys it
+  holds, and an OPNsense key can change the firewall, so keep the hub's data
+  folder and backups private and give the hub's user nothing else.
+- **OPNsense key and secret.** Both are stored as two lines of
+  `<data>/remotes/<id>.key`, mode 0600, with the same rules as an Unraid key:
+  never in the database, a page, a log line, an event, a request URL or a
+  curl command shown on a page (panels show `$KEY` and `$SECRET` placeholders).
+  They go only in the Authorization header. The hub keeps from each reply only
+  the fields it names: Caddy's reply includes the DNS provider API key and the
+  ACME e-mail, WireGuard's includes public keys (cut to 8 characters), and
+  Tailscale's lists peer names (only a count is kept).
 
 ## The hub
 

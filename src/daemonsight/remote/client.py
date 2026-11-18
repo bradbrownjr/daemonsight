@@ -30,6 +30,7 @@ TLS, two modes, never "don't verify":
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import json
@@ -72,24 +73,31 @@ _WS_LOG.propagate = False
 
 class RemoteError(Exception):
     """A failed read. `kind` is one of: unreachable, tls, auth, http,
-    graphql, key (the key is allowed more than read), config. The message is
+    graphql, key (the key is allowed more than read), config, forbidden (the
+    key is good but may not read `path`: OPNsense answers 403), missing (404: no such endpoint, a plugin that
+    isn't installed). The message is
     safe to show: it never holds the key."""
 
-    def __init__(self, kind: str, message: str):
+    def __init__(self, kind: str, message: str, path: str | None = None):
         super().__init__(message)
         self.kind = kind
         self.message = message
+        self.path = path
 
 
 # --- addresses ---------------------------------------------------------------
 
-def normalize_url(raw: str) -> str:
+def normalize_url(raw: str, kind: str = "unraid") -> str:
     """The server's origin, `https://host[:port]`. Only https: the key travels
     in a header, and Unraid can serve the API over a self-signed certificate
-    (Settings, Management Access, Use SSL/TLS)."""
+    (Settings, Management Access, Use SSL/TLS). `kind` only picks the wording
+    of the messages and the one path that may follow the address."""
+    opn = kind == "opnsense"
     raw = (raw or "").strip()
     if not raw or len(raw) > 300 or any(ord(c) < 33 or ord(c) == 127 for c in raw):
-        raise ValueError("Enter the server's address, for example https://tower.example.lan or https://192.0.2.10:4443.")
+        raise ValueError("Enter the firewall's address, for example https://fw.example.lan:8443 or https://192.0.2.1:8443."
+                         if opn else
+                         "Enter the server's address, for example https://tower.example.lan or https://192.0.2.10:4443.")
     if "://" not in raw:
         raw = "https://" + raw
     try:
@@ -98,14 +106,18 @@ def normalize_url(raw: str) -> str:
     except ValueError:
         raise ValueError("That address isn't valid.") from None
     if parts.scheme == "http":
-        raise ValueError("Use an https:// address. The API key is sent in a header, so it must not travel in "
+        raise ValueError("Use an https:// address. The API key and secret are sent in a header, so they must not travel "
+                         "in plain text. In OPNsense, System, Settings, Administration, set the web GUI protocol to HTTPS."
+                         if opn else
+                         "Use an https:// address. The API key is sent in a header, so it must not travel in "
                          "plain text. In Unraid, Settings, Management Access, set Use SSL/TLS to Yes.")
     if parts.scheme != "https" or not parts.hostname:
         raise ValueError("The address must start with https://.")
     if parts.username or parts.password or parts.query or parts.fragment:
         raise ValueError("Leave out any user name, password, query or fragment.")
-    if parts.path not in ("", "/", "/graphql"):
-        raise ValueError("Give only the server's address; DaemonSight adds /graphql.")
+    if parts.path not in ("", "/") + (() if opn else ("/graphql",)):
+        raise ValueError("Give only the firewall's address; DaemonSight adds /api/..." if opn else
+                         "Give only the server's address; DaemonSight adds /graphql.")
     host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
     return f"https://{host}" + (f":{port}" if port else "")
 
@@ -227,9 +239,12 @@ class Sample:
     covered: bool       # every expected container reported before the time ran out
 
 
-def scrub(text: str, key: str | None) -> str:
-    """Never let the key into a message, even by accident."""
-    return text.replace(key, "***") if key and len(key) >= 8 else text
+def scrub(text: str, key: str | None, *more: str | None) -> str:
+    """Never let the key (or, for OPNsense, the secret too) into a message, even by accident."""
+    for k in (key, *more):
+        if k and len(k) >= 8:
+            text = text.replace(k, "***")
+    return text
 
 
 class Graph:
@@ -441,3 +456,76 @@ class Graph:
         if isinstance(exc, websockets.exceptions.WebSocketException):
             return RemoteError("http", f"The WebSocket handshake failed: {type(exc).__name__}.")
         return RemoteError("unreachable", f"{type(exc).__name__}: {self._clip(text)}")
+
+
+# --- REST, GET only (OPNsense) -------------------------------------------------
+
+class Rest:
+    """One firewall's REST API, read-only on this side. There is no method here that sends anything but GET: `get`
+    asks httpx for a GET and nothing else, with no request body and no Content-Type header (OPNsense answers an
+    empty body that claims to be JSON with 400 "Invalid JSON syntax": ApiControllerBase.parseJsonBodyData). It also
+    refuses any path that is not in `allowed`, compared as a whole string, so a bug elsewhere can't make it call an
+    endpoint that acts (OPNsense has GET endpoints that do something, such as `/api/core/firmware/check` or
+    `/api/tailscale/status/net`). No redirects are followed (the key would go to the new address), a reply is capped
+    at MAX_RESPONSE, and the key and secret are scrubbed from every message."""
+
+    def __init__(self, base_url: str, key: str, secret: str, http: httpx.AsyncClient, allowed: frozenset[str]):
+        self.base = base_url.rstrip("/")
+        self._key, self._secret = key, secret
+        self._http = http
+        self._allowed = frozenset(allowed)
+        cred = base64.b64encode(f"{key}:{secret}".encode()).decode()
+        self._headers = {"Authorization": "Basic " + cred, "Accept": "application/json", "User-Agent": USER_AGENT}
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+    def check_allowed(self, path: str) -> None:
+        if path not in self._allowed:
+            raise ValueError("only the listed read-only endpoints may be requested")
+
+    async def get(self, path: str):
+        """GET `path` and return the parsed JSON. Raises RemoteError: auth (401), forbidden (403: the key is good
+        but the user lacks the privilege for this page), http, unreachable, tls."""
+        self.check_allowed(path)
+        try:
+            async with self._http.stream("GET", self.base + path, headers=self._headers) as r:
+                body = bytearray()
+                async for chunk in r.aiter_bytes():
+                    body += chunk
+                    if len(body) > MAX_RESPONSE:
+                        raise RemoteError("http", "The firewall's reply was larger than 8 MiB; ignored.", path)
+                status = r.status_code
+        except RemoteError:
+            raise
+        except httpx.HTTPError as exc:
+            raise self._transport_error(exc, path) from None
+        if 300 <= status < 400:
+            raise RemoteError("http", "The firewall redirected the request. Redirects are not followed (the key "
+                                      "would go to the new address). Use the address the web GUI answers on.", path)
+        if status == 401:
+            raise RemoteError("auth", "The firewall refused the API key or secret (HTTP 401).", path)
+        if status == 403:
+            raise RemoteError("forbidden", f"The user may not read {path} (HTTP 403).", path)
+        if status == 404:
+            raise RemoteError("missing", f"The firewall has no {path} (HTTP 404). The plugin is not installed, or this "
+                                         "version of it is too old.", path)
+        if status != 200:
+            raise RemoteError("http", f"The firewall answered HTTP {status} for {path}.", path)
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise RemoteError("http", f"The reply for {path} was not JSON.", path) from None
+
+    def _transport_error(self, exc: httpx.HTTPError, path: str) -> RemoteError:
+        text = scrub(str(exc), self._key, self._secret)
+        clip = "".join(c for c in text[:200] if c.isprintable())
+        if isinstance(exc, httpx.ConnectError) and ("CERTIFICATE_VERIFY_FAILED" in text or "certificate" in text.lower()):
+            return RemoteError("tls", "The firewall's certificate was not accepted: " + clip +
+                               " If you pinned a certificate and the firewall's has changed, test the connection "
+                               "again and confirm the new fingerprint.", path)
+        if isinstance(exc, httpx.TimeoutException):
+            return RemoteError("unreachable", "The firewall did not answer in time.", path)
+        if isinstance(exc, httpx.ConnectError):
+            return RemoteError("unreachable", "Could not connect: " + clip, path)
+        return RemoteError("unreachable", f"{type(exc).__name__}: {clip}", path)

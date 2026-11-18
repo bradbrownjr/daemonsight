@@ -104,7 +104,7 @@ def test_cross_site_posts_are_refused_and_change_nothing(c, hub_cfg, fake):
 def test_the_form_and_its_links(c):
     html = c.get("/remotes/new").text
     assert 'type="password" class="form-control" id="key" name="key"' in html and "Unraid · GraphQL API" in html
-    assert re.search(r'<option value="opnsense" disabled>OPNsense \(coming\)</option>', html)
+    assert 'href="/remotes/new?kind=opnsense"' in html and "OPNsense · REST API" in html
     assert "Viewer" in html and "Settings → Management Access → API Keys" in html
     # How to make the key, with the vendor's docs, opened outside the app.
     assert "Making an Unraid key" in html
@@ -163,7 +163,7 @@ def test_a_key_with_more_than_viewer_is_refused_with_the_way_to_make_one(c, hub_
 def test_bad_input_is_explained(c, hub_cfg):
     cases = [({"url": "http://tower.lan"}, "plain text"), ({"name": "../x"}, "Name:"), ({"interval": "5"}, "Interval:"),
              ({"interval": "abc"}, "Interval:"), ({"key": "short"}, "API key"), ({"url": ""}, "Address:"),
-             ({"kind": "opnsense"}, "OPNsense is planned")]
+             ({"kind": "opnsense"}, "secret")]
     for change, expect in cases:
         r = c.post("/remotes/new", data=form(action="test", **change))
         assert r.status_code == 400 and expect in r.text, (change, r.text[:200])

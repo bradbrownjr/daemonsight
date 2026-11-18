@@ -1,0 +1,82 @@
+{% from "_macros.html" import src, src_button, src_panel, status_cell with context %}
+<div id="live" hx-get="{{ base }}/partials/vpn" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card mb-4" id="wireguard" aria-labelledby="wg-title" data-section{% if not v.instances %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="wg-title">WireGuard</h2>{{ src("src-wg", v.src.wireguard) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.instances|length }} instance{{ 's' if v.instances|length != 1 }}</div>
+  </div>
+  {% if v.wg_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.wg_state.reason }}</div>
+  {% elif not v.instances %}
+  <div class="card-body text-secondary">No WireGuard instance is running.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-wg">
+      <thead><tr><th data-sort="text">Instance / peer</th><th data-sort="text">State</th><th data-sort="num">Last handshake</th><th data-sort="text">Endpoint</th><th data-sort="text">Allowed IPs</th><th data-sort="text">Traffic</th><th data-sort="text">Keepalive</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for i in v.instances %}
+        <tr id="{{ i.anchor }}" data-row>
+          <td data-label="Instance"><strong>{{ i.name }}</strong> <span class="text-secondary font-monospace">{{ i.if }}{% if i.port %} · UDP {{ i.port }}{% endif %}</span>{{ src("src-wi-" ~ loop.index, i.src) }}</td>
+          <td data-label="State"><span class="badge {{ 'bg-green-lt' if i.status_text == 'up' else 'bg-secondary-lt' }}">{{ i.status_text }}</span></td>
+          <td colspan="5" data-label="Peers">{% if i.peers %}{{ i.peers|length }} peer{{ 's' if i.peers|length != 1 }}{% else %}<span class="text-red">no peer attached</span>{% endif %}</td>
+          <td data-label="Status" data-v="{{ i.status.label if i.status else '' }}">{{ status_cell(i.status) }}</td>
+        </tr>
+        {% for p in i.peers %}
+        <tr id="{{ p.anchor }}" data-row>
+          <td data-label="Peer" class="ps-4">{{ p.name }}{{ src("src-wp-" ~ loop.index ~ "-" ~ i.if, p.src) }}</td>
+          <td data-label="State"><span class="badge {{ p.state_badge }}">{{ p.state }}</span></td>
+          <td data-v="{{ p.age_v }}" data-label="Last handshake">{{ p.age }}<div class="text-secondary small">{{ p.when }}</div></td>
+          <td class="font-monospace" data-label="Endpoint">{{ p.endpoint }}</td>
+          <td class="font-monospace" data-label="Allowed IPs">{{ p.allowed }}</td>
+          <td data-label="Traffic">{{ p.traffic }}</td>
+          <td data-label="Keepalive">{{ p.keepalive }}</td>
+          <td data-label="Status" data-v="{{ p.status.label if p.status else '' }}">{{ status_cell(p.status) }}</td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No peers match the filter.</div>
+</section>
+
+<section class="card" id="tailscale" aria-labelledby="ts-title" data-section{% if not v.tailscale %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="ts-title">Tailscale</h2>{{ src("src-ts", v.src.tailscale) }}
+  </div>
+  {% if v.ts_state.state != 'ok' or not v.tailscale %}
+  <div class="card-body text-secondary">{{ v.ts_state.reason or 'No data yet.' }}</div>
+  {% else %}
+  {% set t = v.tailscale %}
+  <div class="card-body">
+    <div class="datagrid">
+      <div class="datagrid-item"><div class="datagrid-title">Plugin</div><div class="datagrid-content">{{ 'enabled' if t.enabled else 'disabled in its settings' }}</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">State</div><div class="datagrid-content">{{ t.state }}{{ src("src-ts-state", t.src_state) }} {% if t.state_status %}{{ status_cell(t.state_status) }}{% endif %}</div></div>
+      {% if t.version %}<div class="datagrid-item"><div class="datagrid-title">Version</div><div class="datagrid-content">{{ t.version }}</div></div>{% endif %}
+      {% if t.ips %}<div class="datagrid-item"><div class="datagrid-title">Addresses</div><div class="datagrid-content font-monospace">{{ t.ips }}</div></div>{% endif %}
+      <div class="datagrid-item"><div class="datagrid-title">Exit node</div><div class="datagrid-content">{% if t.wants_exit %}wanted: {{ 'offered and approved' if t.exit_on else 'not offered' }}{{ src("src-ts-exit", t.src_exit) }} {% if t.exit_status %}{{ status_cell(t.exit_status) }}{% endif %}{% else %}not wanted{% endif %}</div></div>
+    </div>
+    {% for h in t.health %}<div class="text-orange small mt-2">{{ h }}</div>{% endfor %}
+  </div>
+  {% if t.routes %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-ts-routes">
+      <thead><tr><th data-sort="text">Subnet the settings advertise</th><th data-sort="text">Tailscale lists it as</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for r in t.routes %}
+        <tr data-row>
+          <td class="font-monospace" data-label="Subnet">{{ r.route }}{{ src("src-tr-" ~ loop.index, r.src) }}</td>
+          <td data-label="Listed as">{% if r.ok %}<span class="badge bg-green-lt">approved route</span>{% else %}<span class="badge bg-orange-lt">not approved or not advertised</span>{% endif %}</td>
+          <td data-label="Status" data-v="{{ r.status.label if r.status else '' }}">{{ status_cell(r.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+</div>

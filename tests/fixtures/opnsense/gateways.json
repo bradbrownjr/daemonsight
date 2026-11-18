@@ -1,0 +1,25 @@
+{
+ "status": "ok",
+ "items": [
+  {
+   "name": "WAN_DHCP",
+   "address": "192.0.2.1",
+   "status": "none",
+   "status_translated": "Online",
+   "loss": "0.0 %",
+   "delay": "4.2 ms",
+   "stddev": "0.3 ms",
+   "monitor": "192.0.2.1"
+  },
+  {
+   "name": "BACKUP_GW",
+   "address": "198.51.100.1",
+   "status": "none",
+   "status_translated": "Online",
+   "loss": "0.0 %",
+   "delay": "21.0 ms",
+   "stddev": "1.1 ms",
+   "monitor": "~"
+  }
+ ]
+}

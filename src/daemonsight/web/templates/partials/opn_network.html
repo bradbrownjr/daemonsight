@@ -1,0 +1,97 @@
+{% from "_macros.html" import src, src_button, src_panel, status_cell with context %}
+<div id="live" hx-get="{{ base }}/partials/network" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card mb-4" id="gateways" aria-labelledby="gw-title" data-section{% if not v.gateways %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="gw-title">Gateways</h2>{{ src("src-gw", v.src.gateways) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.gateways|length }} total</div>
+  </div>
+  {% if v.gw_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.gw_state.reason }}</div>
+  {% elif not v.gateways %}
+  <div class="card-body text-secondary">No gateways are configured.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-gw">
+      <thead><tr><th data-sort="text">Gateway</th><th data-sort="text">Address</th><th data-sort="text">Interface</th><th data-sort="text">State</th><th data-sort="num">Loss</th><th data-sort="num">Round trip</th><th data-sort="text">Monitor</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for g in v.gateways %}
+        <tr id="{{ g.anchor }}" data-row>
+          <td data-label="Gateway"><strong>{{ g.name }}</strong>{{ src("src-g-" ~ loop.index, g.src) }}</td>
+          <td class="font-monospace" data-label="Address">{{ g.address }}</td>
+          <td data-label="Interface">{{ g.interface }}</td>
+          <td data-label="State"><span class="badge {{ g.state_badge }}">{{ g.state }}</span></td>
+          <td data-v="{{ g.loss_v }}" data-label="Loss">{{ g.loss }}</td>
+          <td data-v="{{ g.delay_v }}" data-label="Round trip">{{ g.delay }}</td>
+          <td class="font-monospace" data-label="Monitor">{{ g.monitor }}</td>
+          <td data-label="Status" data-v="{{ g.status.label if g.status else '' }}">{{ status_cell(g.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No gateways match the filter.</div>
+</section>
+
+<section class="card mb-4" id="interfaces" aria-labelledby="if-title" data-section{% if not v.interfaces %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="if-title">Interfaces and their roles</h2>{{ src("src-if", v.src.interfaces) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.interfaces|length }} total</div>
+  </div>
+  {% if v.if_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.if_state.reason }}</div>
+  {% elif not v.interfaces %}
+  <div class="card-body text-secondary">No interfaces.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-if">
+      <thead><tr><th data-sort="text">Interface</th><th data-sort="text">Device</th><th data-sort="text">Role</th><th data-sort="text">Addresses</th><th data-sort="text">Gateways</th><th data-sort="text">Link</th></tr></thead>
+      <tbody>
+        {% for i in v.interfaces %}
+        <tr id="{{ i.anchor }}" data-row>
+          <td data-label="Interface"><strong>{{ i.name }}</strong>{% if not i.assigned %} <span class="badge bg-secondary-lt">unassigned</span>{% endif %}{{ src("src-i-" ~ loop.index, i.src) }}</td>
+          <td class="font-monospace" data-label="Device">{{ i.device }}</td>
+          <td data-label="Role"><span class="badge {{ i.role_badge }}">{{ i.role }}</span><div class="text-secondary small">{{ i.why }}</div></td>
+          <td class="font-monospace" data-label="Addresses">{{ i.addresses }}</td>
+          <td class="font-monospace" data-label="Gateways">{{ i.gateways }}</td>
+          <td data-label="Link"><span class="badge {{ 'bg-green-lt' if i.up else 'bg-secondary-lt' }}">{{ i.status }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No interfaces match the filter.</div>
+</section>
+
+<section class="card mb-4" id="services" aria-labelledby="svc-title" data-section{% if not v.services %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="svc-title">Services</h2>{{ src("src-svc", v.src.services) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.services|length }} total</div>
+  </div>
+  {% if v.svc_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.svc_state.reason }}</div>
+  {% elif not v.services %}
+  <div class="card-body text-secondary">No services listed.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-svc">
+      <thead><tr><th data-sort="text">Service</th><th data-sort="text">Description</th><th data-sort="text">State</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for x in v.services %}
+        <tr id="{{ x.anchor }}" data-row>
+          <td class="font-monospace" data-label="Service">{{ x.id }}{{ src("src-sv-" ~ loop.index, x.src) }}</td>
+          <td data-label="Description">{{ x.description }}</td>
+          <td data-label="State"><span class="badge {{ 'bg-green-lt' if x.running else 'bg-red text-red-fg' }}">{{ 'running' if x.running else 'stopped' }}</span></td>
+          <td data-label="Status" data-v="{{ x.status.label if x.status else '' }}">{{ status_cell(x.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No services match the filter.</div>
+</section>
+{% endif %}
+</div>

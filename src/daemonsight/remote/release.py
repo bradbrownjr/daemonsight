@@ -81,7 +81,7 @@ def due(conn, now: float) -> bool:
 async def refresh(conn, net, now: float | None = None) -> bool:
     """Fetch the release page when it is due and a system needs it. Returns True when a request was made."""
     now = time.time() if now is None else now
-    if not any(r["enabled"] for r in store.all_rows(conn)) or not due(conn, now):
+    if not any(r["enabled"] and r["kind"] == "unraid" for r in store.all_rows(conn)) or not due(conn, now):
         return False
     db.set_meta(conn, {META_TRIED: now})
     http = net.public()

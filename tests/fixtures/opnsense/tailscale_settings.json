@@ -1,0 +1,15 @@
+{
+ "settings": {
+  "enabled": "1",
+  "advertiseExitNode": "0",
+  "acceptSubnetRoutes": "0",
+  "subnets": {
+   "subnet4": {
+    "66666666-ffff-4fff-8fff-000000000001": {
+     "subnet": "10.20.0.0/24",
+     "description": "LAN"
+    }
+   }
+  }
+ }
+}

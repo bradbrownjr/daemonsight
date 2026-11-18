@@ -1,0 +1,152 @@
+[
+ {
+  "identifier": "wan",
+  "description": "WAN",
+  "device": "re0",
+  "addr4": "192.0.2.10/24",
+  "addr6": "",
+  "enabled": true,
+  "status": "up",
+  "link_type": "static",
+  "vlan_tag": "",
+  "gateways": [
+   "192.0.2.1"
+  ],
+  "ipv4": [
+   {
+    "ipaddr": "192.0.2.10/24"
+   }
+  ],
+  "ipv6": [],
+  "config": {
+   "blockpriv": "1",
+   "blockbogons": "1"
+  },
+  "is_physical": true,
+  "macaddr": "02:00:00:00:00:01"
+ },
+ {
+  "identifier": "lan",
+  "description": "LAN",
+  "device": "re1",
+  "addr4": "10.20.0.1/24",
+  "addr6": "",
+  "enabled": true,
+  "status": "up",
+  "link_type": "static",
+  "vlan_tag": "",
+  "gateways": [],
+  "ipv4": [
+   {
+    "ipaddr": "10.20.0.1/24"
+   }
+  ],
+  "ipv6": [],
+  "config": {
+   "blockpriv": "0",
+   "blockbogons": "1"
+  },
+  "is_physical": true,
+  "macaddr": "02:00:00:00:00:01"
+ },
+ {
+  "identifier": "opt1",
+  "description": "Guest",
+  "device": "re2",
+  "addr4": "10.30.0.1/24",
+  "addr6": "",
+  "enabled": true,
+  "status": "up",
+  "link_type": "static",
+  "vlan_tag": "",
+  "gateways": [],
+  "ipv4": [
+   {
+    "ipaddr": "10.30.0.1/24"
+   }
+  ],
+  "ipv6": [],
+  "config": {
+   "blockpriv": "0",
+   "blockbogons": "1"
+  },
+  "is_physical": true,
+  "macaddr": "02:00:00:00:00:01"
+ },
+ {
+  "identifier": "opt2",
+  "description": "Road warriors",
+  "device": "wg0",
+  "addr4": "10.99.0.1/24",
+  "addr6": "",
+  "enabled": true,
+  "status": "up",
+  "link_type": "static",
+  "vlan_tag": "",
+  "gateways": [],
+  "ipv4": [
+   {
+    "ipaddr": "10.99.0.1/24"
+   }
+  ],
+  "ipv6": [],
+  "config": {
+   "blockpriv": "0",
+   "blockbogons": "1"
+  },
+  "is_physical": true,
+  "macaddr": "02:00:00:00:00:01"
+ },
+ {
+  "identifier": "opt3",
+  "description": "Backup uplink",
+  "device": "re3",
+  "addr4": "198.51.100.20/24",
+  "addr6": "",
+  "enabled": true,
+  "status": "up",
+  "link_type": "static",
+  "vlan_tag": "",
+  "gateways": [
+   "198.51.100.1"
+  ],
+  "ipv4": [
+   {
+    "ipaddr": "198.51.100.20/24"
+   }
+  ],
+  "ipv6": [],
+  "config": {
+   "blockpriv": "0",
+   "blockbogons": "1"
+  },
+  "is_physical": true,
+  "macaddr": "02:00:00:00:00:01"
+ },
+ {
+  "identifier": "",
+  "description": "",
+  "device": "wg1",
+  "addr4": "",
+  "addr6": "",
+  "enabled": false,
+  "status": "no carrier",
+  "gateways": [],
+  "ipv4": [],
+  "ipv6": [],
+  "config": {}
+ },
+ {
+  "identifier": "",
+  "description": "",
+  "device": "enc0",
+  "addr4": "",
+  "addr6": "",
+  "enabled": false,
+  "status": "up",
+  "gateways": [],
+  "ipv4": [],
+  "ipv6": [],
+  "config": {}
+ }
+]

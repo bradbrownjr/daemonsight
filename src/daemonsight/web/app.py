@@ -24,7 +24,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .. import config as config_mod, db, full_version, hub, settings, shodan
 from ..config import Config
 from ..remote.client import Net
-from . import report, unraid_views, views
+from . import opnsense_views, report, unraid_views, views
 from .auth import PasswordStore, RateLimiter
 
 log = logging.getLogger("daemonsight.auth")
@@ -374,6 +374,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     # --- pages ---------------------------------------------------------------
     # On a single host the pages live at /, /exposure ... for this host. On a
     # hub, / lists the hosts and each host's pages live under /h/<host>/.
+    KIND_PAGES = {"unraid": unraid_views.PAGE_FUNCS, "opnsense": opnsense_views.PAGE_FUNCS}
+    KIND_TEMPLATE_PREFIX = {"unraid": "unraid_", "opnsense": "opn_"}
     pages = {"overview": views.overview, "exposure": views.exposure, "routes": views.routes,
              "services": views.services, "fail2ban": views.jails, "packages": views.packages,
              "vulnerabilities": views.vulnerabilities}
@@ -397,11 +399,12 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             else:
                 hcfg, base = resolve(conn, host)
                 if hcfg.kind:
-                    # A system the hub reads over its API has its own pages.
-                    if name not in unraid_views.PAGE_FUNCS:
+                    # A system the hub reads over its API has its own pages, by kind.
+                    funcs = KIND_PAGES.get(hcfg.kind, {})
+                    if name not in funcs:
                         raise HTTPException(404)
-                    ctx = unraid_views.PAGE_FUNCS[name](conn, hcfg)
-                    tname = name if name == "overview" else f"unraid_{name}"
+                    ctx = funcs[name](conn, hcfg)
+                    tname = name if name == "overview" else f"{KIND_TEMPLATE_PREFIX[hcfg.kind]}{name}"
                 elif name not in pages:
                     raise HTTPException(404)
                 elif name == "services":
@@ -463,7 +466,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
 
     if cfg.hub.enabled:
         add_pages("/h/{host}")
-        for name in unraid_views.PAGES[1:]:   # the other pages a system read from Unraid has
+        # the other pages the systems read over an API have (Unraid's, then OPNsense's)
+        for name in dict.fromkeys(unraid_views.PAGES[1:] + opnsense_views.PAGES[1:]):
             app.add_api_route(f"/h/{{host}}/{name}", handler(name, False), methods=["GET"], response_class=HTMLResponse)
             app.add_api_route(f"/h/{{host}}/partials/{name}", handler(name, True), methods=["GET"],
                               response_class=HTMLResponse)

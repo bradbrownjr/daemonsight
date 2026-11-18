@@ -1,0 +1,28 @@
+{
+ "total": 3,
+ "rowCount": 3,
+ "current": 1,
+ "rows": [
+  {
+   "id": "unbound",
+   "name": "unbound",
+   "description": "Unbound DNS",
+   "running": 1,
+   "locked": 0
+  },
+  {
+   "id": "dhcpd",
+   "name": "dhcpd",
+   "description": "DHCPv4 Server",
+   "running": 1,
+   "locked": 0
+  },
+  {
+   "id": "ntpd",
+   "name": "ntpd",
+   "description": "Network Time Daemon",
+   "running": 1,
+   "locked": 0
+  }
+ ]
+}

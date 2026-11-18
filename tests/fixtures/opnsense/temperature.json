@@ -1,0 +1,9 @@
+[
+ {
+  "device": "cpu 0",
+  "device_seq": 0,
+  "temperature": "45.0",
+  "type": "cpu",
+  "type_translated": "CPU"
+ }
+]

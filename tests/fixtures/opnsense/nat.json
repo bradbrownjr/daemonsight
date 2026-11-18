@@ -1,0 +1,116 @@
+{
+ "total": 3,
+ "rowCount": 3,
+ "current": 1,
+ "rows": [
+  {
+   "uuid": "22222222-bbbb-4bbb-8bbb-000000000001",
+   "disabled": "0",
+   "nordr": "0",
+   "interface": "wan",
+   "protocol": "tcp",
+   "ipprotocol": "inet",
+   "source.network": "any",
+   "destination.network": "wanip",
+   "destination.port": "8080",
+   "target": "10.20.0.8",
+   "local-port": "80",
+   "descr": "Web server",
+   "natreflection": "",
+   "sequence": "10",
+   "is_automatic": false,
+   "alias_meta_destination.port": [
+    {
+     "value": "8080",
+     "%value": "8080",
+     "isAlias": false,
+     "description": ""
+    }
+   ],
+   "alias_meta_target": [
+    {
+     "value": "10.20.0.8",
+     "%value": "10.20.0.8",
+     "isAlias": false,
+     "description": ""
+    }
+   ],
+   "alias_meta_local-port": [
+    {
+     "value": "80",
+     "%value": "80",
+     "isAlias": false,
+     "description": ""
+    }
+   ]
+  },
+  {
+   "uuid": "22222222-bbbb-4bbb-8bbb-000000000002",
+   "disabled": "0",
+   "nordr": "0",
+   "interface": "wan",
+   "protocol": "tcp",
+   "ipprotocol": "inet",
+   "source.network": "any",
+   "destination.network": "wanip",
+   "destination.port": "",
+   "target": "web_hosts",
+   "local-port": "",
+   "descr": "",
+   "natreflection": "",
+   "sequence": "20",
+   "is_automatic": false,
+   "alias_meta_target": [
+    {
+     "value": "web_hosts",
+     "%value": "web_hosts",
+     "isAlias": true,
+     "description": "",
+     "summary": "10.20.0.9",
+     "uuid": "00000000-0000-4000-8000-000000000000"
+    }
+   ]
+  },
+  {
+   "uuid": "22222222-bbbb-4bbb-8bbb-000000000003",
+   "disabled": "0",
+   "nordr": "0",
+   "interface": "lan",
+   "protocol": "udp",
+   "ipprotocol": "inet",
+   "source.network": "any",
+   "destination.network": "any",
+   "destination.port": "53",
+   "target": "127.0.0.1",
+   "local-port": "53",
+   "descr": "DNS redirect",
+   "natreflection": "",
+   "sequence": "30",
+   "is_automatic": false,
+   "alias_meta_destination.port": [
+    {
+     "value": "53",
+     "%value": "53",
+     "isAlias": false,
+     "description": ""
+    }
+   ],
+   "alias_meta_target": [
+    {
+     "value": "127.0.0.1",
+     "%value": "127.0.0.1",
+     "isAlias": false,
+     "description": ""
+    }
+   ],
+   "alias_meta_local-port": [
+    {
+     "value": "53",
+     "%value": "53",
+     "isAlias": false,
+     "description": ""
+    }
+   ]
+  }
+ ]
+}

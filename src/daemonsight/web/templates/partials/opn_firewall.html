@@ -1,0 +1,100 @@
+{% from "_macros.html" import src, src_button, src_panel, status_cell with context %}
+<div id="live" hx-get="{{ base }}/partials/firewall" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+{% if v.no_roles %}<p class="text-secondary small">Interface roles are not known yet (the interfaces haven't been read), so nothing is called internet-facing.</p>{% endif %}
+
+<section class="card mb-4" id="rules" aria-labelledby="rules-title" data-section{% if not v.rule_rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="rules-title">Pass rules on internet-facing interfaces</h2>{{ src("src-rules", v.src.rules) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.rule_rows|length }} total</div>
+  </div>
+  {% if v.rules_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.rules_state.reason }}</div>
+  {% elif not v.rule_rows %}
+  <div class="card-body text-secondary">No enabled pass rule is bound to an internet-facing interface.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-rules">
+      <thead><tr><th data-sort="text">Interface</th><th data-sort="text">Protocol</th><th data-sort="text">Source</th><th data-sort="text">Destination</th><th data-sort="text">Description</th><th data-sort="text">Kind</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for r in v.rule_rows %}
+        <tr id="{{ r.anchor }}" data-row>
+          <td data-label="Interface">{{ r.where }}{{ src("src-r-" ~ loop.index, r.src) }}</td>
+          <td data-label="Protocol">{{ r.protocol }}</td>
+          <td class="font-monospace" data-label="Source">{{ r.source }}</td>
+          <td class="font-monospace" data-label="Destination">{{ r.destination }}</td>
+          <td data-label="Description">{% if r.description %}{{ r.description }}{% else %}<span class="text-orange">none</span>{% endif %}</td>
+          <td data-label="Kind">{{ r.origin }}</td>
+          <td data-label="Status" data-v="{{ r.status.label if r.status else '' }}">{{ status_cell(r.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body text-secondary small">{{ v.unlisted }} more rule{{ 's' if v.unlisted != 1 }} on trusted, VPN or other interfaces, or disabled, are not listed; OPNsense also generates {{ v.automatic }} of its own (anti-lockout, default deny). {{ v.legacy }} of the rules are classic ones from before the migration to the new rule pages.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No rules match the filter.</div>
+</section>
+
+<section class="card mb-4" id="forwards" aria-labelledby="fwd-title" data-section{% if not v.nat_rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="fwd-title">Port forwards</h2>{{ src("src-nat", v.src.nat) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.nat_rows|length }} total</div>
+  </div>
+  {% if v.nat_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.nat_state.reason }}</div>
+  {% elif not v.nat_rows %}
+  <div class="card-body text-secondary">No port forwards.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-nat">
+      <thead><tr><th data-sort="text">Interface</th><th data-sort="text">Protocol</th><th data-sort="text">Port</th><th data-sort="text">Target</th><th data-sort="text">Description</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for f in v.nat_rows %}
+        <tr id="{{ f.anchor }}" data-row>
+          <td data-label="Interface">{{ f.interface }} <span class="badge {{ f.role_badge }}">{{ f.role }}</span>{% if not f.enabled %} <span class="badge bg-secondary-lt">disabled</span>{% endif %}{% if f.no_redirect %} <span class="badge bg-secondary-lt">no redirect</span>{% endif %}{{ src("src-f-" ~ loop.index, f.src) }}</td>
+          <td data-label="Protocol">{{ f.protocol }}</td>
+          <td class="font-monospace" data-label="Port">{% if f.port_bad %}<span class="text-red">{{ f.port }}</span>{% else %}{{ f.port }}{% endif %}</td>
+          <td class="font-monospace" data-label="Target">{{ f.target }}{% if f.local_port %}:{{ f.local_port }}{% endif %}</td>
+          <td data-label="Description">{{ f.description or '—' }}</td>
+          <td data-label="Status" data-v="{{ f.status.label if f.status else '' }}">{{ status_cell(f.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No port forwards match the filter.</div>
+</section>
+
+<section class="card" id="caddy" aria-labelledby="caddy-title" data-section{% if not v.site_rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="caddy-title">Caddy sites</h2>{{ src("src-caddy", v.src.caddy) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.site_rows|length }} total{% if v.caddy_service %} · service {{ v.caddy_service }}{% endif %}</div>
+  </div>
+  {% if v.caddy_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.caddy_state.reason }}</div>
+  {% elif not v.site_rows %}
+  <div class="card-body text-secondary">No Caddy sites.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-caddy">
+      <thead><tr><th data-sort="text">Domain</th><th data-sort="text">Upstream</th><th data-sort="text">Access</th><th data-sort="text">Internet-facing</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for s in v.site_rows %}
+        <tr id="{{ s.anchor }}" data-row>
+          <td data-label="Domain">{{ s.domain }}{% if not s.enabled %} <span class="badge bg-secondary-lt">disabled</span>{% endif %}{{ src("src-s-" ~ loop.index, s.src) }}</td>
+          <td class="font-monospace" data-label="Upstream">{% for u in s.upstreams %}<div>{{ u }}</div>{% else %}—{% endfor %}</td>
+          <td data-label="Access">{% if s.open %}<span class="text-orange">{{ s.access }}</span>{% else %}{{ s.access }}{% endif %}</td>
+          <td data-label="Internet-facing"><span class="badge {{ s.facing_badge }}">{{ s.facing }}</span></td>
+          <td data-label="Status" data-v="{{ s.status.label if s.status else '' }}">{{ status_cell(s.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No sites match the filter.</div>
+</section>
+{% endif %}
+</div>

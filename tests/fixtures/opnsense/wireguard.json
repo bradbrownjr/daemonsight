@@ -1,0 +1,57 @@
+{
+ "total": 4,
+ "rowCount": 4,
+ "current": 1,
+ "rows": [
+  {
+   "if": "wg0",
+   "type": "interface",
+   "public-key": "SYNTHETICPUBLICKEYSYNTHETICPUBLICKEYSYNTH0=",
+   "listen-port": "51820",
+   "fwmark": "off",
+   "endpoint": "",
+   "status": "up",
+   "name": "Road warriors",
+   "ifname": "wg0"
+  },
+  {
+   "if": "wg0",
+   "type": "peer",
+   "public-key": "LAPTOPKEYSYNTHETIC00000000000000000000000000=",
+   "endpoint": "203.0.113.50:51820",
+   "allowed-ips": "10.99.0.2/32",
+   "latest-handshake": 1794999940,
+   "transfer-rx": 1048576,
+   "transfer-tx": 2097152,
+   "persistent-keepalive": "25",
+   "name": "laptop",
+   "ifname": "wg0",
+   "peer-status": "online"
+  },
+  {
+   "if": "wg0",
+   "type": "peer",
+   "public-key": "PHONEKEYSYNTHETIC000000000000000000000000000=",
+   "endpoint": "",
+   "allowed-ips": "10.99.0.3/32",
+   "latest-handshake": 0,
+   "transfer-rx": 1048576,
+   "transfer-tx": 2097152,
+   "persistent-keepalive": "off",
+   "name": "phone",
+   "ifname": "wg0",
+   "peer-status": "online"
+  },
+  {
+   "if": "wg1",
+   "type": "interface",
+   "public-key": "SECONDSYNTHETICKEY000000000000000000000000=",
+   "listen-port": "51821",
+   "fwmark": "off",
+   "endpoint": "",
+   "status": "up",
+   "name": "Site link",
+   "ifname": "wg1"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "devices": [
+  {
+   "device": "zroot/ROOT/default",
+   "type": "zfs",
+   "blocks": "100G",
+   "total": "100G",
+   "total_bytes": 107374182400,
+   "used": "20G",
+   "used_bytes": 21474836480,
+   "available": "80G",
+   "available_bytes": 85899345920,
+   "used_pct": 20,
+   "mountpoint": "/"
+  }
+ ]
+}

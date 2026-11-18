@@ -1,0 +1,173 @@
+{
+ "caddy": {
+  "general": {
+   "enabled": "1",
+   "TlsEmail": "admin@example.invalid",
+   "TlsDnsApiKey": "SYNTHETIC-DNS-API-TOKEN",
+   "accesslist": {
+    "": {
+     "value": "None",
+     "selected": 1
+    }
+   }
+  },
+  "reverseproxy": {
+   "reverse": {
+    "33333333-cccc-4ccc-8ccc-000000000001": {
+     "enabled": "1",
+     "FromDomain": "app.example.test",
+     "FromPort": "443",
+     "DisableTls": {
+      "": {
+       "value": "None",
+       "selected": 1
+      },
+      "http://": {
+       "value": "http",
+       "selected": 0
+      }
+     },
+     "accesslist": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "basicauth": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "description": "App"
+    },
+    "33333333-cccc-4ccc-8ccc-000000000002": {
+     "enabled": "1",
+     "FromDomain": "private.example.test",
+     "FromPort": "443",
+     "DisableTls": {
+      "": {
+       "value": "None",
+       "selected": 1
+      },
+      "http://": {
+       "value": "http",
+       "selected": 0
+      }
+     },
+     "accesslist": {
+      "44444444-dddd-4ddd-8ddd-000000000001": {
+       "value": "office",
+       "selected": 1
+      }
+     },
+     "basicauth": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "description": ""
+    }
+   },
+   "subdomain": {},
+   "handle": {
+    "55555555-eeee-4eee-8eee-000000000001": {
+     "enabled": "1",
+     "reverse": {
+      "33333333-cccc-4ccc-8ccc-000000000001": {
+       "value": "x",
+       "selected": 1
+      }
+     },
+     "subdomain": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "HandleDirective": {
+      "reverse_proxy": {
+       "value": "reverse_proxy",
+       "selected": 1
+      }
+     },
+     "HandlePath": "",
+     "ToDomain": "10.20.0.8",
+     "ToPort": "3000",
+     "HttpTls": {
+      "http://": {
+       "value": "http://",
+       "selected": 1
+      }
+     },
+     "accesslist": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "basicauth": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "ForwardAuth": "0",
+     "description": ""
+    },
+    "55555555-eeee-4eee-8eee-000000000002": {
+     "enabled": "1",
+     "reverse": {
+      "33333333-cccc-4ccc-8ccc-000000000002": {
+       "value": "x",
+       "selected": 1
+      }
+     },
+     "subdomain": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "HandleDirective": {
+      "reverse_proxy": {
+       "value": "reverse_proxy",
+       "selected": 1
+      }
+     },
+     "HandlePath": "",
+     "ToDomain": "10.20.0.9",
+     "ToPort": "8443",
+     "HttpTls": {
+      "https://": {
+       "value": "https://",
+       "selected": 1
+      }
+     },
+     "accesslist": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "basicauth": {
+      "": {
+       "value": "None",
+       "selected": 1
+      }
+     },
+     "ForwardAuth": "0",
+     "description": ""
+    }
+   },
+   "accesslist": {
+    "44444444-dddd-4ddd-8ddd-000000000001": {
+     "accesslistName": "office",
+     "clientIps": "198.51.100.0/24",
+     "accesslistInvert": "0"
+    }
+   }
+  }
+ }
+}
