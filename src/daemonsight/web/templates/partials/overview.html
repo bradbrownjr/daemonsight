@@ -73,8 +73,8 @@
           <div class="text-secondary">{{ f.detail }}</div>
           {% if f.changed_note %}<div class="text-orange small">{{ f.changed_note }}</div>{% endif %}
           {% if f.fix %}{{ fix_block(f.fix) }}{% endif %}
-          <div class="d-flex flex-wrap align-items-start gap-2 mt-1">
-            <span class="text-secondary small">Since {{ f.since }}</span>
+          <div class="d-flex flex-wrap align-items-baseline gap-3 mt-1 small">
+            <span class="text-secondary">Since {{ f.since }}</span>
             {{ accept_form(f) }}
           </div>
         </div>

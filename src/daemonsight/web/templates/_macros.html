@@ -47,7 +47,7 @@
 {% macro accept_form(f, where="") -%}
 {% if can_accept %}
 <details class="ds-accept ds-noprint">
-  <summary class="btn btn-sm btn-ghost-secondary">{{ "Accept again" if f.accepted else "Accept" }}</summary>
+  <summary class="ds-accept-link">{{ "Accept again" if f.accepted else "Accept" }}</summary>
   <form method="post" action="{{ base }}/findings/accept" class="ds-accept-form">
     <input type="hidden" name="rule" value="{{ f.rule }}">
     <input type="hidden" name="key" value="{{ f.key }}">

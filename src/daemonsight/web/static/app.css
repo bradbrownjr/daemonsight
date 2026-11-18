@@ -109,7 +109,13 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
 .ds-fix-code code { color: inherit; background: none; padding: 0; white-space: inherit; }
 .ds-fix .ds-copy { flex: 0 0 auto; }
 /* Accept with a note: a native <details>, so it works without scripts. */
-.ds-accept > summary { list-style: none; display: inline-flex; }
+/* Accept reads as a text link on the "Since" line, sharing its baseline;
+   a padded button sat lower than the text beside it. */
+.ds-accept > summary { list-style: none; display: inline; cursor: pointer; }
+.ds-accept-link { color: var(--tblr-link-color, var(--tblr-primary)); text-decoration: underline;
+  text-decoration-color: transparent; text-underline-offset: .15em; }
+.ds-accept-link:hover, .ds-accept-link:focus-visible { text-decoration-color: currentColor; }
+.ds-accept[open] { flex-basis: 100%; }
 .ds-accept > summary::-webkit-details-marker { display: none; }
 .ds-accept-form { margin-top: .4rem; min-width: min(24rem, 100%); }
 .ds-accept-form .form-control { flex: 1 1 14rem; min-width: 0; }
