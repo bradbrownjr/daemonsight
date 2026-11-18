@@ -102,6 +102,29 @@
   {% endif %}
 </section>
 
+<section class="card mb-4" id="auto" aria-labelledby="auto-title" data-section>
+  <div class="card-header">
+    <h2 class="card-title" id="auto-title">Automatic updates</h2>{{ src("src-pkg-auto", v.src.auto) }}
+  </div>
+  {% if v.state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.state.reason }}</div>
+  {% elif not v.auto.known %}
+  <div class="card-body text-secondary">Not read yet.{% if v.errors.get('auto') or v.errors.get('lists') %} See the errors below.{% endif %}</div>
+  {% else %}
+  <div class="card-body">
+    <div class="datagrid">
+      <div class="datagrid-item">
+        <div class="datagrid-title">{{ v.auto.tool }}</div>
+        <div class="datagrid-content"><span class="{{ v.auto.cls }}">{{ v.auto.state }}</span></div>
+        <div class="text-secondary small">{{ v.auto.notes|join(' · ') }}</div>
+      </div>
+    </div>
+    {% if v.auto.howto and not v.auto.workstation %}<p class="mt-3 mb-0">{{ v.auto.howto }}</p>{% endif %}
+    {% if v.auto.workstation and not v.auto.on %}<p class="mt-3 mb-0 text-secondary">This host is a workstation, so this isn't raised as a finding. Desktops usually update through the software centre.</p>{% endif %}
+  </div>
+  {% endif %}
+</section>
+
 <section class="card mb-4" id="lists" aria-labelledby="lists-title">
   <div class="card-header">
     <h2 class="card-title" id="lists-title">Package lists</h2>{{ src("src-pkg-lists", v.src.lists) }}

@@ -30,6 +30,7 @@ socket, the fail2ban socket and the firewall needs it.
   | fail2ban | Socket commands `version`, `status` and `get` |
   | Firewall | `iptables-save`, `ip6tables-save`, `nft -j list ruleset` |
   | Ports, system | psutil, which reads `/proc` |
+  | Packages | `apt-get -s dist-upgrade`, `apt-config shell`, `dpkg-query -W`, `dnf check-upgrade -C`, `dnf advisory list` and `info -C`, `rpm -q`, `systemctl is-enabled` |
 
 - **No commands from anywhere.** The collector takes no input from the web UI
   or the network. Its one outbound connection is the upload to a hub, when
@@ -39,6 +40,12 @@ socket, the fail2ban socket and the firewall needs it.
 - **fail2ban replies are unpickled safely.** fail2ban's socket speaks Python
   pickle. The collector's unpickler accepts builtin data types and exception
   names only, so a reply can't run code.
+- **What it sends about packages.** With `[upload]` set, the list of
+  installed packages (source name, version and binary package names) and the
+  release name from `/etc/os-release`; on Fedora, the pending security
+  advisories instead. That tells the hub, and anyone who reads its database,
+  which versions of what the host runs. The collector downloads no
+  vulnerability data.
 - **Secrets in container logs and command lines are masked** before
   they're stored: `password=`, `token=`, `api_key=` and similar values,
   `Authorization` headers, and passwords inside URLs. The command line of
@@ -170,6 +177,17 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   - a collector can't open or close the hub's own `host.*` findings
   - ten bad tokens from one address in five minutes block that address,
     and one host may upload at most 120 times a minute
+- **CVE matching downloads three public files.** The hub fetches the Debian
+  security tracker, FIRST's EPSS scores and CISA's KEV list over HTTPS, with
+  the User-Agent `DaemonSight/<version>` and nothing about your hosts. A
+  redirect may only stay on the feed's own host, each download has a size
+  cap, files are written atomically and parsed with the standard library
+  (no code is run from them). A failed download keeps the last good data.
+- **Feed text is untrusted.** CVE descriptions and names come from other
+  people's files. They are cut to a fixed length when stored and shown only
+  through autoescaped templates, and the links they produce go to
+  `security-tracker.debian.org`, built from a CVE id that matched a strict
+  pattern. A bad feed can give wrong findings but can't run anything.
 - **Refusals are logged** as `Refused upload from <address>: <reason>`.
   The fail2ban filter counts only bad tokens.
 - **The hub can ask for one thing: an update.** Its reply carries the last

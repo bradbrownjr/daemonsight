@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 import time
@@ -22,7 +23,12 @@ from . import db, full_version
 from .findings import Finding
 
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
-HUB_RULES = "host."
+log = logging.getLogger("daemonsight.hub")
+# Rules the hub opens and closes itself; a collector can't send these, and an
+# upload never closes them: host.* (silence, clock) and cve.* (CVE matching).
+HUB_RULES = ("host.", "cve.")
+# The package list is not a snapshot source: see InventoryIn.
+INVENTORY = "inventory"
 SOURCES = ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall", "packages")
 SILENT_AFTER_INTERVALS = 3
 SKEW_SECONDS = 300
@@ -109,7 +115,7 @@ class FindingIn(_Model):
     @classmethod
     def _not_hub_rule(cls, v: str) -> str:
         if v.startswith(HUB_RULES):
-            raise ValueError("host.* findings belong to the hub")
+            raise ValueError("host.* and cve.* findings belong to the hub")
         return v
 
 
@@ -128,6 +134,41 @@ class SettingsIn(_Model):
     interval_system: int = Field(default=10, ge=1, le=86400)
     # "server" or "workstation". Older collectors send nothing: server.
     role: Literal["server", "workstation"] = "server"
+
+
+PkgName = Annotated[str, Field(max_length=100, pattern=r"^[^\x00-\x1f\x7f]+$")]
+PkgVersion = Annotated[str, Field(max_length=120, pattern=r"^[^\x00-\x1f\x7f]+$")]
+CveId = Annotated[str, Field(pattern=r"^CVE-\d{4}-\d{4,10}$", max_length=24)]
+
+
+class AdvisoryIn(BaseModel):
+    """One pending Fedora security advisory: its id, severity, the CVEs it
+    names and the installed packages it would update."""
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+    id: Annotated[str, Field(max_length=60, pattern=r"^[A-Za-z0-9._:-]+$")]
+    severity: Annotated[str, Field(max_length=20)] = ""
+    cves: list[CveId] = Field(default_factory=list, max_length=200)
+    packages: list[PkgName] = Field(default_factory=list, max_length=100)
+
+
+class InventoryIn(BaseModel):
+    """What the host has installed, for CVE matching on the hub. Unlike the
+    other models this one ignores unknown fields, so a newer collector can
+    add to it. And `Upload.inventory` drops an inventory it can't read rather
+    than refuse the whole upload; the earlier "packages" snapshot source
+    broke an old hub with a 422, and that must not happen again."""
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+    v: Literal[1]
+    taken_at: float
+    backend: Literal["apt", "dnf"]
+    hash: Annotated[str, Field(max_length=64, pattern=r"^[0-9a-f]*$")] = ""
+    os_id: Annotated[str, Field(max_length=40)] | None = None
+    version_id: Annotated[str, Field(max_length=40)] | None = None
+    codename: Annotated[str, Field(pattern=r"^[a-z0-9._-]{1,40}$")] | None = None
+    # apt: [source package, source version, [binary packages]]
+    sources: list[tuple[PkgName, PkgVersion, list[PkgName]]] = Field(default_factory=list, max_length=20_000)
+    # dnf: pending security advisories
+    advisories: list[AdvisoryIn] = Field(default_factory=list, max_length=2_000)
 
 
 UPDATE_STATES = ("running", "done", "failed", "refused", "rolled_back")
@@ -167,6 +208,17 @@ class Upload(_Model):
     findings: list[FindingIn] = Field(default_factory=list, max_length=2_000)
     remote_update: bool | None = None
     update: UpdateStateIn | None = None
+    inventory: InventoryIn | None = None
+
+    @field_validator("inventory", mode="wrap")
+    @classmethod
+    def _inventory_optional(cls, v, handler):
+        """A package list this hub can't read is dropped, not a reason to refuse the upload."""
+        try:
+            return handler(v)
+        except ValidationError as exc:
+            log.warning("Ignoring an unreadable inventory: %s", exc.errors()[0]["msg"])
+            return None
 
     @field_validator("snapshots")
     @classmethod
@@ -266,6 +318,12 @@ def store(conn, host_row, up: Upload, now: float, address: str | None) -> str | 
                 "ON CONFLICT (host, source) DO UPDATE SET taken_at=excluded.taken_at, ok=excluded.ok, "
                 "error=excluded.error, data=excluded.data WHERE excluded.taken_at >= snapshots.taken_at",
                 (host, s.source, s.taken_at, int(s.ok), s.error, json.dumps(s.data) if s.data is not None else None))
+        if up.inventory is not None:
+            conn.execute(
+                "INSERT INTO snapshots (host, source, taken_at, ok, error, data) VALUES (?, ?, ?, 1, NULL, ?) "
+                "ON CONFLICT (host, source) DO UPDATE SET taken_at=excluded.taken_at, data=excluded.data "
+                "WHERE excluded.taken_at >= snapshots.taken_at",
+                (host, INVENTORY, up.inventory.taken_at, up.inventory.model_dump_json(exclude_defaults=True)))
         conn.execute(
             "INSERT INTO snapshots (host, source, taken_at, ok, error, data) VALUES (?, 'settings', ?, 1, NULL, ?) "
             "ON CONFLICT (host, source) DO UPDATE SET taken_at=excluded.taken_at, data=excluded.data",

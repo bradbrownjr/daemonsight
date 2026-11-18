@@ -1,6 +1,6 @@
 # DaemonSight design
 
-Status: phases 1, 2 and 2c are built; phase 3 is next. Updated 2026-11-18.
+Status: phases 1, 2, 2c, 3a and 3b are built; 3c is next. Updated 2026-11-18.
 
 ## Goal
 
@@ -17,7 +17,7 @@ Targets for v1:
 
 - Log storage or shipping. DaemonSight reads logs to answer specific questions; it is not a SIEM. Log collection is planned after phase 3; see "Log collection and auditing (planned)".
 - Changing the host. v1 is read-only: no bans, restarts or firewall edits.
-- A hub that ships as anything but a container. A collector-and-web install can't also be a hub.
+- A hub that ships as anything but a container. A collector-and-web install can't also be a hub. (So a standalone host's Vulnerabilities page only says CVE matching runs on a hub.)
 - Podman, Kubernetes, nginx, Apache, iptables-legacy.
 
 ## Architecture
@@ -28,20 +28,21 @@ Targets for v1:
  │ daemonsight-collector        │                 │ daemonsight-web     │
  │  system · systemd · ports    │   writes        │  FastAPI + Jinja2   │
  │  docker · caddy · fail2ban   ├──────────┐      │  HTMX, read-only    │
- │  nftables · findings · alerts│          ▼      │                     │
- └──────────────────────────────┘   /var/lib/daemonsight/state.db ◄──────┤
- ┌──────────────────────────────┐          ▲      └──────────┬──────────┘
- │ daemonsight-scan (timer, 6 h)│  writes  │                 │ 127.0.0.1 or wg0
- │  trivy · debsecan            ├──────────┘                 ▼
- └──────────────────────────────┘                     browser (via Caddy)
+ │  nftables · packages         │          ▼      │                     │
+ │  findings · alerts           │   /var/lib/daemonsight/state.db ◄──────┤
+ └──────────────────────────────┘                  └──────────┬──────────┘
+                                                              │ 127.0.0.1 or wg0
+                                                              ▼
+                                                      browser (via Caddy)
 ```
 
-Systemd units. `daemonsight-scan` arrives with phase 3.
+Systemd units. There is no scan unit: CVE matching runs on the hub
+(see "CVE matching"), so a host runs no scanner and downloads no
+vulnerability data.
 
 | Unit | Runs as | Does |
 |------|---------|------|
 | `daemonsight-collector.service` | root | Long-running asyncio loop. Each source has its own interval. Writes snapshots, computes findings, sends alerts. |
-| `daemonsight-scan.service` + `.timer` | root | Oneshot every 6 hours. Runs Trivy and debsecan, writes results. Separate because scans are slow and memory-heavy. |
 | `daemonsight-web.service` | `daemonsight` | Serves the UI. Opens the database read-only. Never touches sockets, logs or tools. |
 | `daemonsight-update.path` + `.service` | root | Installs an update the hub asked for. See "Updates from the hub". |
 
@@ -67,15 +68,18 @@ capabilities each source needs is listed under "To verify".
 | Firewall | `iptables-save` and `ip6tables-save` when installed; `nft -j list ruleset` for native nft tables | 5 min | Input chains (default verdict, ports accepted, following jumps) and DNAT forwards. With iptables' nf_tables backend, nft shows extension matches such as multiport only as opaque `xt` expressions, so iptables-save is read for those tables. [6] |
 | Packages | `apt-get -s -o Debug::NoLocking=1 dist-upgrade` (a simulation: pending upgrades, with the archive each comes from, so security updates are known), `apt-mark showhold`, `dpkg-query` for installed `linux-image-*`, `/var/run/reboot-required(.pkgs)`, the mtime of `/var/lib/apt/lists/*InRelease`, `systemctl is-enabled apt-daily.timer`, and `needrestart -b -r l` if installed | 1 h | Never runs `apt update`; the host's apt timers do, and the lists' age is reported. The simulation needs no root and changes nothing. A kernel that no installed `linux-image` package matches (an LXC, a custom kernel) is "managed by the host" and raises nothing. needrestart's batch mode lists services using old libraries without restarting them. [12][13] |
 | Packages, Fedora | `dnf check-upgrade -C --json` and `--security --json` (exit 100 means updates; `-C` is cache-only), `rpm -q --qf` for installed versions, `dnf versionlock list`, `dnf needs-restarting -C --json` (exit 1 means reboot) and `-C -s` (services), `rpm -q kernel-core` against `uname -r`, the mtime of `/var/cache/libdnf5/*/repodata/repomd.xml`, `systemctl is-enabled dnf5-makecache.timer` | 1 h | Same data shape as apt, plus `backend: "dnf"`. The collector picks apt if `dpkg` and `apt-get` are on PATH, else dnf if `dnf` and `rpm` are, and needs dnf5 (dnf4 reports the source unavailable). A package is "security" when `check-upgrade --security` lists it. Never downloads or installs; with no cache, `check-upgrade -C` exits 1 with "Cache-only enabled but no cache" and the updates part reports that. `needs-restarting -C` also needs file lists in the cache; without them the reboot part falls back to `/run/reboot-required` (written by dnf5 as root) and the kernel check. No versionlock plugin means nothing is held. [15][16][17][18] |
-| CVEs, host | `trivy rootfs --scanners vuln --format json /` with `--skip-dirs` for `/proc`, `/sys`, `/var/lib/docker` | 6 h | Without `--pkg-types os` it also finds language packages (Python venvs, `node_modules`) of apps on the host. [7][8] |
-| CVEs, images | `trivy image --format json <image>` for each running image | 6 h | Fields used: `VulnerabilityID`, `PkgName`, `InstalledVersion`, `FixedVersion`, `Status`, `Severity`. [8] |
-| CVEs, cross-check | `debsecan --suite <codename> --only-fixed --format detail` | 6 h | Debian's own view of fixable packages. Needs network access. [9] |
+| Automatic updates, apt | `apt-config shell L APT::Periodic::Update-Package-Lists U APT::Periodic::Unattended-Upgrade`, `systemctl is-enabled apt-daily-upgrade.timer`, and whether `/usr/bin/unattended-upgrade` exists | 1 h (with Packages) | `auto_updates` in the packages snapshot. On when the program is installed, `Unattended-Upgrade` is not `0` and the timer isn't disabled. `apt.conf(5)`: the `APT::Periodic` options are days between runs, and `apt-daily-upgrade.timer` is what runs `unattended-upgrade`. [19][20] |
+| Automatic updates, Fedora | `rpm -q dnf5-plugin-automatic`, `systemctl is-enabled dnf5-automatic.timer`, and `apply_updates` and `upgrade_type` under `[commands]` of the files dnf5-automatic reads, in its documented order (later wins) | 1 h (with Packages) | On when the plugin is installed, the timer is enabled and `apply_updates` is on. Fedora's shipped default is `apply_updates = no`: the timer then only downloads. [21] |
+| Installed packages (apt) | `dpkg-query -W -f '${db:Status-Abbrev}\t${source:Package}\t${source:Version}\t${Package}\t${Version}\n'`, plus `/etc/os-release` | 1 h, only when `[upload]` is set | The `inventory` source. One row per source package and version, with its binary packages. Sent to the hub in the upload's own `inventory` field (see "CVE matching"). [22] |
+| Pending advisories (Fedora) | `dnf advisory list --updates --security --json -C` and `dnf advisory info --updates --security --json -C`; CVE ids are read from each advisory's description and reference titles | 1 h, only when `[upload]` is set | Fedora's advisories carry Bugzilla references, not CVE-type ones, so `--with-cve` and `--cves=` match nothing; the CVE ids are in the text. [23] |
+| Debian security tracker | `https://security-tracker.debian.org/tracker/data/json` | hub, 24 h | Read by the hub, a CVE at a time. Fields kept: status, fixed version, urgency, nodsa reason, a short description. [24][25] |
+| EPSS | `https://epss.empiricalsecurity.com/epss_scores-current.csv.gz` | hub, 24 h | All scores. Free, no registration; FIRST asks for attribution. [26][27] |
+| CISA KEV | `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` | hub, 24 h | CC0 1.0. [28] |
 
-Trivy caveats from its docs: it uses only the OS vendor's advisories for OS
-packages, and it skips packages from third-party apt repos (Docker, NVIDIA and
-others). [7] DaemonSight lists those packages as "not scanned" rather than
-"clean". Trivy is itself installed from Aqua's apt repo, so it is in that list
-too.
+Not used: Trivy. Two of its releases were compromised (GHSA-69fq-xp46-6x23
+and GHSA-mcj4-mphf-j9ff), and a scanner binary on every host is the
+attack surface this design avoids. debsecan reads the same Debian tracker
+data; the Vulnerabilities page offers it as a command to cross-check by hand. [9]
 
 ## Findings
 
@@ -97,9 +101,10 @@ DaemonSight knows when it first appeared and when it cleared.
 | `pkg.updates` | Updates are pending, none of them security | Low |
 | `pkg.reboot` | `/var/run/reboot-required` exists, or a newer kernel than the running one is installed | Medium |
 | `pkg.restart` | needrestart lists services using old libraries | Low |
-| `pkg.lists_stale` | The package lists are over 3 days old (age is the newest list file, which apt dates by the repository's publish time). Names an unset `APT::Periodic::Update-Package-Lists`, the usual cause when apt-daily.timer runs but does nothing | Low |
-| `cve.fixable_exposed` | A fixable CVE sits in a package or image whose process owns a public listener or Caddy upstream | The CVE's severity, raised one level |
-| `cve.fixable` | Any other fixable CVE | The CVE's severity |
+| `pkg.lists_stale` | The package lists are over 3 days old (age is the newest list file, which apt dates by the repository's publish time). Names an unset `APT::Periodic::Update-Package-Lists`, the usual cause when apt-daily.timer runs but does nothing. When `pkg.auto_updates_off` also fires it points there for the fix instead of repeating it | Low |
+| `pkg.auto_updates_off` | Nothing installs updates on its own: apt, unattended-upgrades missing, switched off (`Unattended-Upgrade` is `0` or unset) or its `apt-daily-upgrade.timer` disabled; Fedora, `dnf5-plugin-automatic` missing, its timer not enabled, or `apply_updates` off. Not raised for `role = "workstation"` (desktops update through the software centre) or when the collector couldn't read the settings | Low |
+| `cve.package` | One per source package on the hub: an open or fixable CVE is on CISA's KEV list, or a fixable one has an EPSS score of 0.10 or more (`[cve] epss_high`): High. Otherwise a fix is available: Medium. Unfixed CVEs that aren't on KEV, and "won't fix or minor" ones, make no finding. | High or Medium |
+| `cve.feed_stale` | A feed has had no successful fetch (a 200 or a 304) for over 3 days. Opened on every host with a package list | Low |
 | `os.lts` | A Debian release is past regular support and inside LTS, or an Ubuntu release is past standard support and inside ESM | Low; Medium within 180 days of the end of LTS or ESM |
 | `os.eol_soon` | A Fedora release is within 60 days of its EOL date | Low |
 | `os.eol` | A Debian release is past LTS (paid ELTS only, or nothing), an Ubuntu release is past ESM, or a Fedora release is past its EOL date | High |
@@ -182,7 +187,7 @@ matches the logo's gem. Light mode is a toggle. Tabler ships both as built-in
 attributes (`data-bs-theme`, `data-bs-theme-base`, `data-bs-theme-primary`), so
 there is no custom CSS to maintain.
 
-Pages: Overview, Exposure, Caddy routes, Services and containers, fail2ban, Packages.
+Pages: Overview, Exposure, Caddy routes, Services and containers, fail2ban, Packages, and on a hub Vulnerabilities.
 On a hub, Hosts is the front page.
 
 Hosts page: a host with an open `pkg.reboot` finding shows a "Reboot needed"
@@ -195,7 +200,7 @@ the OS with its support status.
 Phone menu: the header chip on a phone shows only the status dot and host name.
 The top of the menu panel holds one line with the OS, its support status when it
 is not plain "Supported", the kernel and the uptime. It appears on host pages
-only, never on the hub's Hosts page. The desktop header is unchanged. Vulnerabilities comes with phase 3.
+only, never on the hub's Hosts page. The desktop header is unchanged.
 
 Row links: a finding links to the row it is about, such as an Exposure port,
 a Caddy site, a forward or a jail (the row's `id` is built by
@@ -254,7 +259,7 @@ supports ntfy and SMTP email. Daily digest optional.
    2c. The hub: collectors upload to one install that shows every host, with the container image and Unraid template, retention and backups, and updates from the hub. See "Hub". Done.
 3. Package and CVE checks.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
-   3b. Next: CVE matching on the hub. Collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, ranks by Debian urgency, EPSS and CISA's KEV list, and raises one finding per package. Vulnerabilities page and `cve` rules. No scanner binary on the hosts.
+   3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, ranks by EPSS and CISA's KEV list, and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian and Raspberry Pi OS; Ubuntu is next (see "CVE matching"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
    3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases.
 4. Alerts, recent-changes feed, history charts with drill-down. See "History charts and drill-down (planned)".
 5. `.deb` package and docs.
@@ -300,7 +305,9 @@ A collector with a URL under `[upload]` runs an uploader beside its sources
 `[exposure]` and `[links]` settings and ephemeral port range, whether
 `[upload] remote_update` is on, the result of its last update, the snapshots
 that changed, the metrics and events the hub hasn't confirmed (up to 20,000
-and 1,000 a time; the rest follows a second later), and its open findings.
+and 1,000 a time; the rest follows a second later), and its open findings. A
+host with the `inventory` source also sends its installed packages as a
+top-level `inventory` field (see "CVE matching").
 
 - **Cursors** follow write order: the last snapshot sent per source, the
   last metric row, the last event id. They move only when the hub answers
@@ -324,8 +331,9 @@ and 1,000 a time; the rest follows a second later), and its open findings.
 - **Checks:** gzip or plain JSON only; 8 MiB before unpacking and 48 MiB
   after (a small gzip can unpack to gigabytes); a pydantic schema that sets
   the type and length of every field (`hub.py`); the top-level shape of
-  each source's data; links only as paths on the site; no `host.*` findings
-  from a collector; NaN and Infinity refused. Ten bad tokens from one address
+  each source's data; links only as paths on the site; no `host.*` or `cve.*`
+  findings from a collector; NaN and Infinity refused. An `inventory` the
+  hub can't read is dropped, not a reason to refuse the upload. Ten bad tokens from one address
   in five minutes block that address; one host may upload 120 times a minute.
 - **TLS:** `[upload] url` must be `https://`, except to a hub on the same
   machine, and the certificate is checked against the system CA store with
@@ -335,7 +343,8 @@ and 1,000 a time; the rest follows a second later), and its open findings.
   nothing else in it. See "Updates from the hub". Other actions (ban, unban,
   restart) would need their own design.
 - **Findings:** each collector works out its own findings with its own
-  `[exposure]` settings and sends them. The hub adds `host.silent` (High)
+  `[exposure]` settings and sends them. The hub adds the `cve.*` findings (see
+  "CVE matching"), `host.silent` (High)
   when a host misses three of its longest intervals, or never reports within
   ten minutes of being added, and `host.clock_skew` (Low) when `sent_at` is
   more than five minutes off the hub's clock.
@@ -456,8 +465,11 @@ and every action are pinned to a digest or commit.
 
 It runs as uid 10001 with everything in `/data`: the config (written from
 `packaging/docker/hub.toml` on first start), the password, the session
-secret, the database, `backups/` and `daemonsight.log` (`log_file`, rotated
-at 5 MB, four files). The remote sources in phase 2b (OPNsense, Unraid)
+secret, the database, `cve.db` and the saved feed files in `cve/` (about 60
+MB; not backed up, since the hub downloads them again), `backups/` and
+`daemonsight.log` (`log_file`, rotated at 5 MB, four files). The hub needs
+outbound HTTPS to `security-tracker.debian.org`, `epss.empiricalsecurity.com`
+and `www.cisa.gov`; it works without them, with `cve.feed_stale` after 3 days. The remote sources in phase 2b (OPNsense, Unraid)
 will run in the hub, since they are API calls from the LAN.
 
 `deploy/unraid/daemonsight.xml` is an Unraid template for it: icon, web UI
@@ -468,6 +480,201 @@ The Docker tab then manages it, including updating it from the new image.
 Collectors stay native packages on each Linux host (LXC, VPS). They need root,
 the host's D-Bus, `/proc` and netlink, which a container would only get by
 giving up its isolation.
+
+## CVE matching
+
+Phase 3b. The hub finds known vulnerabilities in what its hosts have
+installed. A host downloads nothing and runs no scanner: it reports its
+package list, and the hub does the rest.
+
+```
+collector ── dpkg-query ──► inventory ──(upload field)──► hub ── match ──► findings, page
+                                                           ▲
+          Debian tracker · EPSS · CISA KEV ── HTTPS ───────┘  (24 h, conditional)
+```
+
+### What a host sends
+
+The `inventory` source (`collector/sources/inventory.py`) runs hourly, and only
+when `[upload]` is set. It reads `dpkg-query -W -f` with `db:Status-Abbrev`,
+`source:Package`, `source:Version`, `Package` and `Version` [22], keeps the
+installed packages, and groups them by source package and source version. The
+tracker is keyed by source package, and a rebuild such as `2.3.2-2+b1`
+changes `Version` but not `source:Version`. Binary names are listed per
+source (up to 30), left out when they equal the source name. The release comes
+from `/etc/os-release` (`ID`, `VERSION_ID`, `VERSION_CODENAME`). On a Fedora host
+the inventory carries pending security advisories instead (see below).
+
+Size, measured on a Debian 13 desktop with 1,307 installed packages: 774
+source packages, 41 KB of JSON, 13 KB gzipped. The collector sends it when its
+hash changes and again after 24 hours, so a hub that lost it recovers.
+That is far under the hub's 8 MiB upload limit, so nothing else was needed.
+
+**Compatible with older hubs and collectors.** The earlier `packages`
+source broke an old hub: `SnapshotIn.source` is a fixed list, so a snapshot
+from an unknown source gets the whole upload a 422. So the inventory is not a
+snapshot. It is its own top-level field, `inventory`, and `Upload` ignores
+unknown top-level fields. An old hub takes the rest of the upload and drops
+the field. In the other direction, an old collector just sends no
+inventory, and the page says so. A new hub is also safe against its own
+field changing: `InventoryIn` ignores unknown fields inside it, and an
+inventory it can't read (a newer `v`, a bad value) is dropped with a log line
+instead of refusing the upload. A collector can't send `cve.*` findings, and
+an upload never closes the hub's own.
+
+Deploy order: any. Update the hub first to get matching; a host updated
+first just has its inventory ignored until then. The usual order (hub, then
+hosts) is the one to follow. A host needs no new config.
+
+### What the hub downloads
+
+A chore (`cve/run.py`) runs next to the hub's other chores. Every `[cve]
+refresh_hours` (24) it asks each feed again with `If-None-Match` and
+`If-Modified-Since`, so an unchanged file costs one small request. Files
+are saved under `<data_dir>/cve/`, parsed in a worker thread, and loaded into
+`<data_dir>/cve.db` (SQLite, its own file, not part of backups: it can all be
+downloaded again). Requests carry the User-Agent `DaemonSight/<version>` and
+nothing else about the hub or its hosts. A redirect may only stay on the
+feed's own host, and a download is capped (400 MB decoded for the tracker,
+100 MB EPSS, 50 MB KEV). A feed that fails is retried an hour later; the last
+good data stays in use. Nothing here runs in a request.
+
+| Feed | Size as served | After decoding | Notes |
+|------|---------------|----------------|-------|
+| Debian security tracker | 14.96 MB gzip | 90.5 MB JSON, 81,701 CVE entries, 4,200 source packages | Has `Last-Modified`, no `ETag`. |
+| EPSS | 2.85 MB gzip | 407,165 scores | `-current` redirects to the day's file; the day's file has `ETag` and `Last-Modified`. First line is `#model_version:...,score_date:...`. All scores are kept: loading them took 2.4 s. |
+| CISA KEV | 0.20 MB gzip | 1,782 entries | `ETag` and `Last-Modified`. |
+
+**Memory.** The tracker's `linux` entry alone is 35 MB of JSON. `json.load` on
+the whole file peaked at 364 MB of resident memory, too much for a small
+container, so `cve/tracker.py` reads the file two levels deep with
+`json.JSONDecoder.raw_decode`, one CVE entry at a time, standard library only.
+The same pass over the real file: 81,701 entries, 2.3 s, 19 MB peak. Loading
+the entries for Debian 12 and 13 into SQLite took 5.6 s with 61 MB peak for the
+whole process (interpreter and imports included): 124,010 rows and 58,845
+descriptions, and `cve.db` with all EPSS scores is 41 MB. Only the releases the
+hub's hosts run are kept; a host on a new release makes the hub parse the saved
+file again, without downloading.
+
+`feed` records, per feed, the last attempt, the last success (a 200 or a 304),
+the last change, the status, row count and size. A feed with no success for 3
+days raises `cve.feed_stale` (Low) on every host with an inventory.
+
+### Matching
+
+For each installed source package at version V on the host's release, each
+tracker row for that release gives a state. This follows `Issue.get_status` in
+the maintainers' own reader (`bin/tracker_data.py`) [25]:
+
+| Tracker row | State |
+|-------------|-------|
+| `resolved`, fixed version `0` | Not affected: not stored |
+| `resolved`, V at or past the fixed version | Fixed already: not stored |
+| `resolved`, V older than the fixed version | **Fix available** (an update fixes it) |
+| `open` | **No fix yet** |
+| `open` or `resolved` with `nodsa` (minor issue, ignored, postponed), or urgency `unimportant` or `end-of-life` | **Won't fix or minor**: listed, never a finding |
+| `undetermined` | **Being assessed**: listed, never a finding |
+
+Raspberry Pi OS (`raspbian`) is looked up as Debian by its codename, as
+`distro.py` does. Ubuntu and other derivatives aren't matched yet; the page
+says so.
+
+**Version order** is `cve/debver.py`, written from Debian Policy 5.6.12
+(`[epoch:]upstream[-revision]`, the revision after the last hyphen, runs of
+non-digits compared with `~` before everything, runs of digits as numbers) [29].
+python-debian does this too but is GPL. It was checked against `dpkg
+--compare-versions` on this Debian 13 machine: 6,200 pairs of real versions from
+the tracker (3,000 pairs of two versions of the same package, 3,000 random
+pairs, 200 equal pairs) gave no difference, and all 20,910 distinct versions
+in the file were accepted or refused the same way (one malformed version,
+`1:0.23.0+dfsg-`, is refused by both, so that row is skipped). A seeded sample
+of 155 real versions and 600 pairs is kept as a test.
+
+### Findings
+
+One `cve.package` finding per source package, keyed by the package and linked
+to its row on the Vulnerabilities page (`/vulnerabilities#cve-<package>`):
+
+- **High** if an open or fixable CVE in it is on CISA's KEV list, or a fixable one
+  has an EPSS score at or above `[cve] epss_high`.
+- **Medium** if a fix is available.
+- Otherwise none. An unfixed CVE that isn't on KEV, and any "won't fix or
+  minor" one, shows only on the page. A KEV CVE that Debian calls minor
+  (the tracker's `nodejs` and `openssh` rows for CVE-2026-111497 and
+  CVE-2026-123158 were such cases on this machine) is flagged on the page but
+  makes no finding.
+
+**The EPSS threshold.** FIRST's FAQ says "There is no universal threshold",
+that 0.10 (10%) "is commonly cited in the field but carries no special
+authority from EPSS", and that 0.10 "currently sits around the 95th
+percentile" [27]. A cut-off of 0.5 would flag almost nothing, so the default is
+0.10, and `[cve] epss_high` changes it. On the Debian 13 test host, with all 448
+unfixed and 141 fixable CVEs matched, none had an EPSS score of 0.10 or more,
+so the choice changed no finding there. The finding says "high exploit score"
+rather than calling anything critical, since FIRST says EPSS defines no such labels.
+
+**How it reads next to `pkg.security_updates`.** That rule says what apt will
+install (names from `apt-get -s dist-upgrade`) and that it matters; this one
+says why, by CVE. Each `cve.package` detail checks the host's own packages
+snapshot: "apt lists this update on the Packages page", or "apt isn't offering
+it yet: run sudo apt update, and check the host's apt sources include the
+security archive", which is the case that `pkg.security_updates` can't see.
+Both give `sudo apt upgrade` as the fix.
+
+### The Vulnerabilities page
+
+A nav item on a hub's host pages. A summary card (CVEs with a fix, on KEV, no
+fix yet, minor; the release and how old the package list is), then a table
+of packages, one row each, with `id` from `findings.anchor("cve", name)`: package
+and its binaries, installed and fixed versions, CVE counts by state, the top
+CVE (a link to `https://security-tracker.debian.org/tracker/<CVE>`) with a KEV
+badge, its EPSS score and Debian urgency, and a `details` list of up to 30 CVEs
+with description, state, EPSS and fix. Every cell has `data-label`, so rows
+stack as cards on a phone. A "Data feeds" card shows each feed's state, the
+last check and success, rows and size, each with a source panel: the URL, the
+feed's documentation, its terms, and a `curl -I` to check it by hand. Feed text
+(descriptions, names) is untrusted: the page relies on autoescaping, never
+`|safe`, and every field is cut to a fixed length when stored.
+
+Limits, all shown or documented rather than hidden:
+
+- A package installed from another repository (Docker, NodeSource) is matched
+  by name and may be wrong. `dpkg-query` doesn't say where a package came from.
+- The tracker lists kernel CVEs under the `linux` source. A kernel image
+  built from `linux-signed-*` has its own source name and version, so it
+  isn't matched; only `linux` binaries (headers, tools) are. Unverified on a
+  host with a distro kernel.
+- Debian's tracker covers the release's own archives. Backports aren't
+  tracked per release.
+
+### Fedora
+
+Fedora's advisories can be read with dnf5 without downloading anything:
+`dnf advisory list --updates --security --json -C` gives one row per affected
+package (`name`, `severity`, `nevra`) and `dnf advisory info --updates
+--security --json -C` gives each advisory's description and references
+[23]. `--updates` means "newer versions of installed packages for which a
+newer version is available"; on `fedora:44` it printed the same four advisories as the
+default `--available`. The list holds installed packages only; the info's package
+collection spans every architecture and subpackage (debuginfo, devel), so the
+collector takes package names from the list. The CVE ids are read from the description and the
+reference titles with a pattern, because Fedora references are of type
+`bugzilla`: `--with-cve` and `--cves=` returned nothing on `fedora:44` for an
+advisory whose reference title names CVE-2026-92823. The collector sends each
+pending advisory's id, severity, CVE ids and the installed package names it
+updates. The hub ranks them with EPSS and KEV like any other CVE; each is "fix
+available" (an update is pending), and the page links the advisory on
+bodhi.fedoraproject.org. **Fedora's unfixed CVEs are not available this way**,
+and the page says so.
+
+### Ubuntu (next)
+
+Canonical publishes its CVE data as Ubuntu OVAL ("recommended", all supported
+releases; https://ubuntu.com/security/oval) and as a JSON API that it says
+is "still a work in progress and subject to change" and not for automations
+[30]. The next step is an OVAL reader with the same streaming approach,
+keyed by Ubuntu release (`VERSION_CODENAME`), and the same states. The Debian
+version comparison applies to Ubuntu versions unchanged.
 
 ## Remote sources (phase 2b)
 
@@ -702,6 +909,7 @@ The collector must stay light:
 - The Caddy source against the VPS's Caddy.
 - fail2ban 1.0.2 on Debian 12.
 - Fedora: `dnf needs-restarting -C -s` output (the parser takes lines naming `*.service`; not captured, since a container has no D-Bus), the JSON for "no reboot needed", the whole collector on a real Fedora 44 KDE host, and `install.sh` under SELinux enforcing. dnf5 was tested in `fedora:44` containers only.
+- CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); kernel CVEs for a distro kernel (`linux-signed-*` sources); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
 - Whether the Docker source works against Podman's Docker-compatible socket.
 - The Docker source on a real Docker host (alpha or the VPS).
 - The systemd sandboxing in `daemonsight-web.service` inside an unprivileged LXC.
@@ -714,8 +922,8 @@ The collector must stay light:
 4. Caddy admin API: https://caddyserver.com/docs/api
 5. fail2ban-client(1), Debian 12: https://manpages.debian.org/bookworm/fail2ban/fail2ban-client.1.en.html
 6. nft(8), Debian 12: https://manpages.debian.org/bookworm/nftables/nft.8.en.html
-7. Trivy OS package scanning: https://trivy.dev/v0.43/docs/scanner/vulnerability/os
-8. Trivy rootfs and JSON reporting: https://trivy.dev/docs/latest/target/rootfs/ and https://trivy.dev/docs/latest/configuration/reporting/
+7. Trivy: not used (see "Data sources"); advisories https://github.com/advisories/GHSA-69fq-xp46-6x23 and https://github.com/advisories/GHSA-mcj4-mphf-j9ff
+8. (unused)
 9. debsecan(1), Debian 12: https://manpages.debian.org/bookworm/debsecan/debsecan.1.en.html
 10. Docker Compose labels: https://github.com/docker/compose/blob/main/pkg/api/labels.go
 11. Wazuh architecture: https://documentation.wazuh.com/current/getting-started/architecture.html
@@ -726,3 +934,15 @@ The collector must stay light:
 16. dnf5 needs-restarting (exit code 1, `/run/reboot-required`, `--services`): https://dnf5.readthedocs.io/en/latest/dnf5_plugins/needs_restarting.8.html; versionlock (`/etc/dnf/versionlock.toml`): https://dnf5.readthedocs.io/en/latest/commands/versionlock.8.html
 17. dnf5 system-upgrade: https://dnf5.readthedocs.io/en/latest/commands/system-upgrade.8.html
 18. Fedora release dates: endoflife.date, https://endoflife.date/api/v1/products/fedora (MIT); SELinux domain for services run from `/opt`: https://www.mankier.com/8/unconfined_service_selinux
+19. apt.conf(5) (`APT::Periodic::Update-Package-Lists`, `Unattended-Upgrade`), Debian 13: https://manpages.debian.org/trixie/apt/apt.conf.5.en.html; the timers: https://wiki.debian.org/UnattendedUpgrades ("Modify the schedule via systemd": `apt-daily.timer` downloads, `apt-daily-upgrade.timer` upgrades)
+20. unattended-upgrades package, Debian 13 (2.12) and 12 (2.9.1+nmu3), read from the .deb files (`dpkg-deb -e`): its `config` script asks `unattended-upgrades/enable_auto_updates` at debconf priority low with Default `true`; its `postinst` reads the answer with `db_get` (the default counts when the question is skipped) and, on `true`, installs `/usr/share/unattended-upgrades/20auto-upgrades` (`APT::Periodic::Update-Package-Lists "1"` and `APT::Periodic::Unattended-Upgrade "1"`) as `/etc/apt/apt.conf.d/20auto-upgrades`. The Debian wiki says to run `dpkg-reconfigure unattended-upgrades` to enable or check it. Not confirmed by running it: the `debian:13` and `debian:12` containers on the test server stalled at `apt-get install` (slow downloads), so what the install writes to `/etc/apt/apt.conf.d/` is from reading the scripts. See "To verify".
+21. dnf5 automatic (config files and their order, `[commands]` `apply_updates` default False, `upgrade_type`, `dnf5-automatic.timer`): https://dnf5.readthedocs.io/en/latest/dnf5_plugins/automatic.8.html. In `fedora:44` the package `dnf5-plugin-automatic` ships `/usr/share/dnf5/dnf5-plugins/automatic.conf` (`apply_updates = no`, `upgrade_type = default`), the user file `/etc/dnf/automatic.conf`, and `dnf5-automatic.timer` (`OnCalendar=*-*-* 6:00`, `WantedBy=timers.target`)
+22. dpkg-query(1), Debian 13 (`source:Package`, `source:Version` since dpkg 1.16.2; `db:Status-Abbrev`): https://manpages.debian.org/trixie/dpkg/dpkg-query.1.en.html
+23. dnf5 advisory (`list`, `info`, `--updates`, `--security`, `--with-cve`, `--json`): https://dnf5.readthedocs.io/en/latest/commands/advisory.8.html; output captured from `fedora:44` (dnf5 5.4.x), kept in `tests/fixtures/dnf/`
+24. Debian security tracker JSON export: https://security-tracker.debian.org/tracker/data/json (linked from https://security-tracker.debian.org/tracker/ as "All information in JSON format"); served with `Content-Encoding: gzip` and `Last-Modified`
+25. The tracker's own reader of that JSON, `bin/tracker_data.py` (`Issue.get_status`), and its web service `bin/tracker_service.py` (`data/json`): https://salsa.debian.org/security-tracker-team/security-tracker. The JSON has no schema document; the field layout in `cve/tracker.py` is read from the file and from that reader
+26. EPSS, "Get the Data" (the daily CSV URL, its redirect, the three fields, the model-version comment line, free of charge with no registration): https://www.first.org/epss/data
+27. EPSS FAQ (probability meaning, "no universal threshold", 0.10 "commonly cited ... no special authority", about the 95th percentile, attribution requested): https://www.first.org/epss/faq
+28. CISA Known Exploited Vulnerabilities catalog and its JSON feed: https://www.cisa.gov/known-exploited-vulnerabilities-catalog; licence (CC0 1.0): https://www.cisa.gov/sites/default/files/licenses/kev/license.txt
+29. Debian Policy 5.6.12, Version: https://www.debian.org/doc/debian-policy/ch-controlfields.html#version; dpkg's `verrevcmp` in lib/dpkg/version.c
+30. Ubuntu CVE data (OVAL "recommended"; the JSON API "still a work in progress"): https://ubuntu.com/security/cves/about and https://ubuntu.com/security/oval

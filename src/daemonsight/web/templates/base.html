@@ -50,8 +50,10 @@
       <li class="nav-item"><a class="nav-link{{ ' active' if page == 'hosts' }}" {% if page == 'hosts' %}aria-current="page"{% endif %} href="/">Hosts</a></li>
       {% endif %}
       {% if not hub or base %}
-      {% for key, href, label in [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('packages', '/packages', 'Packages'), ('fail2ban', '/fail2ban', 'fail2ban')] %}
+      {% for key, href, label in [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('packages', '/packages', 'Packages'), ('vulnerabilities', '/vulnerabilities', 'Vulnerabilities'), ('fail2ban', '/fail2ban', 'fail2ban')] %}
+      {% if key != 'vulnerabilities' or hub %}
       <li class="nav-item"><a class="nav-link{{ ' active' if page == key }}" {% if page == key %}aria-current="page"{% endif %} href="{{ base }}{{ href }}">{{ label }}</a></li>
+      {% endif %}
       {% endfor %}
       {% endif %}
     </ul>

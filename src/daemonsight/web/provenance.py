@@ -28,9 +28,46 @@ SECTION_READ = {
     "fail2ban": "fail2ban control socket: status, status <jail> and get <jail> commands",
     "firewall": "iptables-save and ip6tables-save, and nft -j list ruleset for native nft tables",
     "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
+    "cve": "The hub matches this host's installed packages against the Debian security tracker, EPSS scores and "
+           "CISA's KEV list; the host downloads nothing",
     "findings": "DaemonSight's rules, applied to the latest reading from each source",
     "events": "DaemonSight compares each new reading with the one before it",
 }
+
+
+def cve_packages() -> dict:
+    return {"title": "Packages with CVEs",
+            "read": "The hub compares each installed source package and version with the Debian security tracker "
+                    "(Debian version order), for this host's release only",
+            "entries": [cmd("Debian's own scanner (sudo apt install debsecan)",
+                            "debsecan --suite $(. /etc/os-release && echo $VERSION_CODENAME) --only-fixed"),
+                        cmd("Installed source versions",
+                            "dpkg-query -W -f '${source:Package} ${source:Version}\\n' | sort -u"),
+                        url("Debian security tracker", "https://security-tracker.debian.org/tracker/",
+                            "security-tracker.debian.org")]}
+
+
+def cve_inventory() -> dict:
+    return {"title": "Package list",
+            "read": "The collector's dpkg-query output, sent with its uploads when it changes (and once a day)",
+            "entries": [cmd("The list the collector reads",
+                            "dpkg-query -W -f '${db:Status-Abbrev} ${source:Package} ${source:Version} ${Package} "
+                            "${Version}\\n'")]}
+
+
+def cve_feed(feed, row) -> dict:
+    entries = [{"kind": "url", "label": "Source", "text": feed.url, "href": feed.url},
+               {"kind": "url", "label": "About the data", "text": feed.docs, "href": feed.docs},
+               plain("Terms", feed.terms),
+               cmd("Check it yourself", f"curl -sI {q(feed.url)}")]
+    if row is not None and row["last_modified"]:
+        entries.append(plain("Last-Modified the hub saw", row["last_modified"]))
+    return {"title": feed.title,
+            "read": "Downloaded by the hub, not by this host, with If-None-Match and If-Modified-Since so an "
+                    "unchanged file costs one small request. The request carries only a generic User-Agent, "
+                    "DaemonSight/<version>",
+            "entries": entries}
+
 
 PACKAGES_READ_DNF = ("dnf check-upgrade -C --json (and --security), rpm -q, dnf versionlock list, "
                      "dnf needs-restarting -C, and the cached metadata under /var/cache/libdnf5; "
@@ -39,7 +76,7 @@ PACKAGES_READ_DNF = ("dnf check-upgrade -C --json (and --security), rpm -q, dnf 
 SECTION_TITLE = {
     "system": "System health", "systemd": "systemd services", "ports": "Listening sockets",
     "docker": "Containers", "caddy": "Caddy", "fail2ban": "fail2ban", "firewall": "Firewall", "packages": "Packages",
-    "findings": "Findings", "events": "Recent changes",
+    "findings": "Findings", "events": "Recent changes", "cve": "Vulnerabilities",
 }
 
 
@@ -61,6 +98,10 @@ def plain(label: str, value: str) -> dict:
 
 def link(label: str, href: str, text: str) -> dict:
     return {"kind": "link", "label": label, "href": href, "text": text}
+
+
+def url(label: str, href: str, text: str) -> dict:
+    return {"kind": "url", "label": label, "href": href, "text": text}
 
 
 def q(value: str) -> str:
@@ -134,6 +175,14 @@ PACKAGES_PARTS = {
     "lists": ("Package lists", "The newest modification time of /var/lib/apt/lists/*InRelease",
               [cmd("Newest lists", "ls -lt /var/lib/apt/lists/*InRelease | head -3"),
                cmd("apt's timers", "systemctl list-timers 'apt-daily*'")]),
+    "auto": ("Automatic updates",
+             "apt-config shell L APT::Periodic::Update-Package-Lists U APT::Periodic::Unattended-Upgrade, "
+             "systemctl is-enabled apt-daily-upgrade.timer, and whether /usr/bin/unattended-upgrade exists",
+             [cmd("The two settings", "apt-config dump | grep Periodic"),
+              file("Where unattended-upgrades sets them", "/etc/apt/apt.conf.d/20auto-upgrades"),
+              cmd("The timer that runs it", "systemctl list-timers 'apt-daily-upgrade*'"),
+              cmd("Is it installed?", "dpkg -s unattended-upgrades"),
+              cmd("What it did", "sudo tail /var/log/unattended-upgrades/unattended-upgrades.log")]),
 }
 
 
@@ -156,6 +205,14 @@ PACKAGES_PARTS_DNF = {
               [cmd("Newest metadata", "ls -lt /var/cache/libdnf5/*/repodata/repomd.xml | head -3"),
                cmd("dnf's timer", "systemctl list-timers 'dnf5-makecache*'"),
                cmd("Refresh now", "sudo dnf makecache")]),
+    "auto": ("Automatic updates",
+             "rpm -q dnf5-plugin-automatic, systemctl is-enabled dnf5-automatic.timer, and apply_updates and "
+             "upgrade_type under [commands] in dnf5 automatic's config files",
+             [cmd("Is the plugin installed?", "rpm -q dnf5-plugin-automatic"),
+              cmd("The timer", "systemctl list-timers 'dnf5-automatic*'"),
+              file("Your settings", "/etc/dnf/automatic.conf"),
+              file("Shipped defaults", "/usr/share/dnf5/dnf5-plugins/automatic.conf"),
+              cmd("What it did", "journalctl -u dnf5-automatic.service -n 50 --no-pager")]),
 }
 
 
@@ -300,10 +357,11 @@ def forward(f: dict) -> dict:
 
 
 PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/services": "Services",
-             "/fail2ban": "fail2ban", "/packages": "Packages"}
+             "/fail2ban": "fail2ban", "/packages": "Packages", "/vulnerabilities": "Vulnerabilities"}
 
 RULE_SOURCE = {"svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
-               "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "os": "system", "collector": "events"}
+               "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "os": "system", "collector": "events",
+               "cve": "cve"}
 
 
 def finding(rule: str, link_href: str | None) -> dict:

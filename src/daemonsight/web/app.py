@@ -41,7 +41,8 @@ def _safe_next(value: str | None) -> str:
     return "/"
 
 
-def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | None = None) -> FastAPI:
+def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | None = None,
+               cve_client=None) -> FastAPI:
     if secret is None:
         secret = Path(cfg.web.secret_file).read_text().strip()
     if len(secret) < 32:
@@ -51,10 +52,18 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
 
     @asynccontextmanager
     async def lifespan(_app):
-        task = asyncio.create_task(_hub_chores(hub_conn, cfg, config_file)) if hub_conn is not None else None
+        tasks = []
+        if hub_conn is not None:
+            tasks.append(asyncio.create_task(_hub_chores(hub_conn, cfg, config_file)))
+            if cfg.cve.enabled:
+                from ..cve import run as cve_run
+                tasks.append(asyncio.create_task(cve_run.loop(cfg, hub_conn, cve_client)))
+            else:
+                from ..cve import run as cve_run
+                cve_run.clear_findings(hub_conn, time.time())
         yield
-        if task:
-            task.cancel()
+        for t in tasks:
+            t.cancel()
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.add_middleware(
@@ -168,7 +177,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     # On a single host the pages live at /, /exposure ... for this host. On a
     # hub, / lists the hosts and each host's pages live under /h/<host>/.
     pages = {"overview": views.overview, "exposure": views.exposure, "routes": views.routes,
-             "services": views.services, "fail2ban": views.jails, "packages": views.packages}
+             "services": views.services, "fail2ban": views.jails, "packages": views.packages,
+             "vulnerabilities": views.vulnerabilities}
 
     def resolve(conn, host: str | None) -> tuple[Config, str]:
         if not cfg.hub.enabled:

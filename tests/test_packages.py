@@ -308,3 +308,202 @@ def test_build_sources_includes_packages():
     names = [s.name for s in runner.build_sources(Config())]
     assert "packages" in names
     assert [s.interval for s in runner.build_sources(Config()) if s.name == "packages"] == [3600]
+
+
+# ---- automatic updates (pkg.auto_updates_off) --------------------------------------
+
+def apt_auto(**kw):
+    base = {"tool": "unattended-upgrades", "installed": False, "lists": "", "unattended": "", "timer": "enabled",
+            "on": False, "known": True}
+    return {**base, **kw}
+
+
+def dnf_auto(**kw):
+    base = {"tool": "dnf5-automatic", "installed": False, "timer": "disabled", "apply": False,
+            "upgrade_type": "default", "on": False, "known": True}
+    return {**base, **kw}
+
+
+def auto_rules(d, role="server"):
+    cfg = Config()
+    cfg.role = role
+    return {f.rule: f for f in findings.evaluate({"packages": snap(d)}, cfg)}
+
+
+def test_parse_apt_config_shell():
+    assert pk.parse_apt_config_shell("L='1'\nU='0'\n") == {"L": "1", "U": "0"}
+    assert pk.parse_apt_config_shell("L='7'\n") == {"L": "7"}          # an unset option prints nothing
+    assert pk.parse_apt_config_shell("") == {}
+
+
+@pytest.mark.parametrize("auto,on", [
+    ({"installed": True, "unattended": "1", "timer": "enabled"}, True),
+    ({"installed": True, "unattended": "1", "timer": None}, True),             # no systemd: timer unknown
+    ({"installed": True, "unattended": "always", "timer": "enabled"}, True),
+    ({"installed": True, "unattended": "0", "timer": "enabled"}, False),
+    ({"installed": True, "unattended": "", "timer": "enabled"}, False),
+    ({"installed": False, "unattended": "1", "timer": "enabled"}, False),      # the setting without the program
+    ({"installed": True, "unattended": "1", "timer": "disabled"}, False),
+    ({"installed": True, "unattended": "1", "timer": "masked"}, False),
+])
+def test_apt_auto_on(auto, on):
+    assert pk.apt_auto_on(auto) is on
+
+
+def test_rule_not_installed():
+    f = auto_rules(data(auto_updates=apt_auto()))["pkg.auto_updates_off"]
+    assert (f.severity, f.title) == ("low", "Security updates aren't installed automatically")
+    assert "sudo apt install unattended-upgrades" in f.detail and "sudo apt upgrade" in f.detail
+    assert f.link == "/packages#auto"
+
+
+def test_rule_installed_but_switched_off():
+    f = auto_rules(data(auto_updates=apt_auto(installed=True, unattended="0")))["pkg.auto_updates_off"]
+    assert "dpkg-reconfigure -plow unattended-upgrades" in f.detail and "apt install" not in f.detail
+    f = auto_rules(data(auto_updates=apt_auto(installed=True, unattended="1", timer="disabled")))["pkg.auto_updates_off"]
+    assert "systemctl enable --now apt-daily-upgrade.timer" in f.detail
+
+
+def test_rule_quiet_when_on_unknown_or_workstation():
+    assert "pkg.auto_updates_off" not in auto_rules(data(auto_updates=apt_auto(installed=True, unattended="1", on=True)))
+    assert "pkg.auto_updates_off" not in auto_rules(data(auto_updates=apt_auto(known=False)))
+    assert "pkg.auto_updates_off" not in auto_rules(data())  # an older collector sends nothing
+    off = data(auto_updates=apt_auto())
+    assert "pkg.auto_updates_off" not in auto_rules(off, role="workstation")
+    assert "pkg.auto_updates_off" in auto_rules(off, role="server")
+
+
+def test_rule_for_dnf():
+    d = data(backend="dnf", auto_updates=dnf_auto())
+    f = auto_rules(d)["pkg.auto_updates_off"]
+    assert "sudo dnf install dnf5-plugin-automatic" in f.detail and "apply_updates = yes" in f.detail
+    assert "dnf5-automatic.timer" in f.detail and "sudo dnf upgrade --refresh" in f.detail
+    f = auto_rules(data(backend="dnf", auto_updates=dnf_auto(installed=True, timer="disabled")))["pkg.auto_updates_off"]
+    assert f.detail.endswith("Run: sudo systemctl enable --now dnf5-automatic.timer")
+    f = auto_rules(data(backend="dnf", auto_updates=dnf_auto(installed=True, timer="enabled")))["pkg.auto_updates_off"]
+    assert "Today it only downloads updates" in f.detail
+    assert "pkg.auto_updates_off" not in auto_rules(data(backend="dnf", auto_updates=dnf_auto(
+        installed=True, timer="enabled", apply=True, on=True)))
+    assert "pkg.auto_updates_off" not in auto_rules(d, role="workstation")
+
+
+def test_lists_stale_and_auto_updates_read_consistently():
+    old = time.time() - 5 * 86400
+    r = auto_rules(data(lists_age=old, periodic_update=False, auto_updates=apt_auto()))
+    assert "automatic updates finding" in r["pkg.lists_stale"].detail
+    assert "unattended-upgrades" not in r["pkg.lists_stale"].detail.replace("The automatic updates finding has the fix, since unattended-upgrades sets it.", "")
+    assert "apt install" not in r["pkg.lists_stale"].detail
+    # Where the auto-updates finding won't fire (a workstation), the lists finding keeps its own advice.
+    r = auto_rules(data(lists_age=old, periodic_update=False, auto_updates=apt_auto()), role="workstation")
+    assert "sudo apt update" in r["pkg.lists_stale"].detail and "pkg.auto_updates_off" not in r
+
+
+DNF_DEFAULTS = "[commands]\napply_updates = no\ndownload_updates = yes\nupgrade_type = default\n"
+
+
+def test_parse_auto_conf_layers():
+    assert pk.parse_auto_conf([DNF_DEFAULTS]) == {"apply": False, "upgrade_type": "default"}
+    assert pk.parse_auto_conf([]) == {"apply": False, "upgrade_type": "default"}
+    over = "[commands]\napply_updates = yes\nupgrade_type = security\n"
+    assert pk.parse_auto_conf([DNF_DEFAULTS, over]) == {"apply": True, "upgrade_type": "security"}
+    assert pk.parse_auto_conf([over, "[commands]\napply_updates = no\n"]) == {"apply": False, "upgrade_type": "security"}
+    assert pk.parse_auto_conf([DNF_DEFAULTS, "[commands]\napply_updates = True\n"])["apply"] is True
+    assert pk.parse_auto_conf([DNF_DEFAULTS, "not ini ["]) == {"apply": False, "upgrade_type": "default"}
+
+
+def test_dnf_auto_state():
+    conf = {"apply": True, "upgrade_type": "security"}
+    assert pk.dnf_auto_state(True, "enabled", conf)["on"] is True
+    assert pk.dnf_auto_state(True, "disabled", conf)["on"] is False
+    assert pk.dnf_auto_state(False, "enabled", conf)["on"] is False
+    assert pk.dnf_auto_state(True, "enabled", {"apply": False, "upgrade_type": "default"})["on"] is False
+
+
+def test_collect_apt_reads_the_two_periodic_settings_and_timer(monkeypatch):
+    monkeypatch.setattr(pk.shutil, "which", lambda name: f"/usr/bin/{name}" if name != "needrestart" else None)
+    monkeypatch.setattr(pk.os.path, "exists", lambda p: p == pk.UU_BINARY)
+    calls = []
+
+    def fake_run(argv):
+        calls.append(argv)
+        if argv[0] == "apt-config":
+            return 0, "L='1'\nU='1'\n"
+        if argv[0] == "systemctl":
+            return 0, "enabled\n"
+        if argv[0] == "dpkg-query":
+            return 1, ""
+        return 0, DIST_UPGRADE if argv[0] == "apt-get" else ""
+
+    monkeypatch.setattr(pk, "run", fake_run)
+    d = pk.collect_sync()
+    assert d["auto_updates"] == {"tool": "unattended-upgrades", "installed": True, "lists": "1", "unattended": "1",
+                                 "timer": "enabled", "on": True, "known": True}
+    assert ["apt-config", "shell", "L", "APT::Periodic::Update-Package-Lists", "U",
+            "APT::Periodic::Unattended-Upgrade"] in calls
+    assert ["systemctl", "is-enabled", "apt-daily-upgrade.timer"] in calls
+    assert d["periodic_update"] is True and d["daily_timer"] == "enabled"
+
+
+def test_collect_dnf_reads_timer_package_and_config(monkeypatch, tmp_path):
+    monkeypatch.setattr(pk.shutil, "which", lambda name: f"/usr/bin/{name}")
+    conf = tmp_path / "automatic.conf"
+    conf.write_text(DNF_DEFAULTS + "")
+    local = tmp_path / "local.conf"
+    local.write_text("[commands]\napply_updates = yes\nupgrade_type = security\n")
+    monkeypatch.setattr(pk, "DNF_AUTO_CONF", [str(conf), str(local)])
+
+    def fake_run(argv):
+        if argv[:2] == ["dnf", "--version"]:
+            return 0, "dnf5 version 5.4.6.0\n"
+        if argv[0] == "rpm" and argv[2] == "dnf5-plugin-automatic":
+            return 0, "dnf5-plugin-automatic-5.4.8.0-2.fc44.x86_64\n"
+        if argv[:2] == ["systemctl", "is-enabled"]:
+            return 0, "enabled\n"
+        return 0, ""
+
+    monkeypatch.setattr(pk, "run", fake_run)
+    d = pk.collect_dnf()
+    assert d["auto_updates"] == {"tool": "dnf5-automatic", "installed": True, "timer": "enabled", "apply": True,
+                                 "upgrade_type": "security", "known": True, "on": True}
+
+
+def test_packages_page_shows_automatic_updates(cfg):
+    conn = db.connect_writer(cfg.db_path)
+    db.put_snapshot(conn, "testhost", "packages", db.now(), True, None, data(auto_updates=apt_auto()))
+    conn.close()
+    c = TestClient(create_app(cfg), follow_redirects=False)
+    c.post("/login", data={"password": PASSWORD, "next": "/"})
+    html = c.get("/packages").text
+    assert 'id="auto"' in html and "Automatic updates" in html and "unattended-upgrades isn&#39;t installed" in html
+    assert "sudo apt install unattended-upgrades" in html
+    assert "apt-config dump | grep Periodic" in html and "/etc/apt/apt.conf.d/20auto-upgrades" in html
+    assert check_panels(html) >= 6
+
+
+def test_packages_page_automatic_updates_on_and_workstation(cfg):
+    conn = db.connect_writer(cfg.db_path)
+    db.put_snapshot(conn, "testhost", "packages", db.now(), True, None,
+                    data(auto_updates=apt_auto(installed=True, unattended="1", lists="1", on=True)))
+    conn.close()
+    c = TestClient(create_app(cfg), follow_redirects=False)
+    c.post("/login", data={"password": PASSWORD, "next": "/"})
+    html = c.get("/packages").text
+    assert "text-green" in html and "Unattended-Upgrade is 1" in html and "sudo apt install unattended" not in html
+    cfg.role = "workstation"
+    db.put_snapshot(db.connect_writer(cfg.db_path), "testhost", "packages", db.now(), True, None,
+                    data(auto_updates=apt_auto()))
+    ws = TestClient(create_app(cfg), follow_redirects=False)
+    ws.post("/login", data={"password": PASSWORD, "next": "/"})
+    assert "this host is a workstation" in ws.get("/packages").text.lower()
+
+
+def test_packages_page_dnf_automatic_updates(cfg):
+    conn = db.connect_writer(cfg.db_path)
+    db.put_snapshot(conn, "testhost", "packages", db.now(), True, None, data(
+        backend="dnf", auto_updates=dnf_auto(installed=True, timer="enabled", apply=False)))
+    conn.close()
+    c = TestClient(create_app(cfg), follow_redirects=False)
+    c.post("/login", data={"password": PASSWORD, "next": "/"})
+    html = c.get("/packages").text
+    assert "dnf5-automatic.timer is enabled" in html and "only downloads updates" in html
+    assert "rpm -q dnf5-plugin-automatic" in html and "/etc/dnf/automatic.conf" in html

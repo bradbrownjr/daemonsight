@@ -35,6 +35,8 @@ log = logging.getLogger("daemonsight.upload")
 MAX_METRICS = 20_000
 MAX_EVENTS = 1_000
 MAX_BACKOFF = 300
+INVENTORY = "inventory"
+INVENTORY_RESEND = 86400  # send the package list again after a day even when unchanged
 
 
 class UploadError(Exception):
@@ -59,6 +61,29 @@ def _meta_float(conn, key: str) -> float:
         return 0.0
 
 
+def _inventory(conn, snapshot_rows) -> tuple[dict | None, dict]:
+    """The installed-package list for the hub, and the cursors to save when
+    it accepts it. It is its own top-level upload field, not a snapshot, so
+    an older hub, which ignores fields it doesn't know, still takes the rest
+    of the upload (a snapshot from an unknown source would be refused whole).
+    It is sent when its hash changed, and again after a day, so a hub that
+    lost it recovers."""
+    row = next((r for r in snapshot_rows if r["source"] == INVENTORY), None)
+    if row is None or not row["ok"] or not row["data"]:
+        return None, {}
+    data = json.loads(row["data"])
+    if data.get("available") is False or not data.get("hash"):
+        return None, {}
+    now = time.time()
+    unchanged = db.get_meta(conn, "upload.inv_hash") == data["hash"]
+    if unchanged and now - _meta_float(conn, "upload.inv_at") < INVENTORY_RESEND:
+        return None, {}
+    body = {k: v for k, v in data.items() if k not in ("available", "count")}
+    body["v"] = 1
+    body["taken_at"] = row["taken_at"]
+    return body, {"upload.inv_hash": data["hash"], "upload.inv_at": now}
+
+
 def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple[dict, dict, bool]:
     """The next upload, the cursors to save once the hub accepts it, and
     whether more is waiting after it."""
@@ -66,8 +91,9 @@ def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple
     metric_row = int(_meta_float(conn, "upload.metric_row"))
     event_id = int(_meta_float(conn, "upload.event_id"))
 
-    snaps = [s for s in conn.execute("SELECT * FROM snapshots WHERE host = ?", (host,)).fetchall()
-             if s["taken_at"] != _meta_float(conn, f"upload.snap.{s['source']}")]
+    rows_all = conn.execute("SELECT * FROM snapshots WHERE host = ?", (host,)).fetchall()
+    snaps = [s for s in rows_all
+             if s["source"] != INVENTORY and s["taken_at"] != _meta_float(conn, f"upload.snap.{s['source']}")]
     rows = conn.execute("SELECT rowid, ts, name, value FROM metrics WHERE host = ? AND rowid > ? "
                         "ORDER BY rowid LIMIT ?", (host, metric_row, MAX_METRICS + 1)).fetchall()
     more = len(rows) > MAX_METRICS
@@ -77,6 +103,7 @@ def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple
     more = more or len(events) > MAX_EVENTS
     events = events[:MAX_EVENTS]
     findings = db.open_findings(conn, host)
+    inventory, inv_cursors = _inventory(conn, rows_all)
 
     payload = {
         "v": 1,
@@ -98,7 +125,10 @@ def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple
         "findings": [{"rule": f["rule"], "key": f["key"], "severity": f["severity"], "title": f["title"],
                       "detail": f["detail"], "link": f["link"]} for f in findings],
     }
+    if inventory is not None:
+        payload["inventory"] = inventory
     cursors = {
+        **inv_cursors,
         **{f"upload.snap.{s['source']}": s["taken_at"] for s in snaps},
         "upload.metric_row": rows[-1]["rowid"] if rows else metric_row,
         "upload.event_id": events[-1]["id"] if events else event_id,

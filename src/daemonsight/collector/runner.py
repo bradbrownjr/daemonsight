@@ -15,6 +15,7 @@ from .sources.caddy import CaddySource
 from .sources.docker import DockerSource
 from .sources.fail2ban import Fail2banSource
 from .sources.firewall import FirewallSource
+from .sources.inventory import InventorySource
 from .sources.packages import PackagesSource
 from .sources.ports import PortsSource
 from .sources.system import SystemSource
@@ -26,7 +27,7 @@ log = logging.getLogger("daemonsight.collector")
 
 def build_sources(cfg: Config) -> list[Source]:
     c = cfg.collector
-    return [
+    sources: list[Source] = [
         SystemSource(c.interval_system),
         SystemdSource(c.interval_systemd, c.service_patterns),
         PortsSource(c.interval_ports),
@@ -36,6 +37,11 @@ def build_sources(cfg: Config) -> list[Source]:
         FirewallSource(c.interval_firewall, c.nft),
         PackagesSource(c.interval_packages),
     ]
+    if cfg.upload.url:
+        # The hub matches installed packages against CVE data; a host that
+        # keeps its data to itself has no use for the list.
+        sources.append(InventorySource(c.interval_packages))
+    return sources
 
 
 def ephemeral_range() -> tuple[int, int]:

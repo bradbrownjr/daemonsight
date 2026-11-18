@@ -501,6 +501,48 @@ def pkg_restart(snaps, cfg, ctx) -> list[Finding]:
                     f"{_names(svcs)}. {how}", "/packages#reboot")]
 
 
+def auto_updates_off(data: dict | None, cfg: Config) -> bool:
+    """Whether to say this host doesn't install updates on its own. Unknown
+    (the collector couldn't read it) counts as not off, and a workstation is
+    never flagged: desktops usually update through the software centre
+    (KDE Discover, GNOME Software)."""
+    if cfg.role == "workstation":
+        return False
+    auto = (data or {}).get("auto_updates") or {}
+    return bool(auto.get("known")) and not auto.get("on")
+
+
+def auto_updates_howto(data: dict) -> str:
+    """What to do about it, for this host's package system."""
+    auto = data.get("auto_updates") or {}
+    if data.get("backend") == "dnf":
+        if not auto.get("installed"):
+            return ("Install the dnf5 automatic plugin with sudo dnf install dnf5-plugin-automatic. In "
+                    "/etc/dnf/automatic.conf, under [commands], set apply_updates = yes and, to install only "
+                    "security updates, upgrade_type = security. Then run sudo systemctl enable --now "
+                    "dnf5-automatic.timer.")
+        if auto.get("timer") != "enabled":
+            return "Run: sudo systemctl enable --now dnf5-automatic.timer"
+        return ("In /etc/dnf/automatic.conf, under [commands], set apply_updates = yes. Today it only "
+                "downloads updates.")
+    if not auto.get("installed"):
+        return "Run: sudo apt install unattended-upgrades"
+    if (auto.get("unattended") or "") in ("", "0"):
+        return "Run: sudo dpkg-reconfigure -plow unattended-upgrades, and answer Yes."
+    return "Run: sudo systemctl enable --now apt-daily-upgrade.timer"
+
+
+def pkg_auto_updates_off(snaps, cfg, ctx) -> list[Finding]:
+    data = _data(snaps, "packages")
+    if not auto_updates_off(data, cfg):
+        return []
+    tool = "dnf5 automatic" if data.get("backend") == "dnf" else "unattended-upgrades"
+    return [Finding("pkg.auto_updates_off", "auto", "low", "Security updates aren't installed automatically",
+                    f"Nothing on this host installs updates by itself ({tool} is not on), so a security fix "
+                    f"waits until someone runs {upgrade_cmd(data)}. {auto_updates_howto(data)}",
+                    "/packages#auto")]
+
+
 def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
     data = _data(snaps, "packages")
     age = (data or {}).get("lists_age")
@@ -512,8 +554,11 @@ def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
     if (data or {}).get("backend") == "dnf":
         why = "dnf's makecache timer may be off (systemctl list-timers 'dnf5-makecache*')."
     elif data.get("periodic_update") is False:
-        why = ("apt's daily timer runs but doesn't refresh the lists: APT::Periodic::Update-Package-Lists "
-               "isn't set. Installing unattended-upgrades sets it, or run sudo apt update yourself.")
+        why = "apt's daily timer runs but doesn't refresh the lists: APT::Periodic::Update-Package-Lists isn't set."
+        if auto_updates_off(data, cfg):
+            why += " The automatic updates finding has the fix, since unattended-upgrades sets it."
+        else:
+            why += " Run sudo apt update, or install unattended-upgrades, which sets it."
     else:
         why = "apt's daily timer may be off (systemctl list-timers 'apt-daily*')."
     return [Finding("pkg.lists_stale", "lists", "low", f"Package lists are {days} days old",
@@ -588,7 +633,7 @@ RULES = [svc_failed, ctr_down, expose_docker_bypass, sys_disk, sys_memory, sourc
          expose_unexpected, expose_forward_all, firewall_default_accept, firewall_duplicates,
          route_upstream_down, route_upstream_failing, jail_uncovered,
          jail_log_missing, caddy_admin_tcp, pkg_security_updates, pkg_updates, pkg_reboot,
-         pkg_restart, pkg_lists_stale, os_lts, os_eol_soon, os_eol]
+         pkg_restart, pkg_lists_stale, pkg_auto_updates_off, os_lts, os_eol_soon, os_eol]
 
 
 def evaluate(snaps: dict, cfg: Config, ctx: dict | None = None) -> list[Finding]:

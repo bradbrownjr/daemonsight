@@ -1,0 +1,58 @@
+[
+  {
+    "name": "FEDORA-2026-e7379f9f3f",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "dnf5-5.4.8.0-2.fc44.x86_64",
+    "buildtime": 1794622323
+  },
+  {
+    "name": "FEDORA-2026-e7379f9f3f",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "dnf5-plugins-5.4.8.0-2.fc44.x86_64",
+    "buildtime": 1794622323
+  },
+  {
+    "name": "FEDORA-2026-e7379f9f3f",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "libdnf5-5.4.8.0-2.fc44.x86_64",
+    "buildtime": 1794622323
+  },
+  {
+    "name": "FEDORA-2026-e7379f9f3f",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "libdnf5-cli-5.4.8.0-2.fc44.x86_64",
+    "buildtime": 1794622323
+  },
+  {
+    "name": "FEDORA-2026-d657495ea3",
+    "type": "security",
+    "severity": "Moderate",
+    "nevra": "libmodulemd-2.15.4-1.fc44.x86_64",
+    "buildtime": 1794274248
+  },
+  {
+    "name": "FEDORA-2026-450395b11f",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "pcre2-10.49-1.fc44.x86_64",
+    "buildtime": 1794157734
+  },
+  {
+    "name": "FEDORA-2026-450395b11f",
+    "type": "security",
+    "severity": "Important",
+    "nevra": "pcre2-syntax-10.49-1.fc44.noarch",
+    "buildtime": 1794157734
+  },
+  {
+    "name": "FEDORA-2026-efb1f85550",
+    "type": "security",
+    "severity": "Moderate",
+    "nevra": "tpm2-tss-4.1.5-1.fc44.x86_64",
+    "buildtime": 1793669838
+  }
+]

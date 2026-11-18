@@ -1,0 +1,106 @@
+{% from "_macros.html" import src, src_button, src_panel with context %}
+<div id="live" hx-get="{{ base }}/partials/vulnerabilities" hx-trigger="every 300s" hx-swap="outerHTML">
+{% if v %}
+{% macro badges(c) -%}
+{% if c.kev %}<span class="badge bg-red text-red-fg" title="{{ c.kev_name }}">KEV</span>{% if c.ransomware %} <span class="badge bg-red-lt" title="CISA lists use in ransomware campaigns">Ransomware</span>{% endif %}{% endif %}
+{%- endmacro %}
+
+{% if v.message %}
+<div class="alert alert-info">{{ v.message }}</div>
+{% endif %}
+
+{% if v.inv and v.totals %}
+<section class="card mb-4" id="summary" aria-labelledby="summary-title" data-section>
+  <div class="card-header">
+    <h2 class="card-title" id="summary-title">This host</h2>{{ src("src-vuln-inv", v.src.inventory) }}
+  </div>
+  <div class="card-body">
+    <div class="datagrid">
+      <div class="datagrid-item"><div class="datagrid-title">Fix available</div><div class="datagrid-content">{% if v.totals.fix %}<span class="text-orange">{{ v.totals.fix }}</span>{% else %}0{% endif %}</div><div class="text-secondary small">CVEs an update fixes</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">Exploited (CISA KEV)</div><div class="datagrid-content">{% if v.totals.kev %}<span class="text-red">{{ v.totals.kev }}</span>{% else %}0{% endif %}</div><div class="text-secondary small">open or fixable</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">No fix yet</div><div class="datagrid-content">{{ v.totals.nofix }}</div><div class="text-secondary small">shown here only</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">Won't fix or minor</div><div class="datagrid-content">{{ v.totals.minor }}</div><div class="text-secondary small">Debian says no advisory is needed</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">Packages listed</div><div class="datagrid-content">{{ v.totals.packages }}</div><div class="text-secondary small">of {{ v.inv.count }} {{ 'advisories' if v.backend == 'dnf' else 'source packages' }}</div></div>
+    </div>
+    <div class="text-secondary small mt-3">{{ v.inv.release }} · package list received {{ v.inv.ago }}{% if v.matched_ago %} · matched {{ v.matched_ago }}{% endif %}.
+      {% if v.backend == 'dnf' %}Fedora: only CVEs named by pending security advisories are listed. Fedora publishes no list of unfixed CVEs in a form dnf can read, so those don't appear here.{% else %}
+      A package from another repository (Docker, NodeSource and the like) is matched by its name and may be wrong.{% endif %}
+      A High finding needs a CVE on CISA's KEV list, or a fixable one with an EPSS score of {{ (v.epss_high * 100)|round|int }}% or more.</div>
+  </div>
+</section>
+
+<section class="card mb-4" id="packages" aria-labelledby="packages-title" data-section{% if not v.packages %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="packages-title">Packages</h2>{{ src("src-vuln-pkg", v.src.packages) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.packages|length }} packages</div>
+  </div>
+  {% if not v.packages %}
+  <div class="card-body text-secondary">No installed package has a CVE in the data the hub has.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="vulns">
+      <thead><tr><th data-sort="text">Package</th><th data-sort="text">Installed</th><th data-sort="text">Fixed in</th><th data-sort="num">CVEs</th><th data-sort="text">Top CVE</th><th data-sort="num">EPSS</th><th data-sort="text">Urgency</th><th>CVE list</th></tr></thead>
+      <tbody>
+        {% for p in v.packages %}
+        <tr data-row id="{{ p.anchor }}">
+          <td data-label="Package"><strong>{{ p.name }}</strong>{% if p.binaries %}<div class="text-secondary small">{{ p.binaries|join(', ') }}{% if p.more_binaries %} and {{ p.more_binaries }} more{% endif %}</div>{% endif %}</td>
+          <td class="font-monospace small" data-label="Installed">{{ p.installed }}</td>
+          <td class="font-monospace small" data-label="Fixed in">{{ p.fixed }}</td>
+          <td data-label="CVEs" data-v="{{ p.counts.fix * 1000 + p.counts.nofix }}">
+            {% if p.counts.fix %}<span class="badge bg-orange-lt">{{ p.counts.fix }} fix</span> {% endif %}
+            {% if p.counts.nofix %}<span class="badge bg-secondary-lt">{{ p.counts.nofix }} no fix yet</span> {% endif %}
+            {% if p.counts.minor %}<span class="badge bg-secondary-lt">{{ p.counts.minor }} minor</span> {% endif %}
+            {% if p.counts.undetermined %}<span class="badge bg-secondary-lt">{{ p.counts.undetermined }} assessing</span>{% endif %}
+          </td>
+          <td data-label="Top CVE"><a href="{{ p.top.url }}" target="_blank" rel="noopener noreferrer">{{ p.top.cve }}</a> {{ badges(p.top) }}</td>
+          <td data-label="EPSS" data-v="{{ p.top.epss or 0 }}">{{ p.top.epss_text }}</td>
+          <td data-label="Urgency">{{ p.top.urgency or '—' }}</td>
+          <td data-label="CVE list">
+            <details>
+              <summary>{{ p.total }} CVE{{ 's' if p.total != 1 }}</summary>
+              <ul class="list-unstyled mt-2 mb-0">
+                {% for c in p.cves %}
+                <li class="mb-2">
+                  <a href="{{ c.url }}" target="_blank" rel="noopener noreferrer">{{ c.cve }}</a>
+                  <span class="badge {{ c.badge }}">{{ c.label }}</span> {{ badges(c) }}
+                  <span class="text-secondary small">EPSS {{ c.epss_text }}{% if c.urgency %} · urgency {{ c.urgency }}{% endif %}{% if c.fixed %} · fixed in {{ c.fixed }}{% endif %}{% if c.advisory %} · <a href="{{ c.advisory_url }}" target="_blank" rel="noopener noreferrer">{{ c.advisory }}</a>{% endif %}</span>
+                  {% if c.descr %}<div class="text-secondary small">{{ c.descr }}</div>{% endif %}
+                </li>
+                {% endfor %}
+              </ul>
+              {% if p.more and p.tracker %}<a href="{{ p.tracker }}" target="_blank" rel="noopener noreferrer">{{ p.more }} more in the Debian tracker</a>{% elif p.more %}<span class="text-secondary small">{{ p.more }} more not shown</span>{% endif %}
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No packages match the filter.</div>
+</section>
+{% endif %}
+
+{% if v.feeds %}
+<section class="card mb-4" id="feeds" aria-labelledby="feeds-title" data-section>
+  <div class="card-header">
+    <h2 class="card-title" id="feeds-title">Data feeds</h2>
+  </div>
+  <div class="card-body">
+    <div class="datagrid">
+      {% for f in v.feeds %}
+      <div class="datagrid-item">
+        <div class="datagrid-title">{{ f.title }}{{ src("src-feed-" ~ f.name, f.src) }}</div>
+        <div class="datagrid-content"><span class="{{ f.cls }}">{{ f.state }}</span></div>
+        <div class="text-secondary small">Checked {{ f.checked }} · last success {{ f.ok }} · changed {{ f.changed }}</div>
+        <div class="text-secondary small">{% if f.rows is not none %}{{ f.rows }} rows kept · {{ f.size }} downloaded{% endif %}{% if f.note %} · {{ f.note }}{% endif %}</div>
+        {% if f.detail %}<div class="text-red small">{{ f.detail }}</div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="text-secondary small mt-3">The hub downloads these every {{ v.refresh_hours|default(24) }} hours. EPSS scores are from FIRST (<a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">first.org/epss</a>); the KEV list is CISA's, released as CC0.</div>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+</div>

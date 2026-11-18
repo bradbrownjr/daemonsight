@@ -199,9 +199,12 @@ def add_event(conn, host: str, ts: float, kind: str, title: str, *, severity: st
 
 
 def reconcile_findings(conn, host: str, ts: float, current: list,
-                       keep_prefix: str | None = None) -> list[tuple[str, object]]:
+                       keep_prefix: str | tuple[str, ...] | None = None,
+                       only_prefix: str | None = None) -> list[tuple[str, object]]:
     """Make the open findings match `current` (a list of findings.Finding).
     Rules starting with `keep_prefix` are left alone (the hub's own rules).
+    With `only_prefix`, only the open findings of rules starting with it are
+    compared, and `current` should hold only those.
 
     Returns (change, finding) pairs where change is "opened" or "resolved".
     """
@@ -210,6 +213,7 @@ def reconcile_findings(conn, host: str, ts: float, current: list,
         (r["rule"], r["key"]): r
         for r in conn.execute("SELECT * FROM findings WHERE host = ? AND resolved_at IS NULL", (host,))
         if not (keep_prefix and r["rule"].startswith(keep_prefix))
+        and (only_prefix is None or r["rule"].startswith(only_prefix))
     }
     seen = set()
     conn.execute("BEGIN")

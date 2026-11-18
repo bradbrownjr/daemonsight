@@ -11,14 +11,25 @@
 
 ---
 
-**Status:** phase 2 of 5 is done, and phase 3 (CVE scanning) is next. The
-collector reads system health, systemd services, listening sockets, Docker,
-Caddy, fail2ban and the firewall. The web UI has Overview, Exposure, Routes,
-Services and fail2ban pages, and a stacked layout on phones. Findings link to
+**Status:** phase 3 of 5 is under way: package updates and CVE matching are
+built, and image scanning is next. The collector reads system health, systemd
+services, listening sockets, Docker, Caddy, fail2ban, the firewall and pending
+package updates. The web UI has Overview, Exposure, Routes, Services,
+fail2ban, Packages and (on a hub) Vulnerabilities pages, and a stacked layout
+on phones. Findings link to
 the row they are about, and a port's panel shows the process behind it.
 
 - **Hub.** A container image (with an Unraid template) shows every host on
   one page. Each host's collector uploads to it over HTTPS.
+- **CVE matching on the hub.** Hosts report which packages they have; the
+  hub matches them against the Debian security tracker and ranks the hits
+  with CISA's known-exploited list and EPSS scores. One finding per package,
+  and a Vulnerabilities page with the CVEs behind it. Debian and Raspberry Pi
+  OS hosts get the full list; Fedora hosts report their pending security
+  advisories. Ubuntu is next. Hosts download nothing and run no scanner.
+- **Automatic updates.** The Packages page shows whether unattended-upgrades
+  (apt) or dnf5-automatic (Fedora) will install security updates, and a
+  low finding says how to turn it on.
 - **Updates from the hub.** The hub's Hosts page, or `daemonsight hub
   update`, moves hosts to the hub's own commit. A host can turn this off.
 - **Retention and backups.** `[retention]` sets how long history stays;
@@ -52,14 +63,14 @@ proxies, which ports to list as public, running a hub, updating, and removal.
 ## Why
 
 Existing tools each cover part of the job. Netdata and Beszel show health and
-traffic, fail2ban dashboards show bans, Caddy UIs show routes, and Trivy finds
+traffic, fail2ban dashboards show bans, Caddy UIs show routes, and scanners find
 CVEs. None of them check these against each other, and those cross-checks are
 where the gaps are:
 
 - A port listening on a public interface with no Caddy route or firewall rule in front of it
 - A Caddy route whose upstream is down or not listening
 - A public service whose logs no fail2ban jail is watching
-- A running container or host package with a known CVE that has a fix available
+- A host package with a known CVE that has a fix available, or that is being exploited
 
 DaemonSight collects from the tools already on the server and reports on
 these gaps.
@@ -74,7 +85,8 @@ these gaps.
 | Docker containers, health, logs | Docker API through a read-only socket proxy |
 | Listening and open ports | `ss` / `/proc/net`, nftables rules |
 | Network traffic, CPU, memory, disk | `/proc`, psutil |
-| CVEs in host packages and container images | Trivy (`rootfs` and `image`), `debsecan` |
+| CVEs in host packages | Debian security tracker, CISA KEV and EPSS, matched on the hub; Fedora security advisories (dnf5) |
+| CVEs in container images | Planned |
 
 Targets: a Debian VPS running Caddy and Docker, and Debian LXC containers.
 

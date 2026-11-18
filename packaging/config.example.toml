@@ -95,6 +95,15 @@
 # interval_hours = 24           # 0 turns them off; unset, a host that uploads to a hub skips them
 # keep = 7
 
+[cve]
+# CVE matching, on the hub only (docs/INSTALL.md, "CVE matching"). The hub
+# downloads the Debian security tracker, EPSS scores and CISA's KEV list.
+# enabled = true
+# refresh_hours = 24
+# A fixable CVE with an EPSS score at or above this makes a package's finding
+# high. FIRST: "no universal threshold"; 0.10 is commonly cited (about the 95th percentile).
+# epss_high = 0.10
+
 [upload]
 # Send everything this host collects to a hub (docs/INSTALL.md, "Run a hub").
 # The hub's name for this host must match host_id at the top of this file.

@@ -2,6 +2,13 @@
 backends, picked by what is on PATH: apt and dpkg (Debian, Ubuntu), or dnf5
 and rpm (Fedora). Both produce the same data shape; `backend` says which.
 
+Automatic updates are read with `apt-config shell L APT::Periodic::Update-Package-Lists
+U APT::Periodic::Unattended-Upgrade` (apt.conf(5)), `systemctl is-enabled
+apt-daily-upgrade.timer`, and a check for /usr/bin/unattended-upgrade; on dnf
+with `rpm -q dnf5-plugin-automatic`, `systemctl is-enabled dnf5-automatic.timer` and
+the `[commands]` section of dnf5-automatic's config files
+(https://dnf5.readthedocs.io/en/latest/dnf5_plugins/automatic.8.html).
+
 The dnf backend is further down (collect_dnf). Everything in both only reads.
 
 apt:
@@ -41,6 +48,7 @@ ENV = {**os.environ, "LC_ALL": "C", "LANG": "C"}
 LISTS_GLOB = "/var/lib/apt/lists/*InRelease"
 LISTS_GLOB_OLD = "/var/lib/apt/lists/*Release"
 REBOOT_FILE = "/var/run/reboot-required"
+UU_BINARY = "/usr/bin/unattended-upgrade"
 MAX_ITEMS = 500
 
 INST = re.compile(r"^Inst (\S+)(?: \[(\S+)\])? \((\S+) (.+?)(?: \[([^\]]+)\])?\)\s*$")
@@ -164,12 +172,30 @@ def read_reboot() -> dict:
     return {"required": os.path.exists(REBOOT_FILE), "pkgs": sorted(set(pkgs))}
 
 
+def parse_apt_config_shell(text: str) -> dict[str, str]:
+    """`apt-config shell L APT::X U APT::Y` prints shell assignments, `L='1'`
+    (apt-config(8)); an unset option prints nothing."""
+    return {m.group(1): m.group(2) for m in re.finditer(r"^([A-Za-z_]\w*)='?([^'\n]*)'?$", text, re.M)}
+
+
+def apt_auto_on(auto: dict) -> bool:
+    """Whether this host installs updates on its own: unattended-upgrades is
+    installed, APT::Periodic::Unattended-Upgrade is set to something other than
+    0, and apt-daily-upgrade.timer (which runs it) isn't off. The timer is
+    unknown on a host without systemd; that doesn't count against it."""
+    return (bool(auto.get("installed")) and (auto.get("unattended") or "") not in ("", "0")
+            and auto.get("timer") not in ("disabled", "masked", "masked-runtime", "static-masked"))
+
+
 def collect_apt() -> dict:
     data: dict = {"available": True, "backend": "apt", "updates": [], "security_count": 0, "kept_back": [], "removals": 0,
                   "held": [], "lists_age": None, "daily_timer": None,
                   "reboot": {"required": False, "pkgs": []}, "kernel": {"managed": False},
                   "needrestart": {"installed": False},
-                  "unattended_upgrades": os.path.exists("/usr/bin/unattended-upgrade"), "errors": {}}
+                  "unattended_upgrades": os.path.exists(UU_BINARY), "errors": {}}
+    data["auto_updates"] = {"tool": "unattended-upgrades", "installed": data["unattended_upgrades"],
+                            "lists": None, "unattended": None, "timer": None, "on": False,
+                            "known": False}
     errors = data["errors"]
 
     def part(name, fn):
@@ -191,22 +217,34 @@ def collect_apt() -> dict:
             raise RuntimeError(f"apt-mark exited {code}")
         data["held"] = sorted(l.strip() for l in out.splitlines() if l.strip())[:MAX_ITEMS]
 
+    def timer_state(unit: str) -> str | None:
+        if not shutil.which("systemctl"):
+            return None
+        try:
+            _, out = run(["systemctl", "is-enabled", unit])
+        except (OSError, subprocess.SubprocessError):
+            return None  # optional detail
+        return out.strip() or None
+
     def lists():
         data["lists_age"] = newest_lists_mtime()
-        # apt-daily.timer only refreshes the lists when this is set (normally by
-        # the unattended-upgrades package); with it unset the timer does nothing.
+        auto = data["auto_updates"]
+        # apt-daily.timer only refreshes the lists when Update-Package-Lists is
+        # set (normally by the unattended-upgrades package); with it unset the
+        # timer does nothing. apt-daily-upgrade.timer runs unattended-upgrades
+        # when Unattended-Upgrade is set. Both come from apt-config(8).
         try:
-            _, out = run(["apt-config", "shell", "V", "APT::Periodic::Update-Package-Lists"])
-            m = re.search(r"V='?([^'\n]*)", out)
-            data["periodic_update"] = (m.group(1) if m else "") not in ("", "0")
+            _, out = run(["apt-config", "shell", "L", "APT::Periodic::Update-Package-Lists",
+                          "U", "APT::Periodic::Unattended-Upgrade"])
+            values = parse_apt_config_shell(out)
+            data["periodic_update"] = values.get("L", "") not in ("", "0")
+            auto["lists"], auto["unattended"] = values.get("L", ""), values.get("U", "")
+            auto["known"] = True
         except (OSError, subprocess.SubprocessError):
-            pass  # optional detail
-        if shutil.which("systemctl"):
-            try:
-                _, out = run(["systemctl", "is-enabled", "apt-daily.timer"])
-                data["daily_timer"] = out.strip() or None
-            except (OSError, subprocess.SubprocessError):
-                pass  # optional detail
+            pass  # optional detail; auto["known"] stays False
+        data["daily_timer"] = timer_state("apt-daily.timer")
+        auto["timer"] = timer_state("apt-daily-upgrade.timer")
+        auto["on"] = apt_auto_on(auto)
 
     def reboot():
         data["reboot"] = read_reboot()
@@ -263,10 +301,27 @@ def collect_apt() -> dict:
 # * `rpm -q kernel-core --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n'`: installed
 #   kernels, in the same form as `uname -r` on Fedora.
 # * Metadata age: newest mtime of /var/cache/libdnf5/*/repodata/repomd.xml.
+# * Automatic updates: package dnf5-plugin-automatic (`rpm -q`), its
+#   `dnf5-automatic.timer` (`systemctl is-enabled`), and the settings in its
+#   config files. dnf5-automatic(8) lists them in this order, later files
+#   overriding earlier ones: /usr/share/dnf5/dnf5-plugins/automatic.conf, its
+#   automatic.conf.d/*.conf, /etc/dnf/dnf5-plugins/automatic.conf (deprecated),
+#   /etc/dnf/automatic.conf, /etc/dnf/automatic.conf.d/*.conf. In [commands],
+#   `apply_updates` (default no: updates are only downloaded) and
+#   `upgrade_type` (default, security or distro-sync). Updates are installed
+#   on their own only when the timer is enabled and apply_updates is on.
+#   https://dnf5.readthedocs.io/en/latest/dnf5_plugins/automatic.8.html
 
 DNF_CACHE_GLOB = "/var/cache/libdnf5/*/repodata/repomd.xml"
 DNF_REBOOT_FILE = "/run/reboot-required"
 DNF_TIMER = "dnf5-makecache.timer"
+DNF_AUTO_PACKAGE = "dnf5-plugin-automatic"
+DNF_AUTO_TIMER = "dnf5-automatic.timer"
+DNF_AUTO_CONF = ["/usr/share/dnf5/dnf5-plugins/automatic.conf",
+                 "/usr/share/dnf5/dnf5-plugins/automatic.conf.d/*.conf",
+                 "/etc/dnf/dnf5-plugins/automatic.conf",
+                 "/etc/dnf/automatic.conf",
+                 "/etc/dnf/automatic.conf.d/*.conf"]
 NO_CACHE = "Cache-only enabled"
 
 
@@ -307,6 +362,32 @@ def rpm_evr_gt(a: str, b: str) -> bool:
     if ea != eb:
         return int(ea) > int(eb)
     return rpmvercmp(ra, rb) > 0
+
+
+def parse_auto_conf(texts: list[str]) -> dict:
+    """[commands] apply_updates and upgrade_type from dnf5-automatic's config
+    files, given in the order they are read (later ones win). Booleans are
+    written yes/no in the shipped file; libdnf5 also takes true/false, 1/0."""
+    import configparser
+    values: dict[str, str] = {}
+    for text in texts:
+        cp = configparser.ConfigParser(interpolation=None, strict=False)
+        try:
+            cp.read_string(text)
+        except configparser.Error:
+            continue
+        for key in ("apply_updates", "upgrade_type"):
+            if cp.has_option("commands", key):
+                values[key] = cp.get("commands", key).strip().strip("\"'").lower()
+    return {"apply": values.get("apply_updates", "no") in ("yes", "true", "1", "on", "enabled"),
+            "upgrade_type": values.get("upgrade_type", "default")}
+
+
+def dnf_auto_state(installed: bool, timer: str | None, conf: dict) -> dict:
+    """Whether this host installs updates on its own."""
+    return {"tool": "dnf5-automatic", "installed": installed, "timer": timer, "apply": conf["apply"],
+            "upgrade_type": conf["upgrade_type"], "known": True,
+            "on": installed and timer == "enabled" and conf["apply"]}
 
 
 def is_dnf5(version_output: str) -> bool:
@@ -411,7 +492,9 @@ def collect_dnf() -> dict:
     data: dict = {"available": True, "backend": "dnf", "updates": [], "security_count": 0, "kept_back": [],
                   "removals": 0, "held": [], "lists_age": None, "daily_timer": None,
                   "reboot": {"required": False, "pkgs": []}, "kernel": {"managed": False},
-                  "needrestart": {"installed": False}, "unattended_upgrades": False, "errors": {}}
+                  "needrestart": {"installed": False}, "unattended_upgrades": False,
+                  "auto_updates": {"tool": "dnf5-automatic", "installed": False, "timer": None, "apply": False,
+                                   "upgrade_type": "default", "on": False, "known": False}, "errors": {}}
     errors = data["errors"]
 
     def part(name, fn):
@@ -419,6 +502,22 @@ def collect_dnf() -> dict:
             fn()
         except Exception as exc:  # each part fails on its own
             errors[name] = f"{type(exc).__name__}: {exc}"
+
+    def auto():
+        code, _ = run(["rpm", "-q", DNF_AUTO_PACKAGE])
+        timer = None
+        if shutil.which("systemctl"):
+            _, out = run(["systemctl", "is-enabled", DNF_AUTO_TIMER])
+            timer = out.strip() or None
+        texts = []
+        for pattern in DNF_AUTO_CONF:
+            for path in sorted(glob.glob(pattern)):
+                try:
+                    with open(path, encoding="utf-8", errors="replace") as fh:
+                        texts.append(fh.read(200_000))
+                except OSError:
+                    pass
+        data["auto_updates"] = dnf_auto_state(code == 0, timer, parse_auto_conf(texts))
 
     def check(extra: list[str]) -> list[dict]:
         code, out = run(["dnf", "check-upgrade", "-C", "--json", *extra])
@@ -472,7 +571,7 @@ def collect_dnf() -> dict:
         data["needrestart"] = {"installed": True, "tool": "dnf", "services": parse_needs_restarting_services(out)}
 
     for name, fn in (("updates", updates), ("held", held), ("lists", lists), ("reboot", reboot),
-                     ("kernel", kernel), ("needrestart", needrestart)):
+                     ("kernel", kernel), ("needrestart", needrestart), ("auto", auto)):
         part(name, fn)
     return data
 

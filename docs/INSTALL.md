@@ -157,6 +157,16 @@ they are missing the page falls back to `/run/reboot-required` and the
 installed kernel against the running one. "Services on old libraries" needs the
 `dnf5-plugins` package (installed by default on Fedora).
 
+The page also shows whether security updates install themselves, and a low
+finding appears when they don't. On Debian and Ubuntu that means
+`unattended-upgrades` is installed and `APT::Periodic::Unattended-Upgrade` is
+not 0 (`sudo apt install unattended-upgrades` sets both on Debian; if it doesn't,
+`sudo dpkg-reconfigure -plow unattended-upgrades`). On Fedora it means
+`dnf5-plugin-automatic` is installed, `dnf5-automatic.timer` is enabled and
+`apply_updates = yes` is set under `[commands]` in `/etc/dnf/automatic.conf`;
+the packaged default only downloads. A host with `role = "workstation"` skips
+the finding.
+
 On Debian and Ubuntu, `needrestart` is optional. With it installed (`sudo apt install needrestart`)
 the page also lists services still running old libraries after an upgrade.
 Without it, that card says so. DaemonSight only lists; it never restarts a
@@ -441,6 +451,38 @@ journalctl -u daemonsight-collector -n 20
 Within a minute the host shows as "Reporting" on the hub's Hosts page.
 The host's own web UI keeps working; stop it with
 `sudo systemctl disable --now daemonsight-web` if the hub is all you need.
+
+### CVE matching
+
+The hub matches each host's installed packages against Debian's security
+tracker. It needs outbound HTTPS, nothing inbound, to:
+
+| Host | What | Size |
+|---|---|---|
+| `security-tracker.debian.org` | Debian security tracker (JSON) | 15 MB as sent |
+| `epss.empiricalsecurity.com` | EPSS scores, from FIRST | 3 MB |
+| `www.cisa.gov` | CISA's Known Exploited Vulnerabilities list | 0.2 MB |
+
+It fetches each every 24 hours, asking only for what changed, keeps them in
+`/data/cve/` and loads them into `/data/cve.db` (about 60 MB on disk, not
+backed up). Parsing the tracker takes about 6 seconds and 60 MB of memory.
+The first matching result shows a minute or so after the first host reports.
+Requests identify themselves as `DaemonSight/<version>` and send nothing else.
+
+```toml
+[cve]
+enabled = true       # false: no downloads and no cve.* findings
+refresh_hours = 24
+epss_high = 0.10     # a fixable CVE with an EPSS score at or above this is a high finding
+```
+
+Hosts send their package list (13 KB compressed for a desktop with 1,300
+packages) when it changes, and once a day. It needs no setting on the host.
+**Update the hub first, then the hosts.** An older hub ignores the list; an
+older host sends none, and its Vulnerabilities page says so. Debian and
+Raspberry Pi OS hosts are matched; on Fedora the page lists pending security
+advisories; Ubuntu isn't matched yet. If the hub can't reach a feed for 3
+days, a low "feed is stale" finding appears on each host.
 
 ### Hosts that stop reporting
 

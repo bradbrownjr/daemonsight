@@ -26,6 +26,7 @@ from .test_web import seeded  # noqa: F401 (fixture: a collector's database for 
 def hub_cfg(tmp_path):
     c = Config(host_id="hub", data_dir=str(tmp_path / "hubdata"))
     c.hub.enabled = True
+    c.cve.enabled = False  # tests never download feeds
     c.web.password_file = str(tmp_path / "hubpassword")
     c.web.secret_file = str(tmp_path / "hubsecret")
     (tmp_path / "hubpassword").write_text(hash_password(PASSWORD))

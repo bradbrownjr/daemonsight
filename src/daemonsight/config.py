@@ -91,6 +91,21 @@ class HubConfig:
 
 
 @dataclass
+class CveConfig:
+    """On the hub: download public vulnerability data and match each host's
+    installed packages against it. Needs outbound HTTPS to the Debian
+    security tracker, FIRST's EPSS files and CISA's KEV list."""
+    enabled: bool = True
+    # Hours between checks of each feed. Each check sends If-None-Match /
+    # If-Modified-Since, so an unchanged file costs one small request.
+    refresh_hours: float = 24
+    # A fixable CVE with an EPSS score at or above this makes its package's
+    # finding High. FIRST: "There is no universal threshold"; 0.10 is the
+    # figure it says is commonly cited, about the 95th percentile.
+    epss_high: float = 0.1
+
+
+@dataclass
 class RetentionConfig:
     """How long the database keeps history: on a host its collector prunes,
     on a hub the hub prunes every host's rows. 0 keeps for good."""
@@ -134,6 +149,7 @@ class Config:
     exposure: ExposureConfig = field(default_factory=ExposureConfig)
     upload: UploadConfig = field(default_factory=UploadConfig)
     hub: HubConfig = field(default_factory=HubConfig)
+    cve: CveConfig = field(default_factory=CveConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
     # Web UIs to link from each source's panel, e.g. {caddy = "https://...",
@@ -158,6 +174,10 @@ class Config:
     @property
     def db_path(self) -> Path:
         return Path(self.data_dir) / "state.db"
+
+    @property
+    def cve_db_path(self) -> Path:
+        return Path(self.data_dir) / "cve.db"
 
 
 def _apply(obj, values: dict, section: str) -> None:
