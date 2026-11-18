@@ -69,8 +69,9 @@ the row they are about, and a port's panel shows the process behind it.
   sees with a status and what DaemonSight knows about it (the process, or the
   port forward and the tunnel it goes through), and findings flag a port
   nobody expected, an expected port Shodan doesn't see, Shodan's compromise
-  tags and its CVE guesses. InternetDB is free for non-commercial use only:
-  see [docs/INSTALL.md](docs/INSTALL.md), "Outside checks".
+  tags and its CVE guesses. Turn it on from the Settings page. InternetDB is
+  free for non-commercial use only: see [docs/INSTALL.md](docs/INSTALL.md),
+  "Outside checks".
 - **Per-host report.** One page per host (`/h/<host>/report`, or `/report` on
   a single host) puts the open findings in order: install updates, restart
   services, reboot, automatic updates, then the rest, each step with its
@@ -78,9 +79,17 @@ the row they are about, and a port's panel shows the process behind it.
   Markdown, or print it.
 - **Updates from the hub.** The hub's Hosts page, or `daemonsight hub
   update`, moves hosts to the hub's own commit. A host can turn this off.
-- **Retention and backups.** `[retention]` sets how long history stays;
+- **Retention and backups.** Retention sets how long history stays;
   scheduled backups and `daemonsight restore` cover the database, config and
   secrets.
+- **Settings page and account menu.** The button at the right of the header
+  opens one menu with Settings, the theme (Light, Dark or Auto), "Hide empty
+  sections" and Log out. On a hub the Settings page changes the outside view,
+  CVE checks, retention, backups and remote polling without a restart; each
+  setting shows whether it comes from the Default, the Config file or "Set
+  here", and can be reset. What controls login or where the server listens
+  stays in the config file. On a host without a hub the page shows the
+  running values read-only. See [docs/INSTALL.md](docs/INSTALL.md#the-settings-page).
 
 The OPNsense API, log collection and alerts are planned. See [docs/DESIGN.md](docs/DESIGN.md).
 

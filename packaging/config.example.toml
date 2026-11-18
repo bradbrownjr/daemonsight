@@ -1,5 +1,12 @@
 # DaemonSight configuration. Every setting is optional; the values shown are
 # the defaults.
+#
+# On a hub, [retention], [backup] (interval_hours, keep), [cve], [outside] and
+# [remote] can also be changed on the Settings page (account menu, top right).
+# A value set there wins over this file, applies without a restart, and can be
+# reset to what this file says. This file is never rewritten. Everything else
+# here, and every setting on a host that isn't a hub, is changed only in this
+# file, followed by a restart.
 
 # Name shown in the UI and stored with every record. Defaults to the hostname.
 # host_id = "vps1"
@@ -81,6 +88,7 @@
 # memory_minutes = 15
 
 [retention]
+# On a hub, also on the Settings page (it wins over this file).
 # How long this install keeps history. On a host the collector prunes its
 # own rows; on a hub the hub prunes every host's. 0 keeps it for good.
 # metrics_hours = 48            # chart points, about one a second
@@ -88,6 +96,7 @@
 # resolved_findings_days = 0    # findings that have cleared (open ones stay)
 
 [backup]
+# On a hub, interval_hours and keep are also on the Settings page; dir never is.
 # Scheduled backups (docs/INSTALL.md, "Back up and restore"): the database,
 # this file, the password, the session secret and any upload token, in one
 # owner-only .tar.gz. Made by the collector on a host and by the hub.
@@ -96,7 +105,8 @@
 # keep = 7
 
 [cve]
-# CVE matching, on the hub only (docs/INSTALL.md, "CVE matching"). The hub
+# CVE matching, on the hub only (docs/INSTALL.md, "CVE matching"). Also on the
+# Settings page, which wins over this file and needs no restart. The hub
 # downloads the Debian security tracker, EPSS scores and CISA's KEV list.
 # enabled = true
 # refresh_hours = 24
@@ -105,7 +115,8 @@
 # epss_high = 0.10
 
 [outside]
-# Shodan's outside view, on the hub only (docs/INSTALL.md, "Outside checks"):
+# Shodan's outside view, on the hub only (docs/INSTALL.md, "Outside checks"). Turn
+# it on from the Settings page (account menu), or here:
 # what the internet sees of each host's public addresses, from Shodan's
 # InternetDB (https://internetdb.shodan.io/). Off by default.
 # LICENCE: InternetDB is free for non-commercial use only. Shodan: "If you're
@@ -138,5 +149,6 @@
 
 [remote]
 # Only on the hub. Reads systems that have no collector (Unraid) over their API.
-# Add them in the web UI (Hosts, "Add a system"); this only switches reading on or off.
+# Add them in the web UI (Hosts, "Add a system"); this only switches reading on or off,
+# and the Settings page can too.
 # enabled = true

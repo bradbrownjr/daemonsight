@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Settings · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{% if v.can_edit %}Changes here apply without a restart{% else %}What this install is running with{% endif %}</div>
+  <h1 class="page-title">Settings</h1>
+</div>
+
+{% for p in v.problems %}<div class="alert alert-danger" role="alert">{{ p }}</div>{% endfor %}
+{% if v.errors %}<div class="alert alert-danger" role="alert">Nothing was saved. Fix the marked settings and save again.</div>{% endif %}
+
+<div class="card mb-4" id="how">
+  <div class="card-body">
+    <p class="mb-2">Each setting has three possible sources, in this order:
+      <strong>Set here</strong> (saved on this page), then <strong>Config file</strong>
+      (<code>{{ v.config_path }}</code>), then <strong>Default</strong>.
+      The config file is never rewritten.</p>
+    {% if v.can_edit %}
+    <p class="mb-0 text-secondary">Reset puts a setting back to the config file's value, or the default when the file
+      doesn't set it. A change takes effect the next time the job that uses it runs (within about a minute).</p>
+    {% else %}
+    <p class="mb-0 text-secondary">This install is not a hub, and its web page opens the database read-only by design,
+      so it can't save changes. To change a value, edit <code>{{ v.config_path }}</code> and restart:
+      <code>sudo systemctl restart daemonsight-collector daemonsight-web</code>.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% for g in v.groups %}
+{% set gid = g.id %}
+<section class="card mb-4" id="{{ gid }}" aria-labelledby="{{ gid }}-title">
+  <div class="card-header">
+    <h2 class="card-title" id="{{ gid }}-title">{{ g.title }}</h2>
+    {% if g.hub_only %}<div class="card-actions"><span class="badge bg-secondary-lt">{{ 'Hub only' if v.can_edit else 'Hub only: not used on this install' }}</span></div>{% endif %}
+  </div>
+  {% if v.can_edit %}
+  <form method="post" action="/settings" autocomplete="off">
+  {% endif %}
+  <div class="card-body">
+    <p class="text-secondary">{{ g.intro }}</p>
+    {% if g.note %}<div class="alert alert-warning" role="note">{{ g.note }}</div>{% endif %}
+    {% for it in g.fields %}
+    {% set f = it.field %}
+    {% set fid = 'f-' ~ it.key|replace('.', '-') %}
+    {% set err = v.errors.get(it.key) %}
+    {% set shown = v.posted.get(it.key) %}
+    <div class="ds-set-row">
+      <div>
+        <label class="form-label mb-1" for="{{ fid }}">{{ f.label }}</label>
+        <div class="ds-set-meta">
+          <span class="badge {{ {'Default': 'bg-secondary-lt', 'Config file': 'bg-blue-lt', 'Set here': 'bg-cyan-lt'}[it.source] }}">{{ it.source }}</span>
+        </div>
+      </div>
+      <div>
+        {% if v.can_edit %}
+          {% if f.kind == 'bool' %}
+          <select class="form-select ds-set-input{{ ' is-invalid' if err }}" id="{{ fid }}" name="{{ it.key }}"{% if err %} aria-describedby="{{ fid }}-err"{% endif %}>
+            {% set cur = (shown if shown is not none else ('on' if it.value else 'off')) %}
+            <option value="on"{% if cur == 'on' %} selected{% endif %}>On</option>
+            <option value="off"{% if cur == 'off' %} selected{% endif %}>Off</option>
+          </select>
+          {% elif f.kind == 'addresses' %}
+          <textarea class="form-control ds-set-input font-monospace{{ ' is-invalid' if err }}" id="{{ fid }}" name="{{ it.key }}" rows="4" spellcheck="false" placeholder="203.0.113.9&#10;198.51.100.4=vps"{% if err %} aria-describedby="{{ fid }}-err"{% endif %}>{{ shown if shown is not none else it.value|join('\n') }}</textarea>
+          {% else %}
+          <div class="input-group ds-set-input">
+            <input type="{{ 'number' if f.kind in ('int', 'float') else 'text' }}" class="form-control{{ ' is-invalid' if err }}" id="{{ fid }}" name="{{ it.key }}"
+              value="{{ shown if shown is not none else ('' if it.value is none else it.text) }}"
+              {% if f.lo is not none %}min="{{ f.lo }}"{% endif %} {% if f.hi is not none %}max="{{ f.hi }}"{% endif %}
+              step="{{ '1' if f.kind == 'int' else 'any' }}"{% if f.nullable %} placeholder="automatic"{% endif %}{% if err %} aria-describedby="{{ fid }}-err"{% endif %}>
+            {% if f.unit %}<span class="input-group-text">{{ f.unit }}</span>{% endif %}
+          </div>
+          {% endif %}
+          {% if err %}<div class="invalid-feedback d-block" id="{{ fid }}-err">{{ err }}</div>{% endif %}
+        {% else %}
+          <div id="{{ fid }}">{% if f.kind == 'addresses' %}{% if it.value %}<div class="font-monospace">{% for a in it.value %}{{ a }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div>{% else %}none{% endif %}
+            {% else %}<strong>{{ it.text }}</strong>{% if f.unit and it.value is not none %} {{ f.unit }}{% endif %}{% endif %}</div>
+        {% endif %}
+        <div class="form-hint mt-1">{{ f.help }}</div>
+        <div class="text-secondary small mt-1">Default: {{ it.default }}{% if f.unit and f.kind != 'addresses' and it.default != 'automatic' %} {{ f.unit }}{% endif %}{% if it.range %} · Allowed: {{ it.range }}{% endif %}{% if it.source != 'Default' and it.file != it.default %} · Config file: {{ it.file }}{% endif %}</div>
+        {% if it.set %}
+        <div class="ds-set-meta small mt-1">
+          <span class="text-secondary">Set here{% if it.meta %} by {{ it.meta.changed_by }}{% endif %}</span>
+          {% if v.can_edit %}<button type="submit" name="reset" value="{{ it.key }}" class="btn btn-sm" formnovalidate>Reset to {{ 'config file' if it.base_source == 'Config file' else 'default' }}</button>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if v.can_edit %}
+  <div class="card-footer d-flex gap-2 align-items-center">
+    <input type="hidden" name="group" value="{{ gid }}">
+    <button type="submit" class="btn btn-primary">Save {{ g.title|lower }}</button>
+  </div>
+  </form>
+  {% endif %}
+</section>
+{% endfor %}
+
+<section class="card mb-4" id="config-file-only" aria-labelledby="ro-title">
+  <div class="card-header"><h2 class="card-title" id="ro-title">Config file only</h2></div>
+  <div class="card-body">
+    <p>These are not editable in the browser. A wrong value could lock you out of this page, or stop the server
+      from starting, and the page is what you would use to fix it. Edit <code>{{ v.config_path }}</code>
+      and restart{% if v.can_edit %} the hub{% endif %}. The values below are what is running now.</p>
+    <div class="table-responsive">
+      <table class="table table-vcenter ds-ro-table mb-0">
+        <thead><tr><th>Setting</th><th>Running value</th><th>Why it stays in the file</th></tr></thead>
+        <tbody>
+          {% for r in v.read_only %}
+          <tr data-row>
+            <td data-label="Setting" class="fw-bold text-nowrap">{{ r.label }}</td>
+            <td data-label="Running value"><code class="ds-ro-value">{{ r.value }}</code></td>
+            <td data-label="Why it stays in the file" class="text-secondary">{{ r.why }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="text-secondary small mt-3 mb-0">Per-host settings (collector intervals, expected ports, thresholds) live in each host's own config
+      file; the hub shows what each host last reported.</p>
+  </div>
+</section>
+
+{% if v.can_edit %}
+<section class="card mb-4" id="settings-events" aria-labelledby="settings-events-title" data-section{% if not v.events %} data-empty{% endif %}>
+  <div class="card-header"><h2 class="card-title" id="settings-events-title">Recent hub changes</h2></div>
+  {% if v.events %}
+  <div class="list-group list-group-flush">
+    {% for e in v.events %}
+    <div class="list-group-item" data-row>
+      <div class="d-flex justify-content-between gap-2"><strong>{{ e.title }}</strong><span class="text-secondary text-nowrap">{{ e.ago }}</span></div>
+      {% if e.detail %}<div class="text-secondary">{{ e.detail }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card-body text-secondary">No changes made here yet.</div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

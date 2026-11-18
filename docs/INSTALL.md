@@ -138,6 +138,56 @@ After a change, restart both units:
 sudo systemctl restart daemonsight-collector daemonsight-web
 ```
 
+On a hub, a few settings can be changed in the browser instead; see "The
+Settings page" next.
+
+### The Settings page
+
+The account button at the right of the header (a person icon, "Account and
+settings") opens a menu with Settings, the theme (Light, Dark or Auto, which
+follows your system), "Hide empty sections" and Log out. On a phone the same
+items sit in the Menu panel.
+
+**On a hub**, Settings lets you change these without editing a file or
+restarting:
+
+| Group | Settings |
+|---|---|
+| Outside view | Enabled, extra addresses (`ip` or `ip=hostid`, one per line), check every N hours |
+| CVE checks | Enabled, check every N hours, the EPSS score that makes a finding High |
+| Retention | Chart points (hours), Recent changes (days), cleared findings (days); 0 keeps for good |
+| Backups | Hours between scheduled backups (blank is automatic, 0 is off), how many to keep |
+| Remote systems | Whether the hub reads Unraid systems at all |
+
+Each setting shows its default, the range it accepts and where its current
+value comes from:
+
+- **Set here**: saved on the page. It wins over the file.
+- **Config file**: set in `config.toml`.
+- **Default**: neither is set.
+
+A setting saved here is kept in the hub's database (`settings` table), so it is
+part of the hub's backups. The config file is never rewritten. "Reset" on a
+setting deletes what was saved, and the file's value (or the default) applies
+again. A change takes effect the next time the job that uses it runs, within
+about a minute; turning the outside view or CVE checks off also closes their
+findings then. Every change is listed under "Recent hub changes" on the Hosts
+page and the Settings page, for example "Setting changed: Outside view,
+enabled: off → on".
+
+**Config file only.** The page lists, without a form, what is never editable
+in the browser: the web listen address and port, trusted proxies, cookie and
+session settings, the password and secret files, the data, database and backup
+folders, the log file, whether this install is a hub, the upload limits and
+the upload settings. A mistake in any of them could lock you out of the page
+you would use to fix it, or stop the server starting. Change them in
+`config.toml` and restart.
+
+**On a host without a hub**, the page shows the values this install is running
+with, read-only, because its web process opens the database read-only by design.
+Edit `/etc/daemonsight/config.toml` and restart the two units, as above.
+Settings that only a hub uses are labelled "Hub only".
+
 ### Updates and reboots
 
 The Packages page needs nothing extra on Debian or Ubuntu. DaemonSight runs
@@ -237,6 +287,9 @@ nginx-http-auth = ["nginx.service"]
 
 ### How long history is kept
 
+On a hub, use Settings, Retention (see "The Settings page"). In the config
+file:
+
 ```toml
 [retention]
 metrics_hours = 48            # chart points, about one a second per host
@@ -272,6 +325,9 @@ Keep copies as private as the server: the secret and token are live.
 data, write one every 24 hours to `backups` in the data folder and keep the
 newest seven. A host that uploads to a hub skips them, since the hub's
 backups hold its history; set `interval_hours` to turn them back on.
+
+On a hub, the interval and the number kept are on the Settings page (Backups);
+the folder is set in the config file only. In the config file:
 
 ```toml
 [backup]
@@ -333,7 +389,7 @@ lists what protects it.
 The container runs as uid 10001 with a read-only filesystem, and keeps
 everything that changes in `/data`: its config, password, session secret,
 database (every host's history) and log file (`daemonsight.log`). All of it
-survives restarts, rebuilds and image updates. `[retention]` sets how
+survives restarts, rebuilds and image updates. Retention (Settings page or `[retention]`) sets how
 long history stays, and the hub writes a backup to `/data/backups` every
 day (see "Back up and restore").
 
@@ -469,6 +525,8 @@ backed up). Parsing the tracker takes about 6 seconds and 60 MB of memory.
 The first matching result shows a minute or so after the first host reports.
 Requests identify themselves as `DaemonSight/<version>` and send nothing else.
 
+Change these on the Settings page (CVE checks), or in the config file:
+
 ```toml
 [cve]
 enabled = true       # false: no downloads and no cve.* findings
@@ -498,7 +556,9 @@ enterprise license." If you run DaemonSight for clients or inside a
 for-profit business, read Shodan's terms first. DaemonSight does not turn this
 on for you.
 
-To turn it on, add this to the hub's `config.toml` and restart the hub:
+To turn it on, open Settings (account menu), choose Outside view, set Enabled
+to On and save. It starts at the next pass, with no restart. Or add this to
+the hub's `config.toml` and restart the hub:
 
 ```toml
 [outside]
@@ -531,8 +591,9 @@ addresses = []                # extra addresses, see below
   `outside.tagged` (critical), `outside.vulns` (medium) and `outside.stale`
   (low). Accept them with a note like any other; see docs/DESIGN.md, "The
   outside view".
-- Turn `enabled` off again and the hub makes no requests and closes the
-  `outside.*` findings at its next start.
+- Turn Enabled off again (Settings page, or `enabled = false` and a restart) and
+  the hub makes no requests and closes the `outside.*` findings at its next
+  pass, about a minute later.
 
 ### Hosts that stop reporting
 
@@ -584,8 +645,9 @@ itself: use the bridge network, or turn on "Host access to custom networks" in
 Settings → Docker, or point the hub at a different address that reaches the
 server. If Test connection says the server did not answer, check this first.
 
-The poller runs with the hub. To stop all remote reading, set `[remote]
-enabled = false` in `config.toml` and restart.
+The poller runs with the hub. To stop all remote reading, turn off "Read remote
+systems" on the Settings page, or set `[remote] enabled = false` in
+`config.toml` and restart.
 
 ### Remove a host
 

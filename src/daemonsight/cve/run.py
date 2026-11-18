@@ -16,7 +16,7 @@ import logging
 import time
 from functools import partial
 
-from .. import db
+from .. import db, settings
 from ..config import Config
 from ..findings import Finding
 from . import feeds, match, store
@@ -71,15 +71,26 @@ def clear_findings(conn, now: float) -> None:
 
 class Chore:
     def __init__(self, cfg: Config, state_conn, client=None):
+        self.base = cfg                # the config file's values; self.cfg adds the Settings page's, each pass
         self.cfg = cfg
         self.state = state_conn
         self.client = client           # an httpx client for tests
         self.factory = partial(store.connect, cfg.cve_db_path)
         self.dirty = True              # recompute findings (first pass, and whenever data changed)
         self.last_gen: str | None = None
+        self._epss_high: float | None = None
 
     async def run_once(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
+        # Read the settings afresh: a change on the Settings page applies on this pass.
+        self.cfg = settings.effective(self.base, self.state)
+        if not self.cfg.cve.enabled:
+            clear_findings(self.state, now)
+            self.dirty = True          # recompute everything when it is turned on again
+            return
+        if self.cfg.cve.epss_high != self._epss_high:
+            self._epss_high = self.cfg.cve.epss_high
+            self.dirty = True          # the High threshold moved
         invs = _inventories(self.state)
         releases = {i["codename"] for i in invs.values() if match.release_of(i)}
         conn = await asyncio.to_thread(self.factory)

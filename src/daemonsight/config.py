@@ -13,6 +13,7 @@ import socket
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import ClassVar
 
 DEFAULT_PATH = Path("/etc/daemonsight/config.toml")
 
@@ -184,6 +185,9 @@ class Config:
     # Web UIs to link from each source's panel, e.g. {caddy = "https://...",
     # fail2ban = "..."}; later also opnsense, unraid and ionos.
     links: dict[str, str] = field(default_factory=dict)
+    # Dotted names of the keys the config file set ("outside.enabled"), so the
+    # Settings page can tell "Config file" from "Default". Not a config key.
+    file_keys: ClassVar[frozenset[str]] = frozenset()
 
     @property
     def metrics_hours(self) -> int:
@@ -209,7 +213,7 @@ class Config:
         return Path(self.data_dir) / "cve.db"
 
 
-def _apply(obj, values: dict, section: str) -> None:
+def _apply(obj, values: dict, section: str, seen: set[str] | None = None) -> None:
     known = {f.name: f for f in fields(obj)}
     for key, value in values.items():
         if key not in known:
@@ -218,9 +222,11 @@ def _apply(obj, values: dict, section: str) -> None:
         if hasattr(current, "__dataclass_fields__"):
             if not isinstance(value, dict):
                 raise ValueError(f"[{section}{key}] must be a table")
-            _apply(current, value, f"{section}{key}.")
+            _apply(current, value, f"{section}{key}.", seen)
         else:
             setattr(obj, key, value)
+            if seen is not None:
+                seen.add(f"{section}{key}")
 
 
 ROLES = ("server", "workstation")
@@ -244,11 +250,15 @@ def config_path(path: str | os.PathLike | None = None) -> Path:
 def load(path: str | os.PathLike | None = None) -> Config:
     cfg = Config()
     candidate = config_path(path)
+    seen: set[str] = set()
     if candidate.exists():
         with candidate.open("rb") as fh:
-            _apply(cfg, tomllib.load(fh), "")
+            _apply(cfg, tomllib.load(fh), "", seen)
     elif path:
         raise FileNotFoundError(candidate)
+    if "collector.metrics_retention_hours" in seen:
+        seen.add("retention.metrics_hours")   # the old name sets the same thing
+    cfg.file_keys = frozenset(seen)
     cfg.role = valid_role(cfg.role, warn=True)
     return cfg
 

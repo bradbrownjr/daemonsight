@@ -94,6 +94,17 @@ database and its own config, and nothing else.
   single host stays read-only, so it has no such routes. An acceptance hides
   a finding from the counts, so it is logged (user and address) and written to
   Recent changes with its note.
+- **The Settings page (every install; changes on a hub only).**
+  `GET /settings` needs the login. On a hub, `POST /settings` needs it too,
+  refuses a request whose `Sec-Fetch-Site` is not `same-origin` or `none` (on
+  top of the `SameSite=Strict` cookie), validates every value on the server
+  (type, range, and for extra addresses that each one is a public IP address
+  and the host id is well formed) and writes nothing unless all of it is
+  valid. A posted name that is not one of the editable settings refuses the
+  whole request, so a hand-made POST can't reach a read-only setting. Every
+  change is logged (user and address) and written to Recent changes. A
+  single host's web process opens the database read-only, so it has no
+  `POST /settings` route.
 - **The report is authenticated.** `/h/<host>/report` and `report.md` need
   the login like every other page. The Markdown escapes text from hosts, and
   puts commands in a code fence that the text can't close.
@@ -108,6 +119,33 @@ database and its own config, and nothing else.
 - **systemd hardening:** `ProtectSystem=strict`, `ProtectHome`,
   `PrivateDevices`, no capabilities, only IPv4, IPv6 and Unix sockets,
   `SystemCallFilter=@system-service`, and the rest of the usual set.
+
+### What can be changed in the browser
+
+Only on a hub, and only by someone logged in, these settings can be saved from
+the Settings page: the outside view (on or off, extra addresses, refresh
+hours), CVE checks (on or off, refresh hours, the EPSS threshold), retention,
+the backup interval and count, and whether remote systems are read. Each is a
+row in the `settings` table of the hub's database, over the config file's
+value, and "Reset" deletes it. No code in the web process writes the config file.
+
+**Never editable in the browser:** the listen address and port, trusted
+proxies, `secure_cookies`, `session_hours`, the password and secret files, the
+data, database and backup folders, the log file, the hub flag and upload
+limits, and the upload address and token file. The page shows them read-only,
+with the reason. A wrong value in any of these could lock the administrator
+out of the page needed to fix it (a bad listen address, a changed password
+file), expose the interface (a public listen address, a wrong trusted
+proxy), or send data somewhere else (the upload address). Someone with the
+login could otherwise change them from one stolen session. They stay behind
+file access on the server.
+
+What a person with the login can change in the browser is limited to settings
+that change what the hub does for you. The outside view is the one that sends
+anything out: with it on, the hub sends public IP addresses to Shodan. The
+page shows the licence terms beside that switch, and the change is logged and
+shown under Recent hub changes. A stolen session could turn it on; it could
+not change where the hub listens, who may log in, or where it uploads.
 
 ### Behind a reverse proxy
 
@@ -273,7 +311,7 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   cap, files are written atomically and parsed with the standard library
   (no code is run from them). A failed download keeps the last good data.
 - **Outside checks send one thing to Shodan: an IP address.** Off by default
-  (`[outside] enabled`). When on, the hub asks Shodan's InternetDB,
+  (Settings page, or `[outside] enabled`). When on, the hub asks Shodan's InternetDB,
   `GET https://internetdb.shodan.io/<ip>`, for each public address of each
   host. The request carries the IP in the path and the User-Agent
   `DaemonSight/<version>`: no host name, host id, token, key, cookie, port

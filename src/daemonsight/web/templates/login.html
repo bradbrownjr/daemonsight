@@ -3,7 +3,7 @@
 {% block body %}
 <main class="ds-login container-tight py-6">
   <div class="text-center mb-4">
-    <img src="/static/{{ 'logo-dark-256.png' if theme == 'dark' else 'logo-256.png' }}" alt="" width="96" height="96">
+    {% from "_macros.html" import logo %}{{ logo(96, theme, theme_pref) }}
     <h1 class="mt-2">DaemonSight</h1>
   </div>
   <div class="card card-md">

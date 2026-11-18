@@ -154,7 +154,7 @@ def test_migration_from_schema_3(tmp_path):
     raw.executescript(V3_SCHEMA)
     raw.close()
     conn = db.connect_writer(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 7
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 8
     cols = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
     assert {"fix", "basis", "howto"} <= cols       # schema 6 added howto
     # Schema 7: Shodan's view of each public address.

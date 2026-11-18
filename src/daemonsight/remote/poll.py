@@ -33,7 +33,7 @@ import json
 import logging
 import time
 
-from .. import db
+from .. import db, settings
 from ..config import Config
 from ..findings import Finding
 from . import release, store, unraid
@@ -249,8 +249,10 @@ async def loop(cfg: Config, conn, net: Net | None = None) -> None:
     await asyncio.sleep(3)     # let the web server finish starting
     while True:
         try:
-            await release.refresh(conn, net)       # once a day, public page, nothing about the server is sent
-            await run_once(conn, cfg, net)
+            # Read the settings afresh: switching reading on or off applies on this pass.
+            if settings.effective(cfg, conn).remote.enabled:
+                await release.refresh(conn, net)       # once a day, public page, nothing about the server is sent
+                await run_once(conn, cfg, net)
         except Exception:
             log.exception("Remote chore failed")
         await asyncio.sleep(5)

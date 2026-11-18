@@ -63,4 +63,22 @@
   {% endif %}
   <div class="card-body text-secondary ds-nomatch">No hosts match the filter.</div>
 </section>
+
+<section class="card mt-4" id="hub-events" aria-labelledby="hub-events-title" data-section{% if not v.events %} data-empty{% endif %}>
+  <div class="card-header"><h2 class="card-title" id="hub-events-title">Recent hub changes</h2>
+    <div class="card-actions text-secondary"><a href="/settings">Settings</a></div></div>
+  {% if v.events %}
+  <div class="list-group list-group-flush">
+    {% for e in v.events %}
+    <div class="list-group-item" data-row>
+      <div class="d-flex justify-content-between gap-2"><strong>{{ e.title }}</strong><span class="text-secondary text-nowrap">{{ e.ago }}</span></div>
+      {% if e.detail %}<div class="text-secondary">{{ e.detail }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card-body text-secondary">No hub changes recorded yet. Changes made on the Settings page are listed here.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No changes match the filter.</div>
+</section>
 </div>

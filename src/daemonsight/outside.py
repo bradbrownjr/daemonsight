@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from . import __version__, db
+from . import __version__, db, settings
 from .config import Config
 from .findings import Finding, anchor, digest, firewall_state, public_listeners
 
@@ -563,6 +563,7 @@ def _cve_matches(cfg: Config, host: str) -> dict[str, str] | None:
 
 class Chore:
     def __init__(self, cfg: Config, state_conn, client: httpx.AsyncClient | None = None, gap: float = GAP_SECONDS):
+        self.base = cfg            # the config file's values; self.cfg adds the Settings page's, each pass
         self.cfg = cfg
         self.state = state_conn
         self.client = client       # an httpx client for tests
@@ -573,7 +574,10 @@ class Chore:
         """One pass: fetch what is due, then bring the findings up to date.
         Returns the number of requests made. Does nothing when disabled."""
         now = time.time() if now is None else now
+        # Read the settings afresh: a change on the Settings page applies on this pass.
+        self.cfg = settings.effective(self.base, self.state)
         if not self.cfg.outside.enabled:
+            clear_findings(self.state, now)
             return 0
         tg = targets(self.state, self.cfg)
         rows = get_rows(self.state)

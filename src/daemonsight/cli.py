@@ -68,7 +68,8 @@ def cmd_web(args, cfg) -> int:
     from .web.app import create_app
 
     def serve():
-        app = create_app(cfg, config_file=config.config_path(args.config) if cfg.hub.enabled else None)
+        # The path is for backups on a hub and for the Settings page, which names the file to edit.
+        app = create_app(cfg, config_file=config.config_path(args.config))
         uvicorn.run(app, host=cfg.web.listen, port=cfg.web.port, proxy_headers=True,
                     forwarded_allow_ips=",".join(cfg.web.trusted_proxies), server_header=False,
                     access_log=False)

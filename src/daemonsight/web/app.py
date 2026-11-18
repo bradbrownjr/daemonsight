@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import db, full_version, hub
+from .. import config as config_mod, db, full_version, hub, settings
 from ..config import Config
 from ..remote.client import Net
 from . import report, unraid_views, views
@@ -57,21 +57,16 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     async def lifespan(_app):
         tasks = []
         if hub_conn is not None:
-            tasks.append(asyncio.create_task(_hub_chores(hub_conn, cfg, config_file)))
-            if cfg.cve.enabled:
-                from ..cve import run as cve_run
-                tasks.append(asyncio.create_task(cve_run.loop(cfg, hub_conn, cve_client)))
-            else:
-                from ..cve import run as cve_run
-                cve_run.clear_findings(hub_conn, time.time())
+            # Every chore runs for the life of the hub and reads its settings again on each pass (a change on
+            # the Settings page applies at the next one, with no restart). A chore that is switched off does
+            # nothing, and closes the findings it left behind.
             from .. import outside as outside_chore
-            if cfg.outside.enabled:
-                tasks.append(asyncio.create_task(outside_chore.loop(cfg, hub_conn, outside_client)))
-            else:
-                outside_chore.clear_findings(hub_conn, time.time())
-            if cfg.remote.enabled:
-                from ..remote import poll as remote_poll
-                tasks.append(asyncio.create_task(remote_poll.loop(cfg, hub_conn, net)))
+            from ..cve import run as cve_run
+            from ..remote import poll as remote_poll
+            tasks.append(asyncio.create_task(_hub_chores(hub_conn, cfg, config_file)))
+            tasks.append(asyncio.create_task(cve_run.loop(cfg, hub_conn, cve_client)))
+            tasks.append(asyncio.create_task(outside_chore.loop(cfg, hub_conn, outside_client)))
+            tasks.append(asyncio.create_task(remote_poll.loop(cfg, hub_conn, net)))
         yield
         for t in tasks:
             t.cancel()
@@ -128,8 +123,18 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                 or not hmac.compare_digest(str(request.session.get("pw", "")), mark)):
             raise LoginRequired()
 
+    def theme_pref(request: Request) -> str:
+        """What the reader chose: light, dark or auto (follow the system). Dark until they choose."""
+        value = request.cookies.get("theme")
+        return value if value in ("light", "dark", "auto") else "dark"
+
     def theme(request: Request) -> str:
-        return "light" if request.cookies.get("theme") == "light" else "dark"
+        """The theme to render: auto starts dark and /static/theme.js corrects it before the page paints."""
+        return "light" if theme_pref(request) == "light" else "dark"
+
+    def live(conn) -> Config:
+        """The config file's values with the Settings page's applied (a hub only: any other install has none)."""
+        return settings.effective(cfg, conn) if cfg.hub.enabled else cfg
 
     def flash(request: Request, text: str, error: bool = False) -> None:
         """A one-line notice for the next full page (never a partial refresh)."""
@@ -138,7 +143,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     def render(request: Request, name: str, ctx: dict, status: int = 200) -> HTMLResponse:
         notice = None if name.startswith("partials/") else request.session.pop("flash", None)
         # Accepting a finding writes to the database; only a hub's web process may.
-        ctx = {"theme": theme(request), "path": request.url.path, "base": "", "hub": cfg.hub.enabled,
+        ctx = {"theme": theme(request), "theme_pref": theme_pref(request), "path": request.url.path, "base": "", "hub": cfg.hub.enabled,
                "can_accept": cfg.hub.enabled, "flash": notice, **ctx}
         return templates.TemplateResponse(request, name, ctx, status_code=status)
 
@@ -183,13 +188,96 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
         return RedirectResponse("/login", status_code=303)
 
     @app.post("/theme")
-    async def set_theme(request: Request, next: str = Form("/")):
+    async def set_theme(request: Request, next: str = Form("/"), theme_choice: str = Form("", alias="theme")):
+        """Set the theme to light, dark or auto; with no choice, switch between light and dark."""
         require_login(request)
         response = RedirectResponse(_safe_next(next), status_code=303)
-        new = "dark" if theme(request) == "light" else "light"
+        new = theme_choice if theme_choice in ("light", "dark", "auto") else \
+            ("dark" if theme(request) == "light" else "light")
         response.set_cookie("theme", new, max_age=365 * 86400, samesite="strict",
                             secure=cfg.web.secure_cookies, httponly=True)
         return response
+
+    # --- the Settings page ------------------------------------------------------
+    # Everyone sees it. On a hub, the hub's web process (the database's one writer) saves changes to the
+    # `settings` table; they sit over the config file and apply at each chore's next pass. On a single host
+    # the page shows the effective values read-only, since that web process opens the database read-only.
+    # What controls login or where the server listens is never editable here (settings.READ_ONLY).
+    file_path = config_file or config_mod.config_path()
+    can_edit = cfg.hub.enabled
+
+    def settings_page(request: Request, conn, status: int = 200, errors: dict | None = None,
+                      posted: dict | None = None, problems: list | None = None) -> HTMLResponse:
+        groups = settings.describe(cfg, conn, can_edit)
+        events = views.events_list(conn, db.HUB_HOST, 20) if conn is not None and can_edit else []
+        ctx = {"groups": groups, "read_only": settings.read_only(live(conn) if conn is not None else cfg),
+               "can_edit": can_edit, "config_path": str(file_path), "errors": errors or {},
+               "posted": posted or {}, "problems": problems or [], "events": events, "no_filter": True, "host": None}
+        return render(request, "settings.html", {"page": "settings", "v": ctx}, status)
+
+    @app.get("/settings", response_class=HTMLResponse)
+    async def settings_get(request: Request):
+        require_login(request)
+        with reader() as conn:
+            return settings_page(request, conn)
+
+    def _origin(key: str) -> str:
+        f = settings.BY_KEY[key]
+        return "config file" if settings.source_of(cfg, f, {}) == settings.FILE else "default"
+
+    if cfg.hub.enabled:
+        @app.post("/settings")
+        async def settings_post(request: Request):
+            """Save the settings of one group, or reset one. Everything is checked first and nothing is
+            written unless all of it is valid; a key that isn't an editable setting (the listen port, the
+            password file, ...) refuses the whole request, whoever sent it."""
+            require_login(request)
+            if request.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
+                return PlainTextResponse("cross-site request refused", status_code=403)
+            form = await request.form()
+            items = [(k, v) for k, v in form.multi_items() if isinstance(v, str)]
+            by = str(request.session.get("user") or "admin")
+            client = request.client.host if request.client else "?"
+            refused = [k for k, _ in items if k not in settings.BY_KEY and k not in ("group", "reset")]
+            resets = [v for k, v in items if k == "reset"]
+            if resets and (len(resets) > 1 or resets[0] not in settings.BY_KEY):
+                refused.append(resets[0][:60])
+            if refused:
+                fixed = {x[0] for x in settings.READ_ONLY}
+                problems = [f"{k[:60]} can't be changed on this page. It is set in the config file "
+                            f"({file_path}) and needs a restart." if k in fixed else f"{k[:60]} is not a setting."
+                            for k in refused]
+                with reader() as conn:
+                    return settings_page(request, conn, 400, problems=problems)
+            if resets:
+                key = resets[0]
+                f = settings.BY_KEY[key]
+                if settings.reset(hub_conn, cfg, key, by):
+                    log.info("Setting %s reset by %s from %s", key, by, client)
+                    flash(request, f"Reset: {f.name}. It now follows the {_origin(key)}.")
+                else:
+                    flash(request, f"{f.name} was not set here; nothing to reset.", error=True)
+                return RedirectResponse(f"/settings#{f.group}", status_code=303)
+            values, errors = {}, {}
+            posted = {k: v for k, v in items if k in settings.BY_KEY}
+            for key, raw in posted.items():
+                try:
+                    values[key] = settings.parse(settings.BY_KEY[key], raw)
+                except settings.Invalid as exc:
+                    errors[key] = str(exc)
+            if errors:
+                with reader() as conn:
+                    return settings_page(request, conn, 400, errors=errors, posted=posted)
+            changed = settings.save(hub_conn, cfg, values, by)
+            for key in changed:
+                log.info("Setting %s changed by %s from %s", key, by, client)
+            group = next((k.split(".")[0] for k in posted), "")
+            if changed:
+                flash(request, "Saved: " + "; ".join(settings.BY_KEY[k].name for k in changed)
+                      + ". It applies at the next pass of the chore that uses it.")
+            else:
+                flash(request, "No changes: those values are already in effect.")
+            return RedirectResponse(f"/settings#{group}" if group else "/settings", status_code=303)
 
     # --- pages ---------------------------------------------------------------
     # On a single host the pages live at /, /exposure ... for this host. On a
@@ -204,7 +292,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
         if host is None or not hub.HOST_RE.match(host) or \
                 not conn.execute("SELECT 1 FROM hosts WHERE id = ?", (host,)).fetchone():
             raise HTTPException(404)
-        return views.host_config(conn, cfg, host), f"/h/{host}"
+        return views.host_config(conn, live(conn), host), f"/h/{host}"
 
     async def show(request: Request, name: str, host: str | None, partial: bool, units: str = "active"):
         require_login(request)
@@ -294,14 +382,14 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
         async def hosts_page(request: Request):
             require_login(request)
             with reader() as conn:
-                ctx = views.hosts_list(conn, cfg) if conn else {"hosts": []}
+                ctx = views.hosts_list(conn, live(conn)) if conn else {"hosts": []}
             return render(request, "hosts.html", {"page": "hosts", "v": ctx})
 
         @app.get("/partials/hosts", response_class=HTMLResponse)
         async def hosts_partial(request: Request):
             require_login(request)
             with reader() as conn:
-                ctx = views.hosts_list(conn, cfg) if conn else {"hosts": []}
+                ctx = views.hosts_list(conn, live(conn)) if conn else {"hosts": []}
             return render(request, "partials/hosts.html", {"v": ctx})
 
         @app.post("/hosts/update")
@@ -400,19 +488,22 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
 
 async def _hub_chores(conn, cfg: Config, config_file: Path | None) -> None:
     """Every minute, flag hosts that stopped reporting. Every hour, apply
-    [retention] to every host's rows. Backups run on their own schedule."""
+    [retention] to every host's rows. Backups run on their own schedule.
+    Retention and backup settings are read again on each pass, so a change on
+    the Settings page applies at the next one."""
     last_prune = 0.0
     while True:
         now = time.time()
         try:
+            live = settings.effective(cfg, conn)
             hub.check_silent(conn, now)
             if now - last_prune > 3600:
-                r = cfg.retention
-                db.prune(conn, now, cfg.metrics_hours, r.events_days, r.resolved_findings_days)
+                r = live.retention
+                db.prune(conn, now, live.metrics_hours, r.events_days, r.resolved_findings_days)
                 last_prune = now
             if config_file is not None:
                 from .. import backup
-                path = await asyncio.to_thread(backup.scheduled, cfg, config_file)
+                path = await asyncio.to_thread(backup.scheduled, live, config_file)
                 if path:
                     log.info("backup written to %s", path)
         except Exception:

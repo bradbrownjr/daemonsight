@@ -606,8 +606,9 @@ def outside_section(conn, cfg: Config, snaps: dict, ports: dict, expected: set, 
         return out
     if not cfg.outside.enabled:
         out.update(state="off", message="Outside checks are off. To see what Shodan's InternetDB lists for this host's "
-                                        "public addresses, set enabled = true under [outside] in the hub's config "
-                                        "(docs/INSTALL.md, \"Outside checks\"). InternetDB is free for non-commercial "
+                                        "public addresses, turn on Outside view on the Settings page (or set "
+                                        "enabled = true under [outside] in the hub's config; docs/INSTALL.md, "
+                                        "\"Outside checks\"). InternetDB is free for non-commercial "
                                         "use only; read its terms first.")
         return out
     ips = outside_mod.host_addresses(cfg.host_id, ports, cfg)
@@ -929,7 +930,7 @@ def vulnerabilities(conn, cfg: Config) -> dict:
         out["message"] = "CVE matching runs on a hub, which downloads the vulnerability data. This host has no hub."
         return out
     if not cfg.cve.enabled:
-        out["message"] = "CVE matching is turned off on this hub ([cve] enabled = false)."
+        out["message"] = "CVE matching is turned off on this hub (Settings page, CVE checks; or [cve] enabled = false in the config)."
         return out
     cdb = cve_store.connect_reader(cfg.cve_db_path)
     try:
@@ -1077,7 +1078,9 @@ def hosts_list(conn, cfg: Config) -> dict:
             "findings": findings, "findings_v": findings_v,
         })
     return {"hosts": rows, "reporting": sum(1 for r in rows if r["state"] in ("Reporting", "Reachable")),
-            "hub_rev": target, "behind": sum(1 for r in rows if r["can_update"])}
+            "hub_rev": target, "behind": sum(1 for r in rows if r["can_update"]),
+            # Changes that belong to no host: a setting changed on the Settings page.
+            "events": events_list(conn, db.HUB_HOST)}
 
 
 def _remote_row(conn, h, r, now: float, findings, findings_v) -> dict:

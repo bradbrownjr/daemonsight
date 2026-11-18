@@ -328,14 +328,17 @@ web process is the writer.
 
 `[retention]` sets how long rows stay: metric points 48 hours by default,
 events and resolved findings for good. The collector prunes its own host's
-rows hourly; the hub prunes every host's. Open findings are never pruned.
+rows hourly; the hub prunes every host's. Open findings are never pruned. On a
+hub the Settings page can change it (see "Settings and configuration
+precedence").
 
 - `snapshots`: source, taken_at, ok, error, data (JSON). The latest row per source is current state.
 - `findings`: rule, key, severity, title, detail, link, fix, basis, howto (schema version 6), first_seen, last_seen, resolved_at.
 - `accepted`: host, rule, key, fingerprint, note, accepted_at, accepted_by. Written by the hub's web process (see "Accepting a finding"). Schema version 4.
 - `remotes` (schema version 5): id, kind (`unraid`), url, enabled, tls (`verify` or `pin`), tls_pin (SHA-256 of the pinned certificate), tls_cert (its PEM), interval, created_at, last_ok, last_error, fails. A remote system is also a row in `hosts` with `hosts.kind` set (collector hosts have `kind` NULL) and a `token_hash` of `remote:<id>`, which no upload token can equal. The API key is not in the database: it is `<data>/remotes/<id>.key`, mode 0600 in a 0700 folder.
 - `outside` (schema version 7): ip, first_try, checked_at, fetched_at, status (`ok`, `none` for a 404, `error`), data (the cleaned InternetDB answer, JSON), error. Hub only; see "The outside view".
-- `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down.
+- `settings` (schema version 8): key, value (JSON), changed_at, changed_by. Hub only: what was saved on the Settings page, over the config file. See "Settings and configuration precedence".
+- `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down. Events are per host (`host` is NOT NULL and every list filters by it). A change that belongs to no host, a setting changed on the hub, is stored with the reserved host `""` (`db.HUB_HOST`), which no host id can equal (`hub.HOST_RE` needs at least one character). They show under "Recent hub changes" on the hub's Hosts page and on the Settings page, never under a host. The same retention applies to them. This reuses the one events table and its pruning, instead of a second log with its own retention and display code.
 - `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
 
 Backups (`backup.py`): one owner-only `.tar.gz` with a consistent copy of
@@ -349,6 +352,59 @@ its history. `daemonsight restore` refuses while the writer
 holds `daemonsight.lock` in the data folder, checks the archive's names (it
 never extracts by path), the database's integrity and its schema version,
 and keeps every file it replaces as `<name>.before-restore`.
+
+### Settings and configuration precedence
+
+A setting's effective value is, in this order: a row in `settings` (set on
+the Settings page), the config file, the default in `config.py`. The file is
+never rewritten. `settings.py` holds the list of editable fields (`FIELDS`:
+key, label, type, range, help), which is also the list of what a POST may
+carry: any other name refuses the whole request. `READ_ONLY` lists what the
+page shows but never edits (listen address and port, trusted proxies, cookie
+and session settings, password and secret files, data, database and backup
+folders, log file, hub flag and upload limits, upload settings), each with its
+reason: a mistake there could lock the administrator out of the page needed to
+fix it.
+
+Editable on a hub: `outside.enabled`, `outside.addresses`,
+`outside.refresh_hours`, `cve.enabled`, `cve.refresh_hours`, `cve.epss_high`,
+all three `retention.*`, `backup.interval_hours` (blank is automatic, stored
+as null), `backup.keep`, and `remote.enabled`. `backup.dir` is read-only: it
+decides where files holding secrets are written.
+
+`config.load` records which keys the file set (`Config.file_keys`), so the
+page can say Config file or Default. `settings.effective(base, conn)` returns
+a copy of the config with the valid rows applied (a row that doesn't fit its
+field, or names an unknown key, is logged and ignored), or `base` itself when
+there are none. Only a hub reads the table: the web process of any other
+install opens the database read-only, so it shows file and default values
+only. The old `[collector] metrics_retention_hours` is cleared when a
+`retention.metrics_hours` row is applied, or it would still win.
+
+Live reload, per consumer. The hub's web process is the only writer of the
+table and runs the chores, so a saved change is visible to the next read.
+
+| Consumer | When it reads |
+|---|---|
+| `cve.run.Chore` | start of every `run_once` (each minute). Off: closes `cve.*` findings and returns. A new `epss_high` or turning it on again recomputes the findings |
+| `outside.Chore` | start of every `run_once`. Off: closes `outside.*` findings and returns 0. Addresses and `refresh_hours` are used from that pass |
+| `remote.poll.loop` | every 5 seconds, before it reads the systems |
+| `_hub_chores` (retention, backups) | every minute; pruning stays hourly, with the values read at that pass |
+| Pages (`views`, Exposure and Vulnerabilities text) | per request, through `settings.effective(cfg, conn)` on the reader connection |
+
+All three loops now start with the hub whatever the file says, and each decides
+every pass, so nothing needs a restart. They used to start only when enabled in
+the file.
+
+`POST /settings` needs the login and the same `Sec-Fetch-Site` check as the
+other hub POSTs. It parses every posted value (`settings.parse`: whole numbers
+for integers, finite numbers in range for decimals, On or Off, public IP
+addresses with `ip` or `ip=hostid` for the address list), and saves nothing
+unless all are valid; on an error the page is drawn again with the messages and
+what was typed. A value equal to the one in effect is skipped. `reset=<key>`
+deletes the row. Each change or reset also writes a hub-wide event, such as
+"Setting changed: Outside view, enabled: off → on" or "Setting reset: Backups,
+keep: 20 → 3 (config file)", in the same transaction.
 
 ## Web UI
 
@@ -372,7 +428,11 @@ CVE scan. The pages are tables and a few charts that refresh every 30–60
 seconds, which server-rendered HTML with HTMX handles well.
 
 Theme: Tabler's dark mode with the `slate` base and `cyan` primary, which
-matches the logo's gem. Light mode is a toggle. Tabler ships both as built-in
+matches the logo's gem. The account menu chooses Light, Dark or Auto, kept in
+the `theme` cookie (dark until chosen). Auto follows `prefers-color-scheme`:
+the server renders dark and `/static/theme.js`, loaded in the head, corrects it
+before the page paints and follows later changes; the logo is a `picture` with
+a dark source for the same media query. Tabler ships both as built-in
 attributes (`data-bs-theme`, `data-bs-theme-base`, `data-bs-theme-primary`), so
 there is no custom CSS to maintain.
 
@@ -443,11 +503,23 @@ Hosts page count only Unexpected and Changed (`db.findings_state` "active").
   accept `expose.docker_bypass`, as a port's panel can accept
   `expose.unexpected`.
 
+Account menu: one button at the right of the header (a person icon, label
+"Account and settings") opens a native popover (`popovertarget`), the same
+API as the source panels, with no library and no inline script. The panel holds a
+Settings link, Theme (Light, Dark, Auto; three submit buttons of a form posting
+to `/theme`, the pressed one marked `aria-pressed`), "Hide empty sections" (same
+`hideEmpty` storage key) and Log out. Escape and a click outside close it
+natively and focus returns to the button; `app.js` (`initAccount`) places it
+under the button and moves focus to its first item. The filter box stays in the
+header. Every install, hub or single host, has the same menu.
+
 Phones: below 768 px each table row becomes a stacked card, one labelled line
 per cell, with the header row hidden from view but kept for screen readers.
-The header shows the logo, host and a Menu button; the section links, theme
-switch, Log out and "Hide empty sections" open in a panel below it (script
-only; without it the header is unchanged). The filter box stays visible. A
+The header shows the logo, host and a Menu button; the section links and the
+account panel's items (Settings, Theme, "Hide empty sections", Log out) open in
+a panel below it (script only; without it the header is unchanged). The same
+panel is drawn inline there, not as a nested popover, and the account button
+is hidden; a browser without popover support gets the same inline panel. The filter box stays visible. A
 page note such as the one on Exposure is a details element with a one-line
 summary; it starts closed on a phone, remembers if the reader opened it, and
 is always open on wider screens.
@@ -923,7 +995,7 @@ version comparison applies to Ubuntu versions unchanged.
 What the internet sees of a host, from Shodan's InternetDB, set beside what
 DaemonSight knows from inside. A host can't see its own provider firewall,
 other devices answering on its address, or a forward's far end; an outside
-scan can. Off by default, on the hub only (`[outside]`).
+scan can. Off by default, on the hub only (`[outside]`, or Settings, Outside view).
 
 ### What InternetDB is
 
@@ -993,8 +1065,10 @@ queries. Every minute it:
    events, as `cve.*` does. A collector's upload can't carry them and never
    closes them (`hub.HUB_RULES`).
 
-With `enabled = false` the hub makes no requests, and at start-up closes any
-`outside.*` finding left from when it was on.
+With Enabled off (the Settings page, or `enabled = false` in the file) the hub
+makes no requests, and at its next pass (not only at start-up) closes any
+`outside.*` finding left from when it was on. The chore reads its settings at
+the start of every pass.
 
 ### Rules
 
@@ -1030,8 +1104,8 @@ without changing it, so the overlap is usually small; the finding says so.
 ### The Exposure page section
 
 "Seen from outside", after the port forwards. If the hub has outside checks off
-it is one line saying how to turn them on (and that InternetDB is free for
-non-commercial use only); on a single host it says outside checks run on a
+it is one line saying how to turn them on (the Settings page, with a link; and
+that InternetDB is free for non-commercial use only); on a single host it says outside checks run on a
 hub. Otherwise, per address: when it was fetched (and "stale" past three
 refreshes), the last error if any, then a table with each port Shodan lists,
 its status label (Expected when the port number is in `exposure.expected_public`
@@ -1055,8 +1129,8 @@ one is stored under its own `host` id, so the UI shows it as another host.
 The hub runs these sources itself: a background task, started with the hub
 like the CVE loop, polls each enabled system. Systems are added, edited,
 disabled and removed in the hub's web UI (Hosts, "Add a system"); there is no
-config file entry for them. `[remote] enabled = false` switches the polling
-off. Keys are files under the hub's data folder, never in the database or
+config file entry for them. `[remote] enabled = false`, or "Read remote systems"
+on the Settings page, switches the polling off; the loop reads it every pass. Keys are files under the hub's data folder, never in the database or
 `config.toml`, and the client sends only reads. Unraid is done; OPNsense is
 planned and its rows are unverified until they have run against a firewall.
 

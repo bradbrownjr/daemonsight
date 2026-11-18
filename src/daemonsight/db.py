@@ -22,7 +22,11 @@ from urllib.parse import quote
 
 from .findings import fingerprint
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
+
+# Events that belong to no host (a setting changed on the hub) use this as their
+# host. No host id can be empty (hub.HOST_RE), so a row never shows up under a host.
+HUB_HOST = ""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -126,6 +130,16 @@ CREATE TABLE IF NOT EXISTS outside (
     status     TEXT NOT NULL,
     data       TEXT,
     error      TEXT
+);
+
+-- Hub: settings changed on the Settings page (see settings.py). value is JSON.
+-- They sit over the config file and under nothing; deleting a row brings the
+-- file's value (or the default) back. Written by the hub's web process only.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    changed_at REAL NOT NULL,
+    changed_by TEXT NOT NULL
 );
 
 -- Hub: systems the hub reads over their own API (no collector). One row per

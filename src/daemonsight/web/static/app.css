@@ -262,3 +262,56 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
   .ds-nav-add-text { display: inline; margin-left: .35rem; }
   .ds-nav-sep { flex: 0 0 100%; width: auto; height: 1px; margin: .25rem 0; }
 }
+
+/* Account menu: one button in the header opens a native popover (the same API as the source panels,
+   https://developer.mozilla.org/en-US/docs/Web/API/Popover_API). app.js sets top/right from the button's
+   position; these values are the fallback. */
+.ds-acct-pop:not(:popover-open) { display: none; }
+.ds-acct-pop { position: fixed; inset: auto; top: 3.75rem; right: 1rem; margin: 0; padding: .5rem; gap: .25rem;
+  width: min(18rem, calc(100vw - 32px)); border: 1px solid var(--tblr-border-color); color: var(--tblr-body-color);
+  text-transform: none; font-weight: normal; letter-spacing: normal; text-align: left; box-shadow: var(--tblr-box-shadow-dropdown, 0 .5rem 1rem rgba(0, 0, 0, .25)); }
+.ds-acct-item { justify-content: flex-start; }
+.ds-acct-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .35rem .5rem; }
+.ds-acct-row.form-switch { padding-left: 2.75rem; justify-content: flex-start; }
+.ds-acct-label { font-weight: 600; }
+.ds-acct-btn:focus-visible, .ds-acct-pop a:focus-visible, .ds-acct-pop button:focus-visible,
+.ds-acct-pop input:focus-visible, .ds-menu-btn:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; }
+/* No popover support, or a phone: the hamburger menu is the button and the panel sits inline in it. */
+.ds-no-popover .ds-acct-btn { display: none; }
+.ds-no-popover .ds-acct-pop { position: static; width: auto; padding: 0; border: 0; box-shadow: none; background: none; }
+@media (max-width: 767.98px) {
+  .ds-acct { width: 100%; }
+  .ds-acct-btn { display: none; }
+  .ds-acct-pop:not(:popover-open), .ds-acct-pop { display: flex; position: static; width: auto; margin: 0;
+    padding: 0; border: 0; box-shadow: none; background: none; overflow: visible; }
+  .ds-acct-row { padding-left: 0; padding-right: 0; }
+  .ds-acct-row.form-switch { padding-left: 2.5rem; }
+}
+
+/* Settings page. */
+.ds-set-row { display: grid; grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr); gap: .5rem 1.5rem; }
+.ds-set-row + .ds-set-row { border-top: 1px solid var(--tblr-border-color); padding-top: 1rem; margin-top: 1rem; }
+.ds-set-input { max-width: 16rem; }
+textarea.ds-set-input { max-width: 28rem; }
+.ds-set-meta { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: center; }
+@media (max-width: 767.98px) { .ds-set-row { grid-template-columns: minmax(0, 1fr); } }
+
+
+/* Settings, "Config file only": long paths wrap inside their cell. */
+.ds-ro-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ds-ro-table td:nth-child(2) { max-width: 28rem; }
+
+/* Account items line up with the Theme and toggle rows. */
+.ds-acct-item { padding-left: .5rem; padding-right: .5rem; }
+
+/* Phone menu order: logo and menu button, then the sections and the filter,
+   then the account items under a line. The header's two rows are flattened
+   (display: contents) so one flex row can order all of them. */
+@media (max-width: 767.98px) {
+  .ds-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .5rem 16px; }
+  .ds-header > .container-xl { display: contents !important; }   /* beats Tabler's d-flex !important */
+  .ds-header nav { order: 4; flex: 0 0 100%; }
+  .ds-header > .container-xl > .ds-js-only { order: 5; }
+  .ds-js .ds-header .ds-account { order: 6; padding-top: .5rem; border-top: 1px solid var(--tblr-border-color); }
+  .ds-acct-item { padding-left: 0; padding-right: 0; }
+}

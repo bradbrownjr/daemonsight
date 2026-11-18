@@ -1,5 +1,5 @@
-// DaemonSight page tools: column sorting, a row filter and "hide empty
-// sections". No dependencies; served from 'self' under the CSP.
+// DaemonSight page tools: column sorting, a row filter, "hide empty
+// sections" and the account menu. No dependencies; served from 'self' under the CSP.
 //
 // Markup it reads:
 //   [data-section]          a card the filter and "hide empty" act on
@@ -228,7 +228,7 @@
     });
   }
 
-  // Phone menu: the nav, theme and Log out forms, and the hide-empty switch.
+  // Phone menu: the nav and the account panel (Settings, Theme, Hide empty sections, Log out).
   function initMenu() {
     var header = document.getElementById("ds-header");
     var button = document.getElementById("ds-menu-btn");
@@ -250,6 +250,23 @@
       if (e.target.closest("nav a")) set(false);
     });
     phone.addEventListener("change", function () { set(false); });
+  }
+
+  // Account menu: put the panel under its button, and move focus into it, so the keyboard can reach the
+  // items. Escape and a click outside close a popover natively, and focus goes back to the button:
+  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/toggle_event
+  function initAccount() {
+    var pop = document.getElementById("ds-acct-pop");
+    var button = document.getElementById("ds-acct-btn");
+    if (!pop || !button || !pop.showPopover) return;
+    pop.addEventListener("toggle", function (e) {
+      if (e.newState !== "open") return;
+      var r = button.getBoundingClientRect();
+      pop.style.top = Math.round(r.bottom + 6) + "px";
+      pop.style.right = Math.max(8, Math.round(document.documentElement.clientWidth - r.right)) + "px";
+      var first = pop.querySelector("a[href], button, input");
+      if (first) first.focus();
+    });
   }
 
   document.documentElement.classList.add("ds-js");
@@ -320,6 +337,7 @@
     });
     document.body.addEventListener("htmx:afterSettle", function () { applyAll(); applyNotes(); });
     initMenu();
+    initAccount();
     document.addEventListener("toggle", function (e) {
       var d = e.target;
       if (!d.classList || !d.classList.contains("ds-note") || !phone.matches) return;
