@@ -1,4 +1,4 @@
-{% from "_macros.html" import src, src_button, src_panel, fix_block, howto_block, accept_form, unaccept_form with context %}
+{% from "_macros.html" import src, src_button, src_panel, fix_block, howto_block, accept_form, unaccept_form, status_badge with context %}
 <div id="live" hx-get="{{ base }}/partials/overview" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
 {% set t = v.tiles %}
@@ -58,19 +58,33 @@
 
 <div class="ds-cols">
   <div class="ds-main-col">
-  <section class="card" aria-labelledby="findings-title" data-section{% if not v.findings %} data-empty{% endif %}>
+  <section class="card" id="findings" aria-labelledby="findings-title" data-section data-status-filter{% if not v.findings %} data-empty{% endif %}>
     <div class="card-header">
       <h2 class="card-title" id="findings-title">Findings</h2>{{ src("src-findings", v.src.findings) }}
-      <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.findings|length }} open</div>
+      {% if v.held %}
+      <div class="btn-group btn-group-sm ds-js-only ds-noprint ms-3" role="group" aria-label="Which findings to list">
+        <button type="button" class="btn" data-status-mode="all" aria-pressed="true">All</button>
+        <button type="button" class="btn" data-status-mode="attention" aria-pressed="false">Needs attention</button>
+      </div>
+      {% endif %}
+      <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.attention }} need{{ 's' if v.attention == 1 else '' }} attention{% if v.held %} · {{ v.held }} accepted{% endif %}</div>
     </div>
     {% if v.findings %}
     <div class="list-group list-group-flush">
       {% for f in v.findings %}
-      <div data-row id="{{ f.id }}" class="list-group-item d-flex gap-3 align-items-start">
+      <div data-row data-status="{{ f.status.key }}" id="{{ f.id }}" class="list-group-item d-flex gap-3 align-items-start">
         <span class="badge ds-sev {{ f.badge }}">{{ f.label }}</span>
         <div class="ds-min0 flex-fill">
-          <div class="fw-bold">{% if f.link %}<a href="{{ base }}{{ f.link }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}{{ src("src-fd-" ~ loop.index, f.src) }}</div>
+          <div class="fw-bold">{% if f.link %}<a href="{{ base }}{{ f.link }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}{{ src("src-fd-" ~ loop.index, f.src) }}
+            {{ status_badge(f.status) }}</div>
           <div class="text-secondary">{{ f.detail }}</div>
+          {% if f.accepted and not f.accepted.changed %}
+          <div class="mt-1">Note: {{ f.accepted.note }}</div>
+          <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+            <span class="text-secondary small">Accepted by {{ f.accepted.by }}, {{ f.accepted.ago }}</span>
+            {{ unaccept_form(f) }}
+          </div>
+          {% else %}
           {% if f.changed_note %}<div class="text-orange small">{{ f.changed_note }}</div>{% endif %}
           {{ howto_block(f.howto) }}
           {% if f.fix %}{{ fix_block(f.fix) }}{% endif %}
@@ -78,6 +92,7 @@
             <span class="text-secondary">Since {{ f.since }}</span>
             {{ accept_form(f) }}
           </div>
+          {% endif %}
         </div>
       </div>
       {% endfor %}
@@ -86,33 +101,8 @@
     <div class="card-body text-secondary">Nothing to report.</div>
     {% endif %}
     <div class="card-body text-secondary ds-nomatch">No findings match the filter.</div>
+    <div class="card-body text-secondary ds-status-empty">Nothing needs attention. Accepted findings are hidden by the filter above; choose All to list them.</div>
   </section>
-
-  {% if v.accepted %}
-  <section class="card mt-4" id="accepted" aria-labelledby="accepted-title" data-section>
-    <div class="card-header">
-      <h2 class="card-title" id="accepted-title">Accepted</h2>
-      <div class="card-actions text-secondary">{{ v.accepted|length }} accepted, not counted above</div>
-    </div>
-    <div class="list-group list-group-flush">
-      {% for f in v.accepted %}
-      <div data-row id="{{ f.id }}" class="list-group-item d-flex gap-3 align-items-start">
-        <span class="badge ds-sev {{ f.badge }}">{{ f.label }}</span>
-        <div class="ds-min0 flex-fill">
-          <div class="fw-bold">{% if f.link %}<a href="{{ base }}{{ f.link }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}</div>
-          <div class="text-secondary">{{ f.detail }}</div>
-          <div class="mt-1">Note: {{ f.accepted.note }}</div>
-          <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
-            <span class="text-secondary small">Accepted by {{ f.accepted.by }}, {{ f.accepted.ago }}</span>
-            {{ unaccept_form(f) }}
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    <div class="card-body text-secondary ds-nomatch">No accepted findings match the filter.</div>
-  </section>
-  {% endif %}
   </div>
 
   <div class="ds-side-col">

@@ -210,4 +210,6 @@ def test_the_version_shows_on_the_overview_and_the_hosts_page(polled, hub_cfg):
                                                        "next": "/h/tower/"})
     assert r.status_code == 303
     page = polled.get("/h/tower/").text
-    assert "after the audit" in page and "Unraid 7.4.0 is available" in page.split('id="accepted"')[1]
+    # Accepted findings stay in the list, in place, with an Accepted label and their note.
+    row = page.split('id="finding-unraid.os_update-os"')[1].split('data-row')[0]
+    assert "after the audit" in row and "Unraid 7.4.0 is available" in row and 'data-status-label="accepted"' in row

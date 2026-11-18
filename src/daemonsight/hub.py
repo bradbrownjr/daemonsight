@@ -27,9 +27,10 @@ HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 log = logging.getLogger("daemonsight.hub")
 # Rules the hub opens and closes itself; a collector can't send these, and an
 # upload never closes them: host.* (silence, clock), cve.* (CVE matching),
-# remote.* (a system the hub reads over its API is unreachable) and unraid.*
-# (what the hub reads from an Unraid server).
-HUB_RULES = ("host.", "cve.", "remote.", "unraid.")
+# remote.* (a system the hub reads over its API is unreachable), unraid.*
+# (what the hub reads from an Unraid server) and outside.* (what Shodan's
+# InternetDB says the internet sees).
+HUB_RULES = ("host.", "cve.", "remote.", "unraid.", "outside.")
 # The package list is not a snapshot source: see InventoryIn.
 INVENTORY = "inventory"
 SOURCES = ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall", "packages")
@@ -135,7 +136,7 @@ class FindingIn(_Model):
     @classmethod
     def _not_hub_rule(cls, v: str) -> str:
         if v.startswith(HUB_RULES):
-            raise ValueError("host.*, cve.*, remote.* and unraid.* findings belong to the hub")
+            raise ValueError("host.*, cve.*, remote.*, unraid.* and outside.* findings belong to the hub")
         return v
 
 

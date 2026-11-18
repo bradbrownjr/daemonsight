@@ -484,6 +484,56 @@ Raspberry Pi OS hosts are matched; on Fedora the page lists pending security
 advisories; Ubuntu isn't matched yet. If the hub can't reach a feed for 3
 days, a low "feed is stale" finding appears on each host.
 
+### Outside checks
+
+The hub can ask Shodan's InternetDB (https://internetdb.shodan.io/) what the
+internet sees of each host's public addresses: open ports, software names
+(CPEs), hostnames, tags and CVEs, from Shodan's own weekly scan. DaemonSight
+compares that with what it knows from inside the host. It is **off by
+default**, on the hub only.
+
+**Licence.** InternetDB is free for non-commercial use. Shodan's page says:
+"If you're using the InternetDB API to make money then you need an
+enterprise license." If you run DaemonSight for clients or inside a
+for-profit business, read Shodan's terms first. DaemonSight does not turn this
+on for you.
+
+To turn it on, add this to the hub's `config.toml` and restart the hub:
+
+```toml
+[outside]
+enabled = true
+refresh_hours = 24            # each address is asked at most this often
+addresses = []                # extra addresses, see below
+```
+
+- It checks every public address each host reports in its ports snapshot
+  (scope "public"), IPv4 and IPv6. Private, loopback and link-local addresses
+  are never sent.
+- `addresses` adds more. `"203.0.113.9"` is checked for the host that reports
+  it; `"203.0.113.9=vps"` attaches it to the host named `vps`, for an address
+  no collector reports (a router's, for instance). Findings and the Exposure
+  section belong to that host, and its `exposure.expected_public` decides what
+  is expected.
+- It sends one request per address per refresh, a second apart, from the
+  hub, in the background. The request is `GET https://internetdb.shodan.io/<ip>`
+  with the User-Agent `DaemonSight/<version>`; nothing else leaves the hub.
+  The hub needs outbound HTTPS to `internetdb.shodan.io`. Shodan documents
+  no rate limit; if it answers HTTP 429 the hub stops for the time it asks.
+- Shodan updates InternetDB about once a week, so a fixed port can stay in
+  its data for days. A finding clears at the first refresh after Shodan
+  stops listing the port.
+- The Exposure page gets a "Seen from outside" section: for each address,
+  when it was fetched, then each port Shodan lists with its status and what
+  DaemonSight knows about it, plus hostnames, CPEs and tags. Its source panel
+  has the exact URL and a `curl` command to repeat the request yourself.
+- Findings: `outside.unexpected_port` (high), `outside.not_seen` (low),
+  `outside.tagged` (critical), `outside.vulns` (medium) and `outside.stale`
+  (low). Accept them with a note like any other; see docs/DESIGN.md, "The
+  outside view".
+- Turn `enabled` off again and the hub makes no requests and closes the
+  `outside.*` findings at its next start.
+
 ### Hosts that stop reporting
 
 A host that misses three of its longest intervals gets a high "Stopped

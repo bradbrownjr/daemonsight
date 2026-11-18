@@ -171,10 +171,9 @@ def overview(conn, cfg: Config) -> dict:
         glance.append({"title": "Last read", "value": fmt_ago(r["last_poll"]) if r["last_poll"] else "never",
                        "alert": (r["last_error"] or "")[:120] if r["fails"] else None})
 
-    open_f, accepted_f = views.findings_lists(conn, host)
     url, interval = _panels(conn, cfg)
     return {
-        "host": views._host(cfg, snaps), "tiles": tiles, "findings": open_f, "accepted": accepted_f,
+        "host": views._host(cfg, snaps), "tiles": tiles, **views.findings_overview(conn, host),
         "events": views.events_list(conn, host), "glance": glance,
         "sources": _states(snaps), "top": top_containers(snaps, dk),
         "src": {"system": prov.unraid_section("unraid_system", url, interval), "findings": prov.section("findings", cfg),

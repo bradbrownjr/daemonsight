@@ -44,7 +44,7 @@ def _safe_next(value: str | None) -> str:
 
 
 def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | None = None,
-               cve_client=None, remote_net: Net | None = None) -> FastAPI:
+               cve_client=None, remote_net: Net | None = None, outside_client=None) -> FastAPI:
     if secret is None:
         secret = Path(cfg.web.secret_file).read_text().strip()
     if len(secret) < 32:
@@ -64,6 +64,11 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             else:
                 from ..cve import run as cve_run
                 cve_run.clear_findings(hub_conn, time.time())
+            from .. import outside as outside_chore
+            if cfg.outside.enabled:
+                tasks.append(asyncio.create_task(outside_chore.loop(cfg, hub_conn, outside_client)))
+            else:
+                outside_chore.clear_findings(hub_conn, time.time())
             if cfg.remote.enabled:
                 from ..remote import poll as remote_poll
                 tasks.append(asyncio.create_task(remote_poll.loop(cfg, hub_conn, net)))

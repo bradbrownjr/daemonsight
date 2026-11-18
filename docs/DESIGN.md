@@ -126,9 +126,14 @@ DaemonSight knows when it first appeared and when it cleared.
 | `unraid.unclean_shutdown` | Unraid's unread alerts with the subject "Unclean shutdown detected" (Parity Check Tuning plugin, or Unraid itself), grouped into one finding: "Unraid shut down uncleanly N times since DATE", every date in the detail. The basis is the set of times, so a new crash brings back an accepted finding | Medium |
 | `unraid.notification` | Every other unread warning or alert, one finding per distinct title (repeats grouped; the detail has the newest subject and description, the count and the newest and oldest date), plus one summary, "N unread Unraid alerts and warnings", for the whole inbox. Notices about conditions DaemonSight checks live are dropped as findings (see "Notifications") but stay on the Notifications page. The text is the server's, cut and escaped | Medium when the group has an alert, Low for warnings; the summary is Low |
 | `unraid.os_update` | The newest stable Unraid release is newer than the version the API reports (see "The newest release"). "Unraid X is available (running Y)", with a link to the release notes. The basis is the new version | Low |
+| `outside.unexpected_port` | Shodan's InternetDB lists a port as open on one of the host's public addresses and the port is not in `exposure.expected_public` (any protocol: InternetDB gives port numbers only). The detail says what DaemonSight knows about it: a listener on the host (process, unit or container), a DNAT forward that covers it (its target, and the interface or tunnel that reaches it), a container that publishes it, or that nothing on the host listens on it. Key `<ip> <port>` (see "The outside view") | High |
+| `outside.not_seen` | A port DaemonSight judges internet-reachable (listening on a public address, past the host and provider firewalls, not forwarded away) and expected is not in Shodan's list for the address. Worded as possibly fine: not scanned yet, or blocked by a provider firewall. When Shodan has no record of the address, one per expected port, with that said. Not raised for an IPv6 address Shodan has no record of | Low |
+| `outside.tagged` | Shodan tags the address `compromised`, `malware`, `c2` or `doublepulsar`. Other tags (cloud, cdn, vpn, scanner, honeypot, tor, self-signed ...) are shown on the Exposure page and make no finding | Critical |
+| `outside.vulns` | Shodan lists CVEs for the address. The detail says they are guesses from service banners and names which of them DaemonSight's own `cve.*` matches for the host also have | Medium |
+| `outside.stale` | No good answer for an address for three refreshes (at least 72 hours). The other `outside.*` findings keep following the last good answer | Low |
 | `unraid.ups` | The UPS is on battery (Medium; High at 30% charge or below, or when it reports low battery), charge under 50% (Medium), or its battery needs replacing (Low) | Medium, High or Low |
 
-Hub rules for remote systems (`remote.*`, `unraid.*`) are computed by the hub
+Hub rules for remote systems (`remote.*`, `unraid.*`) and the outside view (`outside.*`) are computed by the hub
 and kept by its reconcile, like `host.*` and `cve.*`; a collector's upload
 may not carry them. Each has no fix command (they are decisions), a basis
 that brings an accepted finding back when it changes (for example `disk3:high`
@@ -211,6 +216,10 @@ the card for its step; with no `fix` it is listed as a decision.
 | `sys.disk` | None | none | Mount point and severity. 86% to 88% is no change; crossing into High is. |
 | `sys.memory` | None | none | Constant. |
 | `firewall.duplicate_rules` | None | none | Constant (the count drifts). |
+| `outside.unexpected_port` | None | none | IP, port and a digest of what DaemonSight knows about the port (process, forward target). |
+| `outside.not_seen`, `outside.stale` | None | none | IP (and port, for `not_seen`). |
+| `outside.tagged` | None | none | IP and the critical tags. |
+| `outside.vulns` | None | none | IP and a digest of the CVE list. |
 | Others (`svc.failed`, `ctr.down`, `route.*`, `jail.log_missing`, `firewall.default_accept`, `collector.source`, `cve.feed_stale`, `host.*`) | None | none | The title. |
 
 `svc.failed` has no `fix`: its detail advises `journalctl -u <unit>`, which
@@ -231,11 +240,12 @@ acceptance lives in the `accepted` table (host, rule, key, fingerprint, note,
 accepted_at, accepted_by), and the finding stays in `findings`.
 
 - Accepted findings are left out of counts, severity badges and lists of what
-  needs attention: the Overview findings list and its count, the Hosts page
-  severity summary and its "Reboot needed" badge, and the report's steps and
-  severity groups. They appear under "Accepted" on Overview and in the report,
-  with the note, who and when. A host's "Not reporting" state still follows
-  `host.silent`, because it says what the host is doing.
+  needs attention: the Overview card's count, the Hosts page severity summary
+  and its "Reboot needed" badge, and the report's steps and severity groups.
+  They are not hidden. They stay in the Overview findings list, in place, with
+  an Accepted label and the note, who and when (see "Status labels"), and
+  the report keeps its own "Accepted" section. A host's "Not reporting" state
+  still follows `host.silent`, because it says what the host is doing.
 - The fingerprint is a SHA-256 of rule, key and basis. When the open finding's
   fingerprint differs from the accepted one, the finding is open again, with
   "Accepted on <date> (<note>) — this has changed since". Accepting it again
@@ -324,6 +334,7 @@ rows hourly; the hub prunes every host's. Open findings are never pruned.
 - `findings`: rule, key, severity, title, detail, link, fix, basis, howto (schema version 6), first_seen, last_seen, resolved_at.
 - `accepted`: host, rule, key, fingerprint, note, accepted_at, accepted_by. Written by the hub's web process (see "Accepting a finding"). Schema version 4.
 - `remotes` (schema version 5): id, kind (`unraid`), url, enabled, tls (`verify` or `pin`), tls_pin (SHA-256 of the pinned certificate), tls_cert (its PEM), interval, created_at, last_ok, last_error, fails. A remote system is also a row in `hosts` with `hosts.kind` set (collector hosts have `kind` NULL) and a `token_hash` of `remote:<id>`, which no upload token can equal. The API key is not in the database: it is `<data>/remotes/<id>.key`, mode 0600 in a 0700 folder.
+- `outside` (schema version 7): ip, first_try, checked_at, fetched_at, status (`ok`, `none` for a 404, `error`), data (the cleaned InternetDB answer, JSON), error. Hub only; see "The outside view".
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down.
 - `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
 
@@ -385,6 +396,52 @@ a Caddy site, a forward or a jail (the row's `id` is built by
 `findings.anchor`). `app.js` (`showTarget`) scrolls to that row, clears a
 filter that hides it and flashes it once; the flash is off under
 `prefers-reduced-motion`.
+
+### Status labels
+
+Every list says where each item stands, with one label:
+
+| Label | Meaning | Counts as needing attention |
+|-------|---------|-----------------------------|
+| Unexpected | Not expected and not accepted | Yes |
+| Accepted | Accepted with a note; the note shows on hover (the label's title) and in the row | No |
+| Changed | Accepted, but its basis changed since (the fingerprint no longer matches) | Yes |
+| Expected | Listed in `exposure.expected_public` | No |
+
+Accepted and expected items are never hidden: an inline label and a filter
+replace separate sections. Totals, severity badges, the report's steps and the
+Hosts page count only Unexpected and Changed (`db.findings_state` "active").
+
+- **Overview findings list.** All open findings, in severity order, in one
+  list. Each row has its severity badge and a status label; an Accepted row
+  shows its note, who and when, and an Un-accept button instead of the fix
+  and steps; a Changed row shows the "this has changed since" note and
+  "Accept again". The card's count reads "N need attention", plus "M
+  accepted" when there are any, and the Hosts page counts the same set.
+  When any finding is accepted, a small "All" / "Needs attention" switch
+  appears (script only: without scripts everything is listed). "Needs
+  attention" hides rows whose `data-status` is not `unexpected` or `changed`
+  and says so when none are left. The choice is kept in `localStorage` under
+  `daemonsight:findingsFilter`, read and written inside the same `try/catch`
+  as the other saved settings, and applied again after each refresh.
+  `views.findings_overview` builds the list; the Unraid Overview shares the
+  template and calls it too. The report still uses `views.findings_lists`.
+- **Exposure page.** A Status column on each listener row and each port
+  forward row: Expected, Accepted, Changed, Unexpected, or a dash when the
+  internet can't reach it (the host has no public address, the provider
+  firewall's `upstream_allow` lets none of its ports in, the firewall forwards
+  it to another host, or it is an unconnected UDP client socket). Derived in
+  this order: the acceptance state of the row's finding (`expose.unexpected`
+  or `expose.docker_bypass` for a listener, `expose.forward_all` for a forward:
+  Accepted, or Changed when its basis moved); else Expected when the port is
+  in `exposure.expected_public`; else Unexpected. A forward is Expected only
+  when it forwards at most 1000 ports and every one of them is listed; a wide
+  forward never is. A forward that is not wide and not listed is Unexpected
+  but makes no finding of its own (only `expose.forward_all` does). The old
+  "Expected: Yes/No" column is gone; this replaces it. A forward row's panel
+  can accept `expose.forward_all`, and a Docker-published port's panel can
+  accept `expose.docker_bypass`, as a port's panel can accept
+  `expose.unexpected`.
 
 Phones: below 768 px each table row becomes a stacked card, one labelled line
 per cell, with the header row hidden from view but kept for screen readers.
@@ -509,7 +566,7 @@ top-level `inventory` field (see "CVE matching").
 - **Checks:** gzip or plain JSON only; 8 MiB before unpacking and 48 MiB
   after (a small gzip can unpack to gigabytes); a pydantic schema that sets
   the type and length of every field (`hub.py`); the top-level shape of
-  each source's data; links only as paths on the site; no `host.*` or `cve.*`
+  each source's data; links only as paths on the site; no `host.*`, `cve.*`, `remote.*`, `unraid.*` or `outside.*`
   findings from a collector; NaN and Infinity refused. An `inventory` the
   hub can't read is dropped, not a reason to refuse the upload. Ten bad tokens from one address
   in five minutes block that address; one host may upload 120 times a minute.
@@ -860,6 +917,136 @@ is "still a work in progress and subject to change" and not for automations
 [30]. The next step is an OVAL reader with the same streaming approach,
 keyed by Ubuntu release (`VERSION_CODENAME`), and the same states. The Debian
 version comparison applies to Ubuntu versions unchanged.
+
+## The outside view
+
+What the internet sees of a host, from Shodan's InternetDB, set beside what
+DaemonSight knows from inside. A host can't see its own provider firewall,
+other devices answering on its address, or a forward's far end; an outside
+scan can. Off by default, on the hub only (`[outside]`).
+
+### What InternetDB is
+
+Checked 2026-11-18, against the published page [49] and by requests to
+documentation addresses and a few well-known public ones (not any address of
+the owner's). What follows is stated as the page says it, or as observed.
+
+- `GET https://internetdb.shodan.io/<ip>` returns `{ip, ports, cpes,
+  hostnames, tags, vulns}` as JSON. Observed: `ports` are integers, with no
+  protocol (a record lists UDP ports such as 161 beside TCP ones); `vulns` is
+  a list of CVE ids; `tags` are lower-case words. It "doesn't return any
+  banners". A published page says all this and gives IPv4 examples only.
+- An address with no record, and a malformed address, both give HTTP 404 and
+  `{"detail":"No information available"}`. So a 404 means "no record", not
+  "bad input", and DaemonSight only ever sends a validated IP. A POST gives
+  405; a trailing slash gives a 307 redirect (DaemonSight follows no redirects).
+- "The API gets updated once a week." No key or account is needed.
+- Terms: "It's free for non-commercial use!" and "If you're using the
+  InternetDB API to make money then you need an enterprise license." [49] That
+  is why `[outside] enabled` is false by default and the licence is in
+  `config.example.toml`, INSTALL.md and README.
+- **IPv6 works.** The page is silent on it; observed: two well-known public
+  IPv6 addresses returned records in the same shape. A documentation IPv6
+  address returned the same 404 as an unknown IPv4 one. So IPv6 addresses are
+  checked. How much of IPv6 Shodan scans is unverified, which is why an IPv6
+  address with no record produces no `outside.not_seen` finding.
+- **Rate limits: not documented.** Responses carried no rate-limit headers;
+  they came through Cloudflare with `cache-control: public, max-age=432000`
+  (five days). DaemonSight asks each address at most once per `refresh_hours`
+  (24 by default), a second apart, and stops for the pass on an HTTP 429,
+  honouring `Retry-After` up to a day. What a real 429 looks like is
+  unverified.
+- **Tags.** Shodan's own help pages list no tag values (its search-filters
+  page marks the `tag` filter as restricted to higher API plans [51]). The
+  values used here come from a third-party client library that documents each
+  one [50]: `cloud`, `compromised` ("only applied to NoSQL databases that
+  have been compromised for ransomware"), `cryptocurrency`, `database`,
+  `devops`, `doublepulsar` (SMB banners that answer the DoublePulsar
+  backdoor handshake), `honeypot`, `ics`, `iot`, `malware` ("verified command
+  and control servers"), `medical`, `onion`, `scanner`, `self-signed`,
+  `starttls`, `tor`, `videogame` and `vpn`. The list is incomplete: `cdn` and
+  `pqc` came back in real answers and are not in it. `c2` is on the owner's
+  list and in an unofficial list of Shodan's most used tags [50], and is not in
+  the library; it is kept in the critical set, unverified.
+
+### What it asks, and when
+
+`outside.Chore` runs on the hub's event loop, as the CVE chore does, and
+never blocks a page request: the fetches are async and the rest is a few small
+queries. Every minute it:
+
+1. Collects the addresses: for each host, the ports snapshot's `addresses`
+   with scope `public` (each checked again: it must parse and not be
+   private, loopback, link-local, multicast or special), plus `[outside]
+   addresses`. An entry `ip=host` is attached to that host; a plain `ip` to
+   the host that reports it, and is dropped with a log line when no host does.
+2. Fetches each address that is due: never asked; or its last attempt was
+   `refresh_hours` ago (an hour after a failure). One request per address, a
+   second apart. The request is `GET https://internetdb.shodan.io/<ip>` with
+   `User-Agent: DaemonSight/<version>` and nothing else.
+3. Stores the cleaned answer in the `outside` table of `state.db` (ip,
+   first_try, checked_at, fetched_at, status `ok`, `none` or `error`, data,
+   error), schema version 7. A failed fetch keeps the old answer and sets
+   `error`, so findings don't flap on a bad day. A 404 is stored as `none`.
+4. Recomputes each host's `outside.*` findings with `db.reconcile_findings(...,
+   only_prefix="outside.")` and writes `finding_opened` and `finding_resolved`
+   events, as `cve.*` does. A collector's upload can't carry them and never
+   closes them (`hub.HUB_RULES`).
+
+With `enabled = false` the hub makes no requests, and at start-up closes any
+`outside.*` finding left from when it was on.
+
+### Rules
+
+Keys are `<ip> <port>` for ports and `<ip>` for the rest. Each has a basis, a
+link to the row or address it is about, and a `howto` of plain steps; none has a
+fix command (they are decisions).
+
+| Rule | Severity | Basis |
+|------|----------|-------|
+| `outside.unexpected_port` | High | IP, port and a digest of what DaemonSight knows about the port (process, forward target), so an accepted finding comes back as Changed when what is behind the port changes |
+| `outside.not_seen` | Low | IP and port |
+| `outside.tagged` | Critical | IP and the critical tags present |
+| `outside.vulns` | Medium | IP and a digest of the CVE list, so a new CVE brings an accepted finding back |
+| `outside.stale` | Low | IP |
+
+What DaemonSight knows about a port (`outside.explain_port`) comes from the
+host's own readings: its listeners (process, unit or container, bound
+addresses), the containers that publish it, and the firewall snapshot's DNAT
+forwards that cover it, grouped by target with the interface that reaches the
+target (the host address in the same /24 or /64 names it, and a name like
+`wg0` is called a tunnel; it is a guess from addresses without prefix lengths,
+and worded as one). With none of those it says nothing on the host listens on
+it and no forward covers it. Example, from the test fixture: a VPS forwards
+every TCP port except 22, 80, 443, 2083 and 8001 over its `wg0` tunnel to
+10.99.0.2, and Shodan lists ports 22, 80, 443 and 9123. Port 9123 gives a
+high `outside.unexpected_port` whose detail names the forward to 10.99.0.2.
+
+`outside.vulns` cross-references DaemonSight's own matches: it reads the
+host's rows in `cve.db` and names the CVE ids both have. Shodan matches the
+version a banner shows against known CVEs, and distributions backport fixes
+without changing it, so the overlap is usually small; the finding says so.
+
+### The Exposure page section
+
+"Seen from outside", after the port forwards. If the hub has outside checks off
+it is one line saying how to turn them on (and that InternetDB is free for
+non-commercial use only); on a single host it says outside checks run on a
+hub. Otherwise, per address: when it was fetched (and "stale" past three
+refreshes), the last error if any, then a table with each port Shodan lists,
+its status label (Expected when the port number is in `exposure.expected_public`
+on any protocol, else the acceptance state of its `outside.unexpected_port`
+finding, else Unexpected) and what DaemonSight knows about it; the expected
+ports Shodan did not list; hostnames, CPEs and tags (critical ones in red); and
+the CVE ids with links to NVD, marked where DaemonSight's own matches have
+them. The address's source panel gives the exact URL, a `curl` command to
+repeat the request, what is sent, how often Shodan updates and the terms. A
+port's panel has the finding's accept form. Shodan's text is escaped like all
+host text.
+
+Limits: Shodan's view is a week old at best, covers the ports it scans, and
+can't say TCP from UDP. An address attached to a host with no uploaded
+settings has an empty expected list, so every port Shodan sees is unexpected.
 
 ## Remote sources (phase 2b)
 
@@ -1363,6 +1550,7 @@ The collector must stay light:
 - Unraid: whether the API gives a threshold for a disk with its own temperature setting, and the SSD thresholds (the schema has no field).
 - Unraid: the notification, folder and release queries ran against the real server with an Admin key, read-only; a Viewer key reading `Notifications.list` and `Docker.organizer` was not tried. The release page was fetched without parameters and with `branch=stable`; its reply shape is what the fixture copies. Unverified: the exact label of the notification bell's "Archive all" (taken from the brief; the webgui source has no such string in the files searched), whether an acknowledged SMART attribute (the Dashboard's orange icon) still sends a notification when it changes again (the SMART docs say so), and that a history entry's `date` is the time the check ended (observed: it matches the finish notice within seconds).
 - Unraid: the container statistics subscription ran against the real server with an Admin key, read-only (the handshake, the stream, the id format and its control-code prefix, `memUsage`). Not tried with a Viewer key: the source gives a Viewer `READ_ANY` on `DOCKER`, which the subscription needs, but no Viewer key was available. Run it once with a real Viewer key before relying on it. The cost on the Unraid side (`docker stats` started and stopped each sample) was not measured, and the figure for "no memory limit" assumes Docker reports the host's memory as the limit (seen here: 94.28 GiB on a server with that much RAM).
+- Outside view: the whole chore against the real InternetDB from a real hub with real hosts (tests use a fake server with the documented reply shape, and the requests were checked by hand against documentation addresses and public ones); what an HTTP 429 from InternetDB looks like and whether it sends `Retry-After`; whether Shodan scans IPv6 widely; whether `c2` is a tag Shodan uses; and a complete list of tag values (Shodan documents none).
 
 ## Sources
 
@@ -1414,3 +1602,6 @@ The collector must stay light:
 46. Docker CLI, `cli/command/container/formatter_stats.go` (`MemUsage`: `units.BytesSize(used) + " / " + units.BytesSize(limit)`, `"-- / --"` when invalid) and docker/go-units `size.go` (`BytesSize` is `%.4g` with `B, KiB, MiB, GiB, TiB, PiB, EiB, ZiB, YiB`): https://github.com/docker/cli and https://github.com/docker/go-units
 47. websockets 17.4 (BSD-3-Clause; asyncio client `websockets.asyncio.client.connect`: `ssl`, `subprotocols`, `proxy`, `compression`, `max_size`, `open_timeout`, `close_timeout`, `logger`, and `process_redirect`, which follows redirects by default): https://websockets.readthedocs.io/ and the package source, https://github.com/python-websockets/websockets ; the file listing for 17.4, uploaded 2026-10-30, with wheels for CPython 3.13 on manylinux x86-64 and aarch64: https://pypi.org/project/websockets/17.4/ ; httpx-ws 0.10.0 (requires anyio, httpcore, httpx and wsproto): https://pypi.org/project/httpx-ws/
 48. Unraid webgui, `emhttp/plugins/dynamix.docker.manager/DockerContainers.page` (the "CPU & Memory load" column, Advanced View): https://github.com/unraid/webgui
+49. Shodan InternetDB, the published page (what it returns, "updated once a week", "free for non-commercial use", the enterprise licence for revenue-generating use, no key needed, no banners): https://internetdb.shodan.io/ . Reply shape, the 404 body `{"detail":"No information available"}`, IPv6 records, the 405 and 307 responses and the cache headers were observed with requests on 2026-11-18
+50. Shodan tag values: a third-party Go client library's tag list with a description of each, https://pkg.go.dev/github.com/denisgubin/shodan/models/tags ; an unofficial list of the most used tags, https://gainsec.com/2022/02/07/top-20-shodan-general-search-tags/ . Neither is Shodan's own documentation
+51. Shodan search filters (the `tag` filter is restricted to higher API plans; no values listed): https://www.shodan.io/search/filters ; Shodan help, what Shodan indexes (the data comes from service banners): https://help.shodan.io/the-basics/what-is-shodan

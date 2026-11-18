@@ -106,6 +106,23 @@ class CveConfig:
 
 
 @dataclass
+class OutsideConfig:
+    """On the hub: ask Shodan's InternetDB what the internet sees of each
+    host's public addresses. Off by default: InternetDB is free for
+    non-commercial use only ("If you're using the InternetDB API to make money
+    then you need an enterprise license", https://internetdb.shodan.io/).
+    Only the IP address is sent."""
+    enabled: bool = False
+    # Extra addresses to check, besides every host's own public addresses.
+    # "203.0.113.9" is checked for the host that reports it; "203.0.113.9=vps"
+    # attaches it to the host named vps, for an address no collector reports
+    # (a router's, say). Private addresses are refused.
+    addresses: list[str] = field(default_factory=list)
+    # Hours between checks of each address. InternetDB updates weekly.
+    refresh_hours: float = 24
+
+
+@dataclass
 class RemoteConfig:
     """On the hub: read systems that have no collector (Unraid) over their
     own API. The systems are added in the web UI (Hosts, Add a system); this
@@ -160,6 +177,7 @@ class Config:
     upload: UploadConfig = field(default_factory=UploadConfig)
     hub: HubConfig = field(default_factory=HubConfig)
     cve: CveConfig = field(default_factory=CveConfig)
+    outside: OutsideConfig = field(default_factory=OutsideConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)

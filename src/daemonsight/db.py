@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from .findings import fingerprint
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -112,6 +112,20 @@ CREATE TABLE IF NOT EXISTS hosts (
     update_state TEXT,      -- JSON: the host's last update result
     remote_update INTEGER,  -- 0 when the host turned hub updates off
     kind         TEXT       -- NULL: a collector uploads for it. "unraid": the hub reads it over its API (see remotes)
+);
+
+-- Hub: what Shodan's InternetDB last said about each public address (see
+-- outside.py). data is the cleaned answer as JSON; status says what it was:
+-- "ok" (a record), "none" (404: Shodan has nothing on the address), or
+-- "error" (no answer yet). A failed refresh keeps the old data and sets error.
+CREATE TABLE IF NOT EXISTS outside (
+    ip         TEXT PRIMARY KEY,
+    first_try  REAL NOT NULL,
+    checked_at REAL NOT NULL,   -- last attempt
+    fetched_at REAL,            -- last good answer (a 404 counts)
+    status     TEXT NOT NULL,
+    data       TEXT,
+    error      TEXT
 );
 
 -- Hub: systems the hub reads over their own API (no collector). One row per

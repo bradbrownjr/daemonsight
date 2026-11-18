@@ -30,11 +30,42 @@ SECTION_READ = {
     "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
     "cve": "The hub matches this host's installed packages against the Debian security tracker, EPSS scores and "
            "CISA's KEV list; the host downloads nothing",
+    "outside": "Shodan's free InternetDB, asked by the hub about this host's public addresses. Only the IP address "
+               "is sent, with a generic User-Agent, DaemonSight/<version>. The answer is Shodan's scan data, up to a "
+               "week old, compared with what DaemonSight reads from inside the host",
     "unraid": "The hub's read-only GraphQL queries to the Unraid API, checked against DaemonSight's Unraid rules",
     "remote": "The hub's last attempt to read this system's API",
     "findings": "DaemonSight's rules, applied to the latest reading from each source",
     "events": "DaemonSight compares each new reading with the one before it",
 }
+
+
+def outside_address(ip: str, row: dict | None) -> dict:
+    """The panel for one address in "Seen from outside": the exact request, and how to repeat it."""
+    from .. import outside
+    from .views import fmt_when
+    entries = [{"kind": "url", "label": "Request", "text": outside.URL + ip, "href": outside.URL + ip},
+               cmd("Check it yourself", f"curl -s {q(outside.URL + ip)}"),
+               plain("Sent", f"Only the IP address, with the User-Agent {outside.USER_AGENT}"),
+               plain("Updated", "InternetDB updates once a week; it returns no banners"),
+               plain("Terms", outside.TERMS),
+               {"kind": "url", "label": "About InternetDB", "text": outside.DOCS, "href": outside.DOCS}]
+    if row and row.get("fetched_at"):
+        entries.append(plain("Answer fetched", fmt_when(row["fetched_at"])))
+    return {"title": f"Shodan's view of {ip}",
+            "read": "The hub asks InternetDB about this address once per refresh and keeps the answer. "
+                    "HTTP 404 means Shodan has no record of the address. The reply is untrusted text: it is checked "
+                    "for shape and size, stored as data, and shown escaped",
+            "entries": entries}
+
+
+def outside_port(ip: str, port: int, lines: list[str]) -> dict:
+    from .. import outside
+    entries = [text("What DaemonSight knows", ln) for ln in lines]
+    entries += [cmd("Who listens here", f"sudo ss -ltnup 'sport = :{port}'"),
+                cmd("Shodan's record", f"curl -s {q(outside.URL + ip)}")]
+    return {"title": f"Port {port} on {ip}",
+            "read": "Shodan's scan data (InternetDB), compared with this host's own readings", "entries": entries}
 
 
 def cve_packages() -> dict:
@@ -397,7 +428,7 @@ PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/se
 
 RULE_SOURCE = {"unraid": "unraid", "remote": "remote", "svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
                "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "os": "system", "collector": "events",
-               "cve": "cve"}
+               "cve": "cve", "outside": "outside"}
 
 
 def os_release() -> dict:

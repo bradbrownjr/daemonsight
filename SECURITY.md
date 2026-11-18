@@ -262,7 +262,8 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
     Unknown top-level fields are ignored, so a host updated before its hub
     can still report; anything inside a known field must match exactly.
   - links must be paths on the hub's own site
-  - a collector can't open or close the hub's own `host.*` findings
+  - a collector can't open or close the hub's own `host.*`, `cve.*`,
+    `remote.*`, `unraid.*` or `outside.*` findings
   - ten bad tokens from one address in five minutes block that address,
     and one host may upload at most 120 times a minute
 - **CVE matching downloads three public files.** The hub fetches the Debian
@@ -271,6 +272,25 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   redirect may only stay on the feed's own host, each download has a size
   cap, files are written atomically and parsed with the standard library
   (no code is run from them). A failed download keeps the last good data.
+- **Outside checks send one thing to Shodan: an IP address.** Off by default
+  (`[outside] enabled`). When on, the hub asks Shodan's InternetDB,
+  `GET https://internetdb.shodan.io/<ip>`, for each public address of each
+  host. The request carries the IP in the path and the User-Agent
+  `DaemonSight/<version>`: no host name, host id, token, key, cookie, port
+  or anything else. An address must parse as an IP and not be private,
+  loopback, link-local or multicast, or it is never sent (a collector's
+  report of its own addresses is checked again on the hub). Redirects are not
+  followed, so an answer can't send the hub elsewhere. This tells Shodan that
+  your hub exists and which addresses it watches. InternetDB is free for
+  non-commercial use only; see INSTALL.md.
+- **Shodan's reply is untrusted text.** It is capped at 1 MiB, parsed as
+  JSON and cut down to ports (integers 1 to 65535), CPEs, hostnames, tags
+  (a strict pattern) and CVE ids (a strict pattern), each with a count and
+  length limit. It is stored as data and shown only through autoescaped
+  templates; the links it produces go to `nvd.nist.gov`, built from a CVE id
+  that matched the pattern. A wrong reply, or Shodan being down, can give
+  wrong or missing findings but can't run anything. Its tags and CVE lists
+  are Shodan's own guesses from scanning; the findings say so.
 - **Feed text is untrusted.** CVE descriptions and names come from other
   people's files. They are cut to a fixed length when stored and shown only
   through autoescaped templates, and the links they produce go to

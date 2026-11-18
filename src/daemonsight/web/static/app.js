@@ -8,8 +8,10 @@
 //   table[data-table=key]   a sortable table; key names its saved sort
 //   th[data-sort=num|text]  a sortable column
 //   td[data-v]              raw value to sort by instead of the cell text
+//   [data-status-filter]    a card whose rows carry data-status (unexpected, accepted, changed, expected);
+//                           its [data-status-mode] buttons pick "all" or "attention" (Unexpected and Changed)
 //
-// Sort order and the hide-empty switch are saved in localStorage. All of it
+// Sort order, the hide-empty switch and the findings filter are saved in localStorage. All of it
 // is applied again after every HTMX refresh.
 (function () {
   "use strict";
@@ -156,7 +158,7 @@
   function applyFilter() {
     var terms = filterInput ? filterInput.value.toLowerCase().split(/\s+/).filter(Boolean) : [];
     each(document.querySelectorAll("[data-section]"), function (section) {
-      var rows = section.querySelectorAll("[data-row]");
+      var rows = section.querySelectorAll("[data-row]:not(.ds-status-hidden)");
       var shown = 0;
       each(rows, function (row) {
         var text = rowText(row);
@@ -176,6 +178,30 @@
     });
   }
 
+  // "All" lists every finding, accepted ones included; "attention" hides the
+  // ones that don't need any (Accepted, Expected). Saved; applied again after each refresh.
+  function statusMode() { return store.get("findingsFilter") === "attention" ? "attention" : "all"; }
+
+  function applyStatusFilter() {
+    var mode = statusMode();
+    each(document.querySelectorAll("[data-status-filter]"), function (section) {
+      var rows = section.querySelectorAll("[data-row][data-status]");
+      var hidden = 0;
+      each(rows, function (row) {
+        var st = row.getAttribute("data-status");
+        var hide = mode === "attention" && st !== "unexpected" && st !== "changed";
+        row.classList.toggle("ds-status-hidden", hide);
+        if (hide) hidden += 1;
+      });
+      section.toggleAttribute("data-status-empty", rows.length > 0 && hidden === rows.length);
+      each(section.querySelectorAll("[data-status-mode]"), function (b) {
+        var on = b.getAttribute("data-status-mode") === mode;
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+        b.classList.toggle("active", on);
+      });
+    });
+  }
+
   function setHideEmpty(on) {
     document.documentElement.classList.toggle("ds-hide-empty", on);
     if (hideEmptySwitch) hideEmptySwitch.checked = on;
@@ -186,6 +212,7 @@
       addSortButtons(table);
       sortTable(table);
     });
+    applyStatusFilter();
     applyFilter();
   }
 
@@ -270,6 +297,13 @@
       filterInput.focus();
     });
     document.addEventListener("click", onSortClick);
+    document.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-status-mode]");
+      if (!b) return;
+      store.set("findingsFilter", b.getAttribute("data-status-mode") === "attention" ? "attention" : "all");
+      applyStatusFilter();
+      applyFilter();
+    });
     document.addEventListener("click", function (e) {
       var copy = e.target.closest(".ds-copy");
       if (copy) { copyText(copy); return; }

@@ -14,11 +14,11 @@
 /* Page tools (app.js). Hidden when scripts don't run. */
 html:not(.ds-js) .ds-js-only { display: none !important; }
 .ds-filter { width: 14rem; max-width: 100%; }
-.ds-filtered { display: none !important; }
+.ds-filtered, .ds-status-hidden { display: none !important; }
 .ds-hide-empty [data-section][data-empty],
 .ds-hide-empty [data-section][data-nomatch] { display: none !important; }
-.ds-nomatch { display: none; }
-[data-nomatch] .ds-nomatch { display: block; }
+.ds-nomatch, .ds-status-empty { display: none; }
+[data-nomatch] .ds-nomatch, [data-status-empty] .ds-status-empty { display: block; }
 [data-nomatch] .table-responsive,
 [data-nomatch] .list-group { display: none; }
 .ds-sort { all: unset; cursor: pointer; white-space: nowrap; }

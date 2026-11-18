@@ -7,7 +7,7 @@ import time
 from urllib.parse import quote, urlsplit
 from dataclasses import replace
 
-from .. import db, distro, findings as rules, hub
+from .. import db, distro, findings as rules, hub, outside as outside_mod
 from ..collector.sources.caddy import is_local
 from .. import cve as _cve  # noqa: F401 (package)
 from ..cve import feeds as cve_feeds, match as cve_match, store as cve_store
@@ -21,6 +21,37 @@ SEVERITY_BADGE = {
     "low": ("Low", "bg-azure-lt"),
     "info": ("Info", "bg-secondary-lt"),
 }
+
+
+# The status label every list carries. Only "unexpected" and "changed" need
+# attention; "accepted" and "expected" are shown, never hidden, and not counted.
+STATUS = {
+    "unexpected": ("Unexpected", "bg-red-lt"),
+    "accepted": ("Accepted", "bg-green-lt"),
+    "changed": ("Changed", "bg-orange-lt"),
+    "expected": ("Expected", "bg-azure-lt"),
+}
+NEEDS_ATTENTION = ("unexpected", "changed")
+
+
+def status_info(key: str, acc: dict | None = None) -> dict:
+    """A status label for templates: {"key", "label", "badge", "note", "attention"}.
+    `acc` is a finding_item's "accepted" entry; its note shows on hover and in the row."""
+    label, badge = STATUS[key]
+    note = None
+    if acc and key in ("accepted", "changed"):
+        note = f"{acc['note']} ({acc['by']}, {acc['when']})"
+    return {"key": key, "label": label, "badge": badge, "note": note, "attention": key in NEEDS_ATTENTION}
+
+
+def status_of(expected: bool, finding: dict | None) -> dict:
+    """The status of something that is internet-reachable. An acceptance of
+    its finding wins (Accepted, or Changed when its basis moved), then the
+    config's expected list, else it is Unexpected."""
+    acc = finding["accepted"] if finding else None
+    if acc:
+        return status_info("changed" if acc["changed"] else "accepted", acc)
+    return status_info("expected" if expected else "unexpected")
 
 
 # --- formatting -------------------------------------------------------------
@@ -179,10 +210,12 @@ def finding_item(r: dict) -> dict:
             "fix": r["fix"], "howto": [ln.strip() for ln in (r.get("howto") or "").split("\n") if ln.strip()],
             "step": rules.step_of(r["rule"], r["key"]) if r["fix"] else None,
             "label": label, "badge": cls, "since": fmt_ago(r["first_seen"]),
-            "src": prov.finding(r["rule"], r["link"]), "accepted": None, "changed_note": None}
+            "src": prov.finding(r["rule"], r["link"]), "accepted": None, "changed_note": None,
+            "status": status_info("unexpected")}
     if acc:
         item["accepted"] = {"note": acc["note"], "by": acc["accepted_by"], "ago": fmt_ago(acc["accepted_at"]),
                             "when": fmt_when(acc["accepted_at"]), "changed": acc["changed"]}
+        item["status"] = status_info("changed" if acc["changed"] else "accepted", item["accepted"])
         if acc["changed"]:
             item["changed_note"] = (f"Accepted on {fmt_when(acc['accepted_at'])[:10]} ({acc['note']}) "
                                     "\u2014 this has changed since")
@@ -194,6 +227,16 @@ def findings_lists(conn, host: str) -> tuple[list[dict], list[dict]]:
     longer applies is in the open list, with a note saying so."""
     active, held = db.findings_state(conn, host)
     return [finding_item(r) for r in active], [finding_item(r) for r in held]
+
+
+def findings_overview(conn, host: str) -> dict:
+    """What the Overview findings list shows: every open finding in severity
+    order, accepted ones in place with their status. `attention` counts the
+    Unexpected and Changed ones, which is what the Hosts page and the
+    report's steps count too."""
+    active, held = db.findings_state(conn, host)
+    rows = sorted(active + held, key=lambda r: (db.SEVERITY_ORDER.get(r["severity"], 9), r["first_seen"]))
+    return {"findings": [finding_item(r) for r in rows], "attention": len(active), "held": len(held)}
 
 
 def findings_list(conn, host: str) -> list[dict]:
@@ -290,12 +333,10 @@ def overview(conn, cfg: Config) -> dict:
         glance.append({"title": "Listening sockets", "value": f"{len(ls)} total",
                        "alert": None, "note": f"{wide} on all or public addresses"})
 
-    open_f, accepted_f = findings_lists(conn, host)
     return {
         "host": _host(cfg, snaps),
         "tiles": tiles,
-        "findings": open_f,
-        "accepted": accepted_f,
+        **findings_overview(conn, host),
         "events": events_list(conn, host),
         "glance": glance,
         "sources": {name: _source_state(snaps, name)
@@ -441,6 +482,30 @@ def _jail_for(jails: list[dict], unit, process, extra) -> str | None:
     return None
 
 
+FORWARD_PORTS_CHECKED = 1000
+
+
+def forward_status(f: dict, host_public: bool, cfg: Config, finding: dict | None) -> dict | None:
+    """The status of a port forward: None when it can't be reached from the
+    internet (the host has no public address, or the provider firewall lets
+    none of its ports in). Expected only when every port it forwards is in
+    exposure.expected_public; a wide forward never is."""
+    if not host_public:
+        return None
+    protos = ("tcp", "udp") if f["proto"] == "all" else (f["proto"],)
+    count = sum(hi - lo + 1 for lo, hi in f["ranges"])
+    if cfg.exposure.upstream_allow:
+        allowed = [p for p in cfg.exposure.upstream_allow
+                   if p.partition("/")[0].isdigit() and p.partition("/")[2] in protos
+                   and any(lo <= int(p.partition("/")[0]) <= hi for lo, hi in f["ranges"])]
+        if not allowed:
+            return None
+    expected = set(cfg.exposure.expected_public)
+    covered = count <= FORWARD_PORTS_CHECKED and all(
+        f"{port}/{proto}" in expected for proto in protos for lo, hi in f["ranges"] for port in range(lo, hi + 1))
+    return status_of(covered, finding)
+
+
 def exposure(conn, cfg: Config) -> dict:
     snaps = db.get_snapshots(conn, cfg.host_id)
     ports = _snap_data(snaps, "ports") or {}
@@ -450,7 +515,9 @@ def exposure(conn, cfg: Config) -> dict:
     expected = set(cfg.exposure.expected_public)
     # The port's exposure finding, open or accepted, so its panel can accept it.
     active, held = findings_lists(conn, cfg.host_id)
-    port_findings = {f["key"]: f for f in active + held if f["rule"] == "expose.unexpected"}
+    port_findings = {f["key"]: f for f in active + held if f["rule"] in ("expose.unexpected", "expose.docker_bypass")}
+    forward_findings = {f["key"]: f for f in active + held if f["rule"] == "expose.forward_all"}
+    lo, hi = _eph(snaps)
     public_keys = {(r["proto"], r["port"]) for r in rules.public_listeners(snaps, {"eph": _eph(snaps)})}
     ctr_names = {c["id"]: c["name"] for c in (_snap_data(snaps, "docker") or {}).get("containers", [])}
     rows = []
@@ -465,6 +532,11 @@ def exposure(conn, cfg: Config) -> dict:
         unit = owner.get("id") if owner.get("kind") == "unit" else None
         internet = (r["proto"], r["port"]) in public_keys
         key = f"{r['port']}/{r['proto']}"
+        # Reachable from the internet: public by address, past the provider firewall, not forwarded
+        # away, and not an unconnected UDP client socket. Docker's published ports count too.
+        reachable = (where == "internet" and rules.upstream_allows(cfg, r["proto"], r["port"])
+                     and fw["state"] != "forwarded" and not (r["proto"] == "udp" and lo <= r["port"] <= hi))
+        status = status_of(key in expected, port_findings.get(key)) if reachable else None
         jail = _jail_for(jails, unit, r.get("process"), cfg.exposure.jail_covers) if internet else None
         rows.append({
             "port": key, "port_v": r["port"], "addresses": ", ".join(r["addresses"]),
@@ -472,7 +544,7 @@ def exposure(conn, cfg: Config) -> dict:
             "reach_badge": "bg-red-lt" if where == "internet" else "bg-secondary-lt",
             "process": r.get("process") or "—", "owner": unit or "—",
             "fw": FW_LABEL[fw["state"]], "fw_badge": FW_BADGE[fw["state"]], "fw_why": fw["why"],
-            "expected": ("Yes" if key in expected else "No") if internet else "—",
+            "status": status,
             "jail": (jail or "None") if internet else "—", "jail_bad": internet and not jail,
             "anchor": rules.anchor("port", r["port"], r["proto"]),
             "src": {**prov.listener(r, ctr_names, _snap_data(snaps, "caddy")), "finding": port_findings.get(key),
@@ -486,6 +558,18 @@ def exposure(conn, cfg: Config) -> dict:
                            "published": f"{p['host_ip'] or '*'}:{p['host_port']}",
                            "target": f"{p['container_port']}/{p['proto']}", "wide": wide})
     fwdata = _snap_data(snaps, "firewall")
+    forwards = []
+    for f in (fwdata or {}).get("forwards", []):
+        fkey = f"{f['family']} {f['proto']} {f['to']}"
+        forwards.append({
+            "proto": f["proto"], "ports": f["ports"], "to": f["to"],
+            "anchor": rules.anchor("fwd", f["family"], f["proto"], f["to"]),
+            "family": "IPv6" if f["family"] == "ip6" else "IPv4",
+            "conditions": ", ".join(f["conditions"]), "copies": f["copies"],
+            "wide": sum(hi_ - lo_ + 1 for lo_, hi_ in f["ranges"]) > 1000,
+            "status": forward_status(f, pub, cfg, forward_findings.get(fkey)),
+            "src": {**prov.forward({**f, "family_raw": f["family"]}), "finding": forward_findings.get(fkey),
+                    "anchor": rules.anchor("fwd", f["family"], f["proto"], f["to"])}})
     chains = [{"name": f"{c['family']} {c['table']} {c['chain']}", "policy": c["policy"],
                "default": c["default"], "accept_all": c["accept_all"], "open": _port_ranges(c["open"]),
                "src": prov.chain(c)}
@@ -498,19 +582,82 @@ def exposure(conn, cfg: Config) -> dict:
         "firewall": {"chains": chains, "docker_nat": (fwdata or {}).get("docker_nat", False),
                      "tables": (fwdata or {}).get("tables", []), "backend": (fwdata or {}).get("backend"),
                      "duplicates": (fwdata or {}).get("duplicates", 0),
-                     "forwards": [{"proto": f["proto"], "ports": f["ports"], "to": f["to"],
-                                   "anchor": rules.anchor("fwd", f["family"], f["proto"], f["to"]),
-                                   "family": "IPv6" if f["family"] == "ip6" else "IPv4",
-                                   "conditions": ", ".join(f["conditions"]), "copies": f["copies"],
-                                   "wide": sum(hi - lo + 1 for lo, hi in f["ranges"]) > 1000,
-                                   "src": prov.forward({**f, "family_raw": f["family"]})}
-                                  for f in (fwdata or {}).get("forwards", [])]},
+                     "forwards": forwards},
         "firewall_state": _source_state(snaps, "firewall"),
         "ports_state": _source_state(snaps, "ports"),
+        "outside": outside_section(conn, cfg, snaps, ports, expected, active + held),
         "expected": sorted(expected),
         "upstream": cfg.exposure.upstream_allow,
         "src": {name: prov.section(name, cfg) for name in ("ports", "firewall", "docker")},
     }
+
+
+NVD = "https://nvd.nist.gov/vuln/detail/"
+
+
+def outside_section(conn, cfg: Config, snaps: dict, ports: dict, expected: set, found: list[dict]) -> dict:
+    """"Seen from outside": what Shodan's InternetDB lists for this host's public addresses,
+    each port with a status and what DaemonSight knows about it."""
+    out = {"state": "ok", "message": None, "addresses": [], "refresh_hours": cfg.outside.refresh_hours,
+           "terms": outside_mod.TERMS, "url": outside_mod.URL, "enabled": cfg.outside.enabled}
+    if not cfg.hub.enabled:
+        out.update(state="off", message="Outside checks run on a hub, which asks Shodan about each host's public "
+                                        "addresses. This host has no hub.")
+        return out
+    if not cfg.outside.enabled:
+        out.update(state="off", message="Outside checks are off. To see what Shodan's InternetDB lists for this host's "
+                                        "public addresses, set enabled = true under [outside] in the hub's config "
+                                        "(docs/INSTALL.md, \"Outside checks\"). InternetDB is free for non-commercial "
+                                        "use only; read its terms first.")
+        return out
+    ips = outside_mod.host_addresses(cfg.host_id, ports, cfg)
+    if not ips:
+        out.update(state="empty", message="This host reports no public address, so there is nothing to check. To check "
+                                          "one anyway, add \"<ip>=<this host's id>\" to addresses under [outside].")
+        return out
+    rows = outside_mod.get_rows(conn)
+    now = time.time()
+    by_key = {(f["rule"], f["key"]): f for f in found if f["rule"].startswith("outside.")}
+    eph = outside_mod.eph_of(snaps)
+    cve_matches = None
+    for ip in ips:
+        row = rows.get(ip)
+        a = {"ip": ip, "anchor": rules.anchor("outside", ip), "state": "waiting", "fetched": "never", "stale": False,
+             "error": (row or {}).get("error"), "ports": [], "missing": [], "hostnames": [], "cpes": [], "tags": [],
+             "vulns": [], "src": prov.outside_address(ip, row), "stale_finding": by_key.get(("outside.stale", ip))}
+        out["addresses"].append(a)
+        if row is None:
+            continue
+        a["stale"] = outside_mod.is_stale(row, now, cfg.outside.refresh_hours)
+        if row["fetched_at"] is None:
+            a["state"] = "error"
+            continue
+        a["state"] = row["status"]
+        a["fetched"] = fmt_ago(row["fetched_at"], now)
+        data = row["data"] or {}
+        seen = set(data.get("ports", []))
+        for p in sorted(seen):
+            finding = by_key.get(("outside.unexpected_port", f"{ip} {p}"))
+            known = outside_mod.explain_port(snaps, p)
+            anchor_id = rules.anchor("outside", ip, p)
+            a["ports"].append({
+                "port": p, "anchor": anchor_id, "known": known,
+                "status": status_of(outside_mod.port_expected(expected, p), finding),
+                "src": {**prov.outside_port(ip, p, known), "finding": finding, "anchor": anchor_id}})
+        if not (row["status"] == "none" and ":" in ip):
+            a["missing"] = [{"port": p, "who": who} for p, who in sorted(
+                outside_mod.expected_ports_here(snaps, expected, cfg.exposure.upstream_allow, ip, eph).items())
+                if p not in seen]
+        a["hostnames"] = data.get("hostnames", [])
+        a["cpes"] = data.get("cpes", [])
+        a["tags"] = [{"name": t, "critical": t in outside_mod.CRITICAL_TAGS} for t in data.get("tags", [])]
+        vulns = data.get("vulns", [])
+        if vulns:
+            if cve_matches is None:
+                cve_matches = outside_mod._cve_matches(cfg, cfg.host_id) or {}
+            a["vulns"] = [{"id": v, "url": NVD + v, "also": v in cve_matches} for v in vulns[:200]]
+            a["vulns_more"] = max(len(vulns) - 200, 0)
+    return out
 
 
 def _eph(snaps: dict) -> tuple[int, int]:

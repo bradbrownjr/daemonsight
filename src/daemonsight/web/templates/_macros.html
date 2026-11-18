@@ -110,3 +110,15 @@
 </form>
 {% endif %}
 {%- endmacro %}
+
+{# A status label: Unexpected, Accepted, Changed or Expected. An accepted one
+   carries its note as a tooltip; the note is also written in the row, so it
+   reads on a phone, where there is no hover. #}
+{% macro status_badge(s) -%}
+<span class="badge {{ s.badge }} ds-status" data-status-label="{{ s.key }}"{% if s.note %} title="{{ s.note }}"{% endif %}>{{ s.label }}</span>
+{%- endmacro %}
+
+{# A table cell's status: the label, with an accepted one's note under it, or a dash when the row isn't reachable from the internet. #}
+{% macro status_cell(s) -%}
+{% if s %}{{ status_badge(s) }}{% if s.note %}<div class="text-secondary small">{{ s.note }}</div>{% endif %}{% else %}—{% endif %}
+{%- endmacro %}

@@ -1,4 +1,4 @@
-{% from "_macros.html" import src, src_button, src_panel with context %}
+{% from "_macros.html" import src, src_button, src_panel, status_cell with context %}
 <div id="live" hx-get="{{ base }}/partials/exposure" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
 {{ src_panel("src-firewall", v.src.firewall) }}
@@ -26,7 +26,7 @@
   <div class="table-responsive">
     <table class="table table-vcenter card-table" data-table="exposure">
       <thead><tr>
-        <th data-sort="num">Port</th><th data-sort="text">Bound to</th><th data-sort="text">Reach</th><th data-sort="text">Firewall</th><th data-sort="text">Process</th><th data-sort="text">Owner</th><th data-sort="text">Expected</th><th data-sort="text">Jail</th>
+        <th data-sort="num">Port</th><th data-sort="text">Bound to</th><th data-sort="text">Reach</th><th data-sort="text">Firewall</th><th data-sort="text">Process</th><th data-sort="text">Owner</th><th data-sort="text">Status</th><th data-sort="text">Jail</th>
       </tr></thead>
       <tbody>
         {% for r in v.listeners %}
@@ -37,7 +37,7 @@
           <td data-label="Firewall"><span class="badge {{ r.fw_badge }}">{{ r.fw }}</span><div class="text-secondary small">{{ r.fw_why }}</div></td>
           <td data-label="Process">{{ r.process }}</td>
           <td data-label="Owner">{{ r.owner }}</td>
-          <td data-label="Expected">{{ r.expected }}</td>
+          <td data-label="Status" data-v="{{ r.status.label if r.status else '' }}">{{ status_cell(r.status) }}</td>
           <td data-label="Jail">{% if r.jail_bad %}<span class="text-red">{{ r.jail }}</span>{% else %}{{ r.jail }}{% endif %}</td>
         </tr>
         {% endfor %}
@@ -88,7 +88,7 @@
   {% else %}
   <div class="table-responsive">
     <table class="table table-vcenter card-table" data-table="forwards">
-      <thead><tr><th data-sort="text">Family</th><th data-sort="text">Protocol</th><th data-sort="text">Ports</th><th data-sort="text">Sent to</th><th data-sort="text">When</th><th data-sort="num">Copies</th></tr></thead>
+      <thead><tr><th data-sort="text">Family</th><th data-sort="text">Protocol</th><th data-sort="text">Ports</th><th data-sort="text">Sent to</th><th data-sort="text">When</th><th data-sort="num">Copies</th><th data-sort="text">Status</th></tr></thead>
       <tbody>
         {% for f in v.firewall.forwards %}
         <tr data-row id="{{ f.anchor }}">
@@ -98,6 +98,7 @@
           <td class="font-monospace" data-label="Sent to">{{ f.to }}{{ src("src-f-" ~ loop.index, f.src) }}</td>
           <td class="small" data-label="When">{{ f.conditions or 'always' }}</td>
           <td data-label="Copies">{{ f.copies }}</td>
+          <td data-label="Status" data-v="{{ f.status.label if f.status else '' }}">{{ status_cell(f.status) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -105,6 +106,62 @@
   </div>
   {% endif %}
   <div class="card-body text-secondary ds-nomatch">No forwards match the filter.</div>
+</section>
+
+<section class="card mb-4" id="outside" aria-labelledby="outside-title" data-section{% if v.outside.state != 'ok' or not v.outside.addresses %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="outside-title">Seen from outside</h2>
+    <div class="card-actions text-secondary">Shodan InternetDB{% if v.outside.state == 'ok' %} · every {{ '%g' % v.outside.refresh_hours }} h{% endif %}</div>
+  </div>
+  {% if v.outside.message %}
+  <div class="card-body text-secondary">{{ v.outside.message }}</div>
+  {% endif %}
+  {% for a in v.outside.addresses %}{% set oi = loop.index %}
+  <div class="card-body border-top" id="{{ a.anchor }}">
+    <div class="d-flex flex-wrap align-items-baseline gap-2">
+      <strong class="font-monospace">{{ a.ip }}</strong>{{ src("src-o-" ~ oi, a.src) }}
+      <span class="text-secondary">{% if a.state == 'waiting' %}not asked yet{% elif a.state == 'error' %}no answer yet{% else %}fetched {{ a.fetched }}{% endif %}</span>
+      {% if a.stale %}<span class="badge bg-orange-lt">stale</span>{% endif %}
+    </div>
+    {% if a.error %}<div class="text-orange small">Last attempt failed: {{ a.error }}</div>{% endif %}
+    {% if a.state == 'none' %}
+    <div class="text-secondary mt-2">Shodan has no record of this address (HTTP 404): it has not scanned it, or nothing answered.</div>
+    {% endif %}
+    {% if a.state in ('ok', 'none') %}
+    {% if a.ports %}
+    <div class="table-responsive mt-2">
+      <table class="table table-vcenter" data-table="outside-{{ oi }}">
+        <thead><tr><th data-sort="num">Port</th><th data-sort="text">Status</th><th data-sort="text">What DaemonSight knows</th></tr></thead>
+        <tbody>
+          {% for p in a.ports %}
+          <tr data-row id="{{ p.anchor }}">
+            <td class="font-monospace" data-v="{{ p.port }}" data-label="Port">{{ p.port }}{{ src("src-op-" ~ oi ~ "-" ~ p.port, p.src) }}</td>
+            <td data-label="Status" data-v="{{ p.status.label }}">{{ status_cell(p.status) }}</td>
+            <td data-label="What DaemonSight knows">{% for line in p.known %}<div>{{ line }}</div>{% endfor %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif a.state == 'ok' %}
+    <div class="text-secondary mt-2">Shodan lists no open ports on this address.</div>
+    {% endif %}
+    {% if a.missing %}
+    <div class="mt-2 small text-secondary">Expected and listening here, but not listed by Shodan (not scanned yet, or blocked by a provider firewall, so possibly fine):
+      {% for m in a.missing %}<span class="font-monospace">{{ m.port }}</span> ({{ m.who }}){{ ', ' if not loop.last }}{% endfor %}.</div>
+    {% endif %}
+    {% if a.hostnames %}<div class="mt-2 small"><span class="text-secondary">Hostnames:</span> {{ a.hostnames|join(', ') }}</div>{% endif %}
+    {% if a.cpes %}<div class="mt-1 small"><span class="text-secondary">CPEs:</span> <span class="font-monospace">{{ a.cpes|join(', ') }}</span></div>{% endif %}
+    {% if a.tags %}<div class="mt-1 small"><span class="text-secondary">Tags:</span>
+      {% for t in a.tags %}<span class="badge {{ 'bg-red text-red-fg' if t.critical else 'bg-secondary-lt' }}">{{ t.name }}</span> {% endfor %}</div>{% endif %}
+    {% if a.vulns %}<div class="mt-1 small"><span class="text-secondary">CVEs Shodan guesses from service banners (often wrong; backported fixes do not change a version string):</span>
+      {% for x in a.vulns %}<a href="{{ x.url }}" target="_blank" rel="noopener noreferrer" class="font-monospace">{{ x.id }}</a>{% if x.also %} <span class="badge bg-azure-lt">also matched by DaemonSight</span>{% endif %}{{ ', ' if not loop.last }}{% endfor %}{% if a.vulns_more %} and {{ a.vulns_more }} more{% endif %}</div>{% endif %}
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if v.outside.enabled and v.outside.addresses %}
+  <div class="card-body border-top text-secondary small">Shodan's data is its own scan, updated about weekly, and its CVE and tag guesses can be wrong. Only the IP address is sent to it. {{ v.outside.terms }}</div>
+  {% endif %}
 </section>
 
 <section class="card" id="docker-published" aria-labelledby="dp-title" data-section{% if not v.docker %} data-empty{% endif %}>

@@ -104,6 +104,22 @@
 # high. FIRST: "no universal threshold"; 0.10 is commonly cited (about the 95th percentile).
 # epss_high = 0.10
 
+[outside]
+# Shodan's outside view, on the hub only (docs/INSTALL.md, "Outside checks"):
+# what the internet sees of each host's public addresses, from Shodan's
+# InternetDB (https://internetdb.shodan.io/). Off by default.
+# LICENCE: InternetDB is free for non-commercial use only. Shodan: "If you're
+# using the InternetDB API to make money then you need an enterprise license."
+# Check the terms before you turn this on. Only the IP address is sent.
+# enabled = false
+# Extra addresses to check, besides every host's own public addresses.
+# "203.0.113.9" is checked for the host that reports it. "203.0.113.9=vps"
+# attaches it to the host named vps, for an address no collector reports
+# (a router's, say). Private addresses are refused.
+# addresses = []
+# Hours between checks of each address. InternetDB itself updates weekly.
+# refresh_hours = 24
+
 [upload]
 # Send everything this host collects to a hub (docs/INSTALL.md, "Run a hub").
 # The hub's name for this host must match host_id at the top of this file.

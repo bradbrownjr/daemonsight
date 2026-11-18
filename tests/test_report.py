@@ -154,9 +154,12 @@ def test_migration_from_schema_3(tmp_path):
     raw.executescript(V3_SCHEMA)
     raw.close()
     conn = db.connect_writer(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 6
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 7
     cols = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
     assert {"fix", "basis", "howto"} <= cols       # schema 6 added howto
+    # Schema 7: Shodan's view of each public address.
+    assert {"ip", "first_try", "checked_at", "fetched_at", "status", "data", "error"} == \
+        {r[1] for r in conn.execute("PRAGMA table_info(outside)")}
     # Schema 5: remote systems.
     assert "kind" in {r[1] for r in conn.execute("PRAGMA table_info(hosts)")}
     assert {"id", "kind", "url", "enabled", "tls", "tls_pin", "interval", "last_ok", "last_error", "fails"} <= \
@@ -199,7 +202,8 @@ def test_migration_from_schema_5_adds_howto(tmp_path):
     raw.executescript(V5_SCHEMA)
     raw.close()
     conn = db.connect_writer(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    assert "outside" in {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "howto" in {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
     assert conn.execute("SELECT howto FROM findings").fetchone()["howto"] is None
     db.reconcile_findings(conn, "h", 3, [Finding("unraid.disk_full", "disk1", "high", "disk1 is 96% full", "d",
@@ -311,8 +315,10 @@ def test_accept_and_unaccept_flow(hubapp):
     page = c.get("/h/testhost/").text  # the flash shows once
     assert "Accepted: Port 8000/tcp is reachable from the internet" in page
     assert "Accepted: Port 8000/tcp" not in c.get("/h/testhost/").text.split("Recent changes")[0]
-    assert 'id="accepted"' in page and "Public on purpose; fronted by the proxy" in page
-    assert "Accepted by admin" in page
+    # It stays in the Findings list, in place, labelled Accepted, with its note.
+    row = c.get("/h/testhost/").text.split('id="finding-expose.unexpected-8000_tcp"')[1].split("data-row")[0]
+    assert 'data-status-label="accepted"' in row and "Public on purpose; fronted by the proxy" in row
+    assert "Accepted by admin" in row and 'id="accepted"' not in page
     ev = [e for e in db.recent_events(conn, "testhost", 10) if e["kind"] == "finding_accepted"]
     assert ev[0]["title"] == "Accepted: Port 8000/tcp is reachable from the internet"
     assert ev[0]["detail"] == "Public on purpose; fronted by the proxy"
@@ -325,7 +331,8 @@ def test_accept_and_unaccept_flow(hubapp):
     assert conn.execute("SELECT COUNT(*) FROM accepted").fetchone()[0] == 0
     ev = [e for e in db.recent_events(conn, "testhost", 10) if e["kind"] == "finding_unaccepted"]
     assert ev[0]["title"].startswith("Un-accepted: Port 8000/tcp") and "fronted by the proxy" in ev[0]["detail"]
-    assert 'id="accepted"' not in c.get("/h/testhost/").text
+    back = c.get("/h/testhost/").text.split('id="finding-expose.unexpected-8000_tcp"')[1].split("data-row")[0]
+    assert 'data-status-label="unexpected"' in back and "Public on purpose" not in back
     # Un-accepting what isn't accepted says so.
     c.post("/h/testhost/findings/unaccept", data={"rule": "expose.unexpected", "key": "8000/tcp"})
     assert "was not accepted" in c.get("/h/testhost/").text
@@ -362,17 +369,21 @@ def test_accepted_findings_leave_every_summary(hubapp):
     assert hosts_cell() == ["1", "critical", "2", "medium", "1", "low"]
     assert "Reboot needed" in c.get("/").text  # the badge on the Hosts page
     overview = c.get("/h/testhost/").text
-    assert "4 open" in overview and 'class="badge ds-sev bg-red text-red-fg"' in overview
+    assert "4 need attention" in overview and 'class="badge ds-sev bg-red text-red-fg"' in overview
+    assert 'data-status-label="accepted"' not in overview and "Needs attention" not in overview
     accept(c, "expose.unexpected", "8000/tcp")
     accept(c, "pkg.reboot", "reboot")
     accept(c, "pkg.updates", "updates")
     assert hosts_cell() == ["1", "medium"]
     assert "Reboot needed" not in c.get("/").text
     page = c.get("/h/testhost/").text
-    assert "1 open" in page and "3 accepted, not counted above" in page
-    # The three are listed under Accepted, not under Findings.
-    findings_card = page.split('id="findings-title"')[1].split('id="accepted"')[0]
-    assert "Port 8000/tcp" not in findings_card and "Disk / is 86% full" in findings_card
+    assert "1 needs attention · 3 accepted" in page
+    # All four are in the one list. Three carry an Accepted label and don't count; the fourth is Unexpected.
+    findings_card = page.split('id="findings-title"')[1].split("At a glance")[0]
+    assert 'id="accepted"' not in page and "Port 8000/tcp" in findings_card and "Disk / is 86% full" in findings_card
+    assert findings_card.count('data-status-label="accepted"') == 3
+    assert findings_card.count('data-status-label="unexpected"') == 1
+    assert 'data-status="accepted"' in findings_card and "Needs attention" in findings_card  # the filter
     rep = c.get("/h/testhost/report").text
     assert "Nothing to report" not in rep and "Disk / is 86% full" in rep
     # Helper used by the Hosts page.
@@ -386,16 +397,17 @@ def test_a_change_to_the_basis_brings_it_back(hubapp):
     c, conn, cfg = hubapp
     now = time.time()
     accept(c, "sys.disk", "/", note="Backups land here")
-    assert "1 open" not in c.get("/h/testhost/").text  # 3 others are open
+    assert "3 need attention · 1 accepted" in c.get("/h/testhost/").text
     # The title drifts (86% to 91%) but the basis doesn't: still accepted.
     db.reconcile_findings(conn, "testhost", now + 60, [disk(91), UPDATES, REBOOT, PORT])
     page = c.get("/h/testhost/").text
-    assert "4 open" not in page and 'id="accepted"' in page and "Backups land here" in page
+    assert "4 need attention" not in page and 'data-status-label="accepted"' in page and "Backups land here" in page
     # It crosses into High: the basis changes, so it is open again with a note.
     db.reconcile_findings(conn, "testhost", now + 120,
                           [disk(97, basis="/|high", severity="high"), UPDATES, REBOOT, PORT])
     page = c.get("/h/testhost/").text
-    assert "4 open" in page and 'id="accepted"' not in page
+    assert "4 need attention" in page and 'data-status-label="accepted"' not in page
+    assert 'data-status-label="changed"' in page  # one Changed label, counted as needing attention
     assert re.search(r"Accepted on \d{4}-\d\d-\d\d \(Backups land here\) — this has changed since", page)
     assert views.findings_list(conn, "testhost")[1]["changed_note"]
     # The report flags it too, and the Hosts page counts it again.
@@ -406,7 +418,7 @@ def test_a_change_to_the_basis_brings_it_back(hubapp):
     assert dict((label, n) for label, _c, n in hosts)["High"] == 1
     # Accepting again takes the new basis.
     accept(c, "sys.disk", "/", note="Still backups")
-    assert "4 open" not in c.get("/h/testhost/").text
+    assert "4 need attention" not in c.get("/h/testhost/").text
 
 
 def test_acceptance_is_deleted_when_the_finding_resolves(hubapp):

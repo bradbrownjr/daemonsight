@@ -51,10 +51,26 @@ the row they are about, and a port's panel shows the process behind it.
   that command in a block with a Copy button. Findings with no single
   command, such as an exposed port, are decisions.
 - **Accept with a note.** On a hub, an open finding can be accepted with a
-  note. It leaves the counts and badges and stays under "Accepted", with the
-  note, who and when. It comes back, flagged, when what you accepted
+  note. It leaves the counts, badges and report steps but stays in the list,
+  in place, with an Accepted label and its note (on hover, and in the row).
+  It comes back, labelled Changed and counted again, when what you accepted
   changes, such as a new CVE in the same package. It is deleted when the
-  finding resolves.
+  finding resolves. The Overview list has an "All" and a "Needs attention"
+  filter, and the report keeps its own Accepted section.
+- **Status labels.** Every list says where each item stands: Unexpected (not
+  expected, not accepted), Accepted, Changed (accepted, but what it was
+  about has changed) or Expected (listed in `exposure.expected_public`). Only
+  Unexpected and Changed count as needing attention. Nothing is hidden: the
+  Exposure page has a Status column on every listener and port forward, with a
+  dash for what the internet can't reach.
+- **Seen from outside (Shodan).** Off by default. A hub can ask Shodan's free
+  InternetDB what the internet sees of each host's public addresses, once a
+  day, sending only the IP address. The Exposure page lists each port Shodan
+  sees with a status and what DaemonSight knows about it (the process, or the
+  port forward and the tunnel it goes through), and findings flag a port
+  nobody expected, an expected port Shodan doesn't see, Shodan's compromise
+  tags and its CVE guesses. InternetDB is free for non-commercial use only:
+  see [docs/INSTALL.md](docs/INSTALL.md), "Outside checks".
 - **Per-host report.** One page per host (`/h/<host>/report`, or `/report` on
   a single host) puts the open findings in order: install updates, restart
   services, reboot, automatic updates, then the rest, each step with its
