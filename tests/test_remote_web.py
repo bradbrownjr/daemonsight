@@ -106,6 +106,10 @@ def test_the_form_and_its_links(c):
     assert 'type="password" class="form-control" id="key" name="key"' in html and "Unraid · GraphQL API" in html
     assert re.search(r'<option value="opnsense" disabled>OPNsense \(coming\)</option>', html)
     assert "Viewer" in html and "Settings → Management Access → API Keys" in html
+    # How to make the key, with the vendor's docs, opened outside the app.
+    assert "Making an Unraid key" in html
+    assert ('href="https://docs.unraid.net/API/programmatic-api-key-management/" target="_blank" '
+            'rel="noopener noreferrer"') in html
     for page in ("/", "/partials/hosts"):
         h = c.get(page).text
         assert 'href="/remotes/new"' in h

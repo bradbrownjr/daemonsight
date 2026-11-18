@@ -128,5 +128,21 @@
 </div>
 {% endif %}
 </div>
+{% set g = GUIDES[existing.kind if existing else f.kind] %}
+{% if g %}
+<div class="col-lg-4">
+  <div class="card mb-4">
+    <div class="card-header"><h2 class="card-title">{{ g.title }}</h2></div>
+    <div class="card-body">
+      <ol class="ps-3 mb-3">
+        {% for s in g.steps %}<li class="mb-1">{{ s }}</li>{% endfor %}
+      </ol>
+      {% for text, href in g.links %}
+      <div><a href="{{ href }}" target="_blank" rel="noopener noreferrer">{{ text }}</a></div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
 </div>
 {% endblock %}

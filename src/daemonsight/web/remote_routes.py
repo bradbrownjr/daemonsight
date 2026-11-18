@@ -98,7 +98,7 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
     async def work(request: Request, form: dict, existing, action: str):
         """Check the form, look at the server, and (on Save) store it. Returns
         (context for the page, redirect or None)."""
-        ctx = {"f": form, "existing": existing, "problems": [], "result": None, "cert": None, "KINDS": store.KINDS}
+        ctx = {"f": form, "existing": existing, "problems": [], "result": None, "cert": None, "KINDS": store.KINDS, "GUIDES": store.GUIDES}
         problems = ctx["problems"]
         # --- the fields
         if form["kind"] != "unraid":
@@ -208,7 +208,7 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
     async def new_form(request: Request):
         require_login(request)
         return page(request, {"f": blank(), "existing": None, "problems": [], "result": None, "cert": None,
-                              "KINDS": store.KINDS})
+                              "KINDS": store.KINDS, "GUIDES": store.GUIDES})
 
     @app.post("/remotes/new")
     async def new_post(request: Request, kind: str = Form("unraid"), name: str = Form(""), url: str = Form(""),
@@ -236,7 +236,7 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
         require_login(request)
         row = existing_or_404(remote_id)
         return page(request, {"f": blank(row), "existing": row, "problems": [], "result": None, "cert": None,
-                              "KINDS": store.KINDS})
+                              "KINDS": store.KINDS, "GUIDES": store.GUIDES})
 
     @app.post("/remotes/{remote_id}/edit")
     async def edit_post(request: Request, remote_id: str, url: str = Form(""), key: str = Form(""),

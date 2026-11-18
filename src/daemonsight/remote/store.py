@@ -15,6 +15,28 @@ from pathlib import Path
 
 
 KINDS = {"unraid": "Unraid"}
+
+# Shown next to the Add a system form: how to make a key for each kind, with
+# the vendor's own documentation. Steps follow those pages; check them when a
+# vendor changes its UI.
+GUIDES = {
+    "unraid": {
+        "title": "Making an Unraid key",
+        "steps": [
+            "In the Unraid web UI, open Settings → Management Access → API Keys.",
+            "Create a key named daemonsight with only the Viewer role and no extra permissions. "
+            "DaemonSight refuses a key that can change anything.",
+            "Copy the key. Unraid shows it once.",
+            "Address: the web UI's https address. With Use SSL/TLS set to Strict, that is the myunraid.net "
+            "address; otherwise the server's own address, and you confirm its certificate below.",
+            "Test connection, check what it found, then Save.",
+        ],
+        "links": [
+            ("Unraid docs: API keys and roles", "https://docs.unraid.net/API/programmatic-api-key-management/"),
+            ("Unraid docs: using the API", "https://docs.unraid.net/API/how-to-use-the-api/"),
+        ],
+    },
+}
 KEY_RE = re.compile(r"^[\x21-\x7e]{8,200}$")      # printable ASCII, no spaces
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")   # the same rule as hub.HOST_RE
 KEY_FILE_RE = re.compile(r"^remotes/([A-Za-z0-9][A-Za-z0-9._-]{0,62})\.key$")

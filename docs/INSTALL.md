@@ -498,7 +498,9 @@ once the hub is back.
 ### Add an Unraid server
 
 An Unraid server needs no collector. The hub reads its GraphQL API with a key
-that can only read.
+that can only read. The Add a system page shows these steps next to the form,
+with links to Unraid's own docs on API keys
+(https://docs.unraid.net/API/programmatic-api-key-management/).
 
 1. In Unraid, open Settings → Management Access → API Keys and add a key.
    Give it the Viewer role and nothing else: no other role, no extra
