@@ -145,7 +145,7 @@ def cmd_init(args, cfg) -> int:
         _write_private(secret, secrets.token_hex(32))
         print(f"Created {secret}")
     os.umask(0o027)
-    conn = db.connect_writer(cfg.db_path)
+    conn = db.connect_writer(cfg.db_path, busy_ms=60_000)
     conn.close()
     print(f"Database ready at {cfg.db_path}")
     return 0
@@ -209,7 +209,7 @@ def cmd_hub(args, cfg) -> int:
     if not cfg.hub.enabled:
         print("This install isn't a hub. Set enabled = true under [hub] first.", file=sys.stderr)
         return 1
-    conn = db.connect_writer(cfg.db_path)
+    conn = db.connect_writer(cfg.db_path, busy_ms=60_000)
     if args.hub_command == "add-host":
         try:
             token = hub.add_host(conn, args.name)

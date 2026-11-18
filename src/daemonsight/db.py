@@ -145,13 +145,16 @@ class Snapshot:
     data: dict | None
 
 
-def connect_writer(path: Path) -> sqlite3.Connection:
+def connect_writer(path: Path, busy_ms: int = 5000) -> sqlite3.Connection:
+    """`busy_ms`: how long a write waits for another writer. The services keep
+    5 s, since they wait on their own event loop; a CLI command can wait longer
+    for a hub that is busy just after it starts."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute(f"PRAGMA busy_timeout={int(busy_ms)}")
     migrate(conn)
     return conn
 
