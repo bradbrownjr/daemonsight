@@ -84,8 +84,25 @@ database and its own config, and nothing else.
   the app itself; no CDN, no Node build step.
 - **Escaping:** pages are Jinja2 templates with autoescaping, so text from a
   server (a container name, a log line) can't become markup.
-- **Redirects stay on the site.** The `next` value after login must be a
-  local path.
+- **Redirects stay on the site.** The `next` value after login, and after
+  accepting a finding, must be a local path.
+- **Accepting findings (hub only).** `POST /h/<host>/findings/accept` and
+  `.../unaccept` need the login, refuse a request whose `Sec-Fetch-Site` is not
+  `same-origin` or `none` (the same check as `/hosts/update`, on top of the
+  `SameSite=Strict` cookie), and 404 for an unknown host. The note is 1 to 500
+  characters with no control or format characters. A host's web process on a
+  single host stays read-only, so it has no such routes. An acceptance hides
+  a finding from the counts, so it is logged (user and address) and written to
+  Recent changes with its note.
+- **The report is authenticated.** `/h/<host>/report` and `report.md` need
+  the login like every other page. The Markdown escapes text from hosts, and
+  puts commands in a code fence that the text can't close.
+- **Fix commands are text from the host.** A finding's `fix` comes from the
+  collector. The hub drops a fix with control or format characters (so an
+  escape sequence or a right-to-left override can't make it show as something
+  else) or over 2,000 characters, and shows the rest as escaped text. DaemonSight never runs it.
+  Read it before pasting it into a terminal, as with any command from a
+  website.
 - **No API docs pages.** FastAPI's `/docs`, `/redoc` and `/openapi.json` are
   turned off.
 - **systemd hardening:** `ProtectSystem=strict`, `ProtectHome`,

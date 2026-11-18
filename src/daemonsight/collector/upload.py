@@ -84,6 +84,17 @@ def _inventory(conn, snapshot_rows) -> tuple[dict | None, dict]:
     return body, {"upload.inv_hash": data["hash"], "upload.inv_at": now}
 
 
+def _finding_payload(f) -> dict:
+    """fix and basis are sent only when set, so a host updated ahead of its hub
+    still reports when it has nothing to say there."""
+    out = {"rule": f["rule"], "key": f["key"], "severity": f["severity"], "title": f["title"],
+           "detail": f["detail"], "link": f["link"]}
+    for field in ("fix", "basis"):
+        if f[field] is not None:
+            out[field] = f[field]
+    return out
+
+
 def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple[dict, dict, bool]:
     """The next upload, the cursors to save once the hub accepts it, and
     whether more is waiting after it."""
@@ -122,8 +133,7 @@ def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple
         "metrics": [[r["ts"], r["name"], r["value"]] for r in rows],
         "events": [{"id": e["id"], "ts": e["ts"], "kind": e["kind"], "severity": e["severity"],
                     "title": e["title"], "detail": e["detail"], "link": e["link"]} for e in events],
-        "findings": [{"rule": f["rule"], "key": f["key"], "severity": f["severity"], "title": f["title"],
-                      "detail": f["detail"], "link": f["link"]} for f in findings],
+        "findings": [_finding_payload(f) for f in findings],
     }
     if inventory is not None:
         payload["inventory"] = inventory

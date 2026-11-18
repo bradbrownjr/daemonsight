@@ -167,7 +167,7 @@ def test_security_finding():
     sec = [upd(f"p{i}", True) for i in range(7)]
     f = rules(data(updates=sec, security_count=7))["pkg.security_updates"]
     assert f.severity == "high" and f.title == "7 security updates waiting"
-    assert "p0, p1, p2, p3, p4 and 2 more" in f.detail and "sudo apt upgrade" in f.detail
+    assert "p0, p1, p2, p3, p4 and 2 more" in f.detail and f.fix == "sudo apt upgrade"
     assert f.link == "/packages#security"
     assert "pkg.updates" not in rules(data(updates=sec, security_count=7))
 
@@ -210,7 +210,7 @@ def test_restart_finding():
     svcs = [f"s{i}.service" for i in range(6)]
     f = rules(data(needrestart={"installed": True, "services": svcs}))["pkg.restart"]
     assert f.severity == "low" and f.title == "6 services use old libraries" and "and 1 more" in f.detail
-    assert "needrestart -r a" in f.detail
+    assert f.fix == "sudo needrestart -r a"
     assert rules(data(needrestart={"installed": True, "services": ["a.service"]}))["pkg.restart"].title == \
         "1 service uses old libraries"
 
@@ -353,15 +353,15 @@ def test_apt_auto_on(auto, on):
 def test_rule_not_installed():
     f = auto_rules(data(auto_updates=apt_auto()))["pkg.auto_updates_off"]
     assert (f.severity, f.title) == ("low", "Security updates aren't installed automatically")
-    assert "sudo apt install unattended-upgrades" in f.detail and "sudo apt upgrade" in f.detail
+    assert f.fix == "sudo apt install unattended-upgrades" and "sudo apt upgrade" not in f.detail
     assert f.link == "/packages#auto"
 
 
 def test_rule_installed_but_switched_off():
     f = auto_rules(data(auto_updates=apt_auto(installed=True, unattended="0")))["pkg.auto_updates_off"]
-    assert "dpkg-reconfigure -plow unattended-upgrades" in f.detail and "apt install" not in f.detail
+    assert f.fix == "sudo dpkg-reconfigure -plow unattended-upgrades" and "apt install" not in f.detail
     f = auto_rules(data(auto_updates=apt_auto(installed=True, unattended="1", timer="disabled")))["pkg.auto_updates_off"]
-    assert "systemctl enable --now apt-daily-upgrade.timer" in f.detail
+    assert f.fix == "sudo systemctl enable --now apt-daily-upgrade.timer"
 
 
 def test_rule_quiet_when_on_unknown_or_workstation():
@@ -376,12 +376,14 @@ def test_rule_quiet_when_on_unknown_or_workstation():
 def test_rule_for_dnf():
     d = data(backend="dnf", auto_updates=dnf_auto())
     f = auto_rules(d)["pkg.auto_updates_off"]
-    assert "sudo dnf install dnf5-plugin-automatic" in f.detail and "apply_updates = yes" in f.detail
-    assert "dnf5-automatic.timer" in f.detail and "sudo dnf upgrade --refresh" in f.detail
+    lines = f.fix.split("\n")
+    assert lines[0] == "sudo dnf install dnf5-plugin-automatic" and "apply_updates = yes" in lines[1]
+    assert lines[2] == "sudo systemctl enable --now dnf5-automatic.timer"
+    assert "apply_updates = yes" in f.detail and "sudo dnf upgrade --refresh" not in f.detail
     f = auto_rules(data(backend="dnf", auto_updates=dnf_auto(installed=True, timer="disabled")))["pkg.auto_updates_off"]
-    assert f.detail.endswith("Run: sudo systemctl enable --now dnf5-automatic.timer")
+    assert f.fix == "sudo systemctl enable --now dnf5-automatic.timer"
     f = auto_rules(data(backend="dnf", auto_updates=dnf_auto(installed=True, timer="enabled")))["pkg.auto_updates_off"]
-    assert "Today it only downloads updates" in f.detail
+    assert "Today it only downloads updates" in f.detail and f.fix is None  # a file edit, no command
     assert "pkg.auto_updates_off" not in auto_rules(data(backend="dnf", auto_updates=dnf_auto(
         installed=True, timer="enabled", apply=True, on=True)))
     assert "pkg.auto_updates_off" not in auto_rules(d, role="workstation")
@@ -395,7 +397,8 @@ def test_lists_stale_and_auto_updates_read_consistently():
     assert "apt install" not in r["pkg.lists_stale"].detail
     # Where the auto-updates finding won't fire (a workstation), the lists finding keeps its own advice.
     r = auto_rules(data(lists_age=old, periodic_update=False, auto_updates=apt_auto()), role="workstation")
-    assert "sudo apt update" in r["pkg.lists_stale"].detail and "pkg.auto_updates_off" not in r
+    assert r["pkg.lists_stale"].fix == "sudo apt update" and "pkg.auto_updates_off" not in r
+    assert auto_rules(data(lists_age=old, periodic_update=False, auto_updates=apt_auto()))["pkg.lists_stale"].fix is None
 
 
 DNF_DEFAULTS = "[commands]\napply_updates = no\ndownload_updates = yes\nupgrade_type = default\n"

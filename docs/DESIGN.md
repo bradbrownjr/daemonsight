@@ -114,6 +114,119 @@ DaemonSight knows when it first appeared and when it cleared.
 | `tls.expiring` | A served certificate expires within 14 days (phase 4) | High |
 | `sys.disk` / `sys.memory` | Above 90% for 15 minutes | Medium |
 
+### Finding fields
+
+| Field | Meaning |
+|-------|---------|
+| `rule`, `key` | Which rule, and which thing it found. One open finding per pair. |
+| `severity`, `title`, `detail`, `link` | What the page shows. `link` is a path on this site (a row's anchor). |
+| `fix` | The exact command or commands that resolve it, one per line. `None` when no single command does: an exposed port needs a decision. Commands that differ by package system (apt or dnf) follow the host's. A line starting with `#` is a comment for the person pasting it. |
+| `basis` | What the finding is about, without numbers that drift. `None` means the title. Accepting a finding is tied to a hash of the rule, key and basis. |
+
+`fix` and `basis` are stored in the `findings` table (NULL for rows from before
+schema 4) and travel in the upload's findings. Both are optional in the upload,
+so a collector from before they existed still reports. The hub refuses a `fix`
+with control or format characters (other than newlines) or over 2,000
+characters. The collector leaves the two keys out of the upload when they are
+`None`, so a collector updated ahead of its hub still reports unless it has a
+fix to send; update the hub first.
+
+The report's step for a rule is a fixed mapping (`findings.STEP_OF`), not a
+stored field, so older collectors get steps too. A finding with a `fix` joins
+the card for its step; with no `fix` it is listed as a decision.
+
+| Rule | `fix` | Step | `basis` |
+|------|-------|------|---------|
+| `pkg.security_updates` | `apt upgrade` or `dnf upgrade --refresh` | upgrade | The set of package names. A new one brings it back. |
+| `pkg.updates` | same | upgrade | Constant. Accepting it means "regular updates may wait here". |
+| `pkg.lists_stale` | `apt update`, only when the finding itself advises it (the Update-Package-Lists case) | upgrade | Constant (the age drifts). |
+| `cve.package` | the upgrade command when a fix exists; apt adds `apt update` first when apt isn't offering it yet. None when no fix exists | upgrade | The set of CVE ids. A new CVE brings it back. |
+| `pkg.restart` | `needrestart -r a` (apt) or `systemctl restart` with the listed services (dnf) | restart | The set of service names. |
+| `pkg.reboot` | `sudo reboot` | reboot | The newer kernel version, if any. |
+| `pkg.auto_updates_off` | The install or enable commands for the host's system. None when the fix is a config edit | auto-updates | The title. |
+| `os.eol_soon` | The three `dnf system-upgrade` commands | os-upgrade | The title (it holds the EOL date). |
+| `os.lts`, `os.eol` | None | os-upgrade | The title. |
+| `expose.unexpected` | None | none | Port, protocol, process name and severity. |
+| `expose.docker_bypass` | None | none | Port, protocol and container name. |
+| `expose.forward_all` | None | none | Family, protocol, destination, port list and, with an upstream policy, the ports it lets in. |
+| `jail.uncovered` | None | none | Service name and port. |
+| `caddy.admin_tcp` | None | none | The admin address. |
+| `sys.disk` | None | none | Mount point and severity. 86% to 88% is no change; crossing into High is. |
+| `sys.memory` | None | none | Constant. |
+| `firewall.duplicate_rules` | None | none | Constant (the count drifts). |
+| Others (`svc.failed`, `ctr.down`, `route.*`, `jail.log_missing`, `firewall.default_accept`, `collector.source`, `cve.feed_stale`, `host.*`) | None | none | The title. |
+
+`svc.failed` has no `fix`: its detail advises `journalctl -u <unit>`, which
+finds the cause and doesn't resolve it.
+
+Steps run in this order: upgrade, restart, reboot, auto-updates, any finding
+with a `fix` and no step (one card each), then os-upgrade. In the upgrade
+step, `apt update` comes before `apt upgrade`. When a kernel package has a
+CVE fix pending and `pkg.reboot` is also open, the upgrade card says to reboot
+afterwards. A kernel that is already installed but not running is
+`pkg.reboot`'s job: the CVE matcher compares the installed package version, so
+it no longer reports a fixed kernel.
+
+### Accepting a finding
+
+An open finding can be accepted with a note of 1 to 500 characters. The
+acceptance lives in the `accepted` table (host, rule, key, fingerprint, note,
+accepted_at, accepted_by), and the finding stays in `findings`.
+
+- Accepted findings are left out of counts, severity badges and lists of what
+  needs attention: the Overview findings list and its count, the Hosts page
+  severity summary and its "Reboot needed" badge, and the report's steps and
+  severity groups. They appear under "Accepted" on Overview and in the report,
+  with the note, who and when. A host's "Not reporting" state still follows
+  `host.silent`, because it says what the host is doing.
+- The fingerprint is a SHA-256 of rule, key and basis. When the open finding's
+  fingerprint differs from the accepted one, the finding is open again, with
+  "Accepted on <date> (<note>) — this has changed since". Accepting it again
+  replaces the acceptance.
+- When a finding resolves, its acceptance is deleted. If it returns, it is a
+  new finding.
+- Accepting and un-accepting write "Accepted: <title>" and "Un-accepted:
+  <title>" to Recent changes, with the note.
+- Only a hub can accept. The web process of a single host opens the database
+  read-only and stays that way, so its pages show no Accept buttons. A hub's web
+  process is the writer already. `accepted_by` is the session's user name,
+  which is `admin`, the only login.
+- Routes: `POST /h/<host>/findings/accept` (rule, key, note, next) and
+  `POST /h/<host>/findings/unaccept` (rule, key, next). Both need the login and
+  refuse a cross-site request as `/hosts/update` does, then redirect to `next`
+  (a local path, with the finding's anchor) and show a one-line notice.
+- Only collectors from this version send `basis`. A finding from an older
+  collector has the title as its basis, so an accepted `sys.disk` finding
+  returns once when its collector is updated, then follows the new basis.
+
+### The report
+
+Each host has a report at `/h/<host>/report` on a hub and `/report` on a single
+host, linked from the Hosts page, the Overview and the menu. `report.build`
+makes one structure from the database and two renderers use it: the page and
+`to_markdown`. `GET .../report.md` needs the login and sends
+`text/markdown; charset=utf-8` with `Content-Disposition: attachment;
+filename=<host>-report-<date>.md`. "Copy as text" copies the same Markdown from
+a hidden text area.
+
+It shows a header (host, OS and support status, kernel, uptime, role, last
+upload, DaemonSight version, time generated), then:
+
+1. **Steps:** one card per step with the merged commands and a Copy button, and
+   the findings it clears, each linked to its row.
+2. **Decide:** findings with no `fix`, with their detail.
+3. **All findings:** Do now (critical and high), Do soon (medium), When
+   convenient (low).
+4. **Accepted:** with notes. A finding whose acceptance changed shows as open,
+   flagged, not here.
+
+Text from a host is untrusted. The page escapes it. The Markdown escapes every
+character with a meaning inside a line, puts each part of a finding in its own
+paragraph, and fences commands with a fence longer than any run of backticks in
+them. The commands are shown to be copied, never run by DaemonSight; read them
+before you paste. A print stylesheet hides the menu, buttons and forms, and
+keeps steps and findings from splitting across pages.
+
 Fedora has no LTS: a release is "Supported" until its EOL date, then "End of
 life". A release whose EOL is not announced yet counts as supported with no
 date; Rawhide is not judged. `os.eol_soon` reads "Fedora 43 support ends on
@@ -146,7 +259,8 @@ events and resolved findings for good. The collector prunes its own host's
 rows hourly; the hub prunes every host's. Open findings are never pruned.
 
 - `snapshots`: source, taken_at, ok, error, data (JSON). The latest row per source is current state.
-- `findings`: rule, key, severity, first_seen, last_seen, resolved_at, details (JSON).
+- `findings`: rule, key, severity, title, detail, link, fix, basis, first_seen, last_seen, resolved_at.
+- `accepted`: host, rule, key, fingerprint, note, accepted_at, accepted_by. Written by the hub's web process (see "Accepting a finding"). Schema version 4.
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down.
 - `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
 
@@ -363,7 +477,8 @@ severity, system, version and the address it uploads from. The Version
 column holds the update buttons (see "Updates from the hub"). Each host's pages
 are the usual ones under `/h/<host>/`, built with that host's own settings
 from its last upload, so its Exposure page uses its own `expected_public`
-and `upstream_allow`. A single-host install keeps its URLs.
+and `upstream_allow`. A single-host install keeps its URLs. Severity counts leave out accepted
+findings, and each row links to the host's report.
 
 The hub's web process is the database writer (it stores uploads); on a host
 the web process stays read-only.

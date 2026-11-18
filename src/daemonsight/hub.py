@@ -14,6 +14,7 @@ import logging
 import re
 import secrets
 import time
+import unicodedata
 import zlib
 from typing import Annotated, Literal
 
@@ -105,11 +106,28 @@ class FindingIn(_Model):
     title: Short
     detail: Text
     link: str | None = None
+    # Both optional: collectors from before they existed send neither.
+    fix: Annotated[str, Field(max_length=20_000)] | None = None
+    basis: Short | None = None
 
     @field_validator("link")
     @classmethod
     def _link(cls, v: str | None) -> str | None:
         return _site_path(v)
+
+    @field_validator("fix")
+    @classmethod
+    def _fix_is_plain_text(cls, v: str | None) -> str | None:
+        """A fix is shown to be copied into a terminal. Newlines separate
+        commands; other control and format characters (escape sequences,
+        right-to-left overrides) could make the text show as something other
+        than what pastes. Such a fix is dropped, not refused: refusing would
+        reject the host's whole upload over one suggestion."""
+        if v is None:
+            return None
+        if len(v) > 2000 or any(ch != "\n" and unicodedata.category(ch) in ("Cc", "Cf") for ch in v):
+            return None
+        return v.strip() or None
 
     @field_validator("rule")
     @classmethod
@@ -260,7 +278,7 @@ def add_host(conn, host_id: str) -> str:
 def revoke_host(conn, host_id: str, purge: bool = False) -> bool:
     gone = conn.execute("DELETE FROM hosts WHERE id = ?", (host_id,)).rowcount > 0
     if purge:
-        for table in ("snapshots", "metrics", "findings", "events"):
+        for table in ("snapshots", "metrics", "findings", "events", "accepted"):
             conn.execute(f"DELETE FROM {table} WHERE host = ?", (host_id,))  # noqa: S608 (fixed names)
     return gone
 
@@ -348,7 +366,7 @@ def store(conn, host_row, up: Upload, now: float, address: str | None) -> str | 
     except Exception:
         conn.execute("ROLLBACK")
         raise
-    current = [Finding(f.rule, f.key, f.severity, f.title, f.detail, f.link) for f in up.findings]
+    current = [Finding(f.rule, f.key, f.severity, f.title, f.detail, f.link, f.fix, f.basis) for f in up.findings]
     db.reconcile_findings(conn, host, now, current, keep_prefix=HUB_RULES)
     _silent(conn, host, now, None)
     skew = up.sent_at - now

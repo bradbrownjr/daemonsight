@@ -20,7 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 3
+from .findings import fingerprint
+
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -52,10 +54,27 @@ CREATE TABLE IF NOT EXISTS findings (
     link        TEXT,
     first_seen  REAL NOT NULL,
     last_seen   REAL NOT NULL,
-    resolved_at REAL
+    resolved_at REAL,
+    fix         TEXT,   -- command(s) that resolve it, one per line; NULL when none does
+    basis       TEXT    -- what an acceptance is tied to; NULL means the title
 );
 CREATE UNIQUE INDEX IF NOT EXISTS findings_open
     ON findings (host, rule, key) WHERE resolved_at IS NULL;
+
+-- Findings someone accepted, with a note. Written by the hub's web process
+-- (the collector never touches it). Deleted when the finding resolves. The
+-- fingerprint hashes the finding's basis: when it differs from the open
+-- finding's, the acceptance no longer applies.
+CREATE TABLE IF NOT EXISTS accepted (
+    host        TEXT NOT NULL,
+    rule        TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    note        TEXT NOT NULL,
+    accepted_at REAL NOT NULL,
+    accepted_by TEXT NOT NULL,
+    PRIMARY KEY (host, rule, key)
+);
 
 CREATE TABLE IF NOT EXISTS events (
     id       INTEGER PRIMARY KEY,
@@ -149,6 +168,11 @@ def migrate(conn: sqlite3.Connection) -> None:
                           ("remote_update", "INTEGER")):
             if col not in have:
                 conn.execute(f"ALTER TABLE hosts ADD COLUMN {col} {kind}")
+        # Version 3 findings have no fix or basis; old rows keep NULL until the next run rewrites them.
+        have = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
+        for col in ("fix", "basis"):
+            if col not in have:
+                conn.execute(f"ALTER TABLE findings ADD COLUMN {col} TEXT")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
@@ -223,19 +247,21 @@ def reconcile_findings(conn, host: str, ts: float, current: list,
             seen.add(ident)
             if ident in open_rows:
                 conn.execute(
-                    "UPDATE findings SET severity=?, title=?, detail=?, link=?, last_seen=? WHERE id=?",
-                    (f.severity, f.title, f.detail, f.link, ts, open_rows[ident]["id"]),
+                    "UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, last_seen=? "
+                    "WHERE id=?",
+                    (f.severity, f.title, f.detail, f.link, f.fix, f.basis, ts, open_rows[ident]["id"]),
                 )
             else:
                 conn.execute(
-                    "INSERT INTO findings (host, rule, key, severity, title, detail, link, first_seen, last_seen) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (host, f.rule, f.key, f.severity, f.title, f.detail, f.link, ts, ts),
+                    "INSERT INTO findings (host, rule, key, severity, title, detail, link, fix, basis, "
+                    "first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (host, f.rule, f.key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, ts, ts),
                 )
                 changes.append(("opened", f))
         for ident, row in open_rows.items():
             if ident not in seen:
                 conn.execute("UPDATE findings SET resolved_at=? WHERE id=?", (ts, row["id"]))
+                conn.execute("DELETE FROM accepted WHERE host=? AND rule=? AND key=?", (host, *ident))
                 changes.append(("resolved", row))
         conn.execute("COMMIT")
     except Exception:
@@ -253,15 +279,16 @@ def set_finding(conn, host: str, ts: float, f, *, rule: str, key: str) -> str | 
     if f is None:
         if row:
             conn.execute("UPDATE findings SET resolved_at = ? WHERE id = ?", (ts, row["id"]))
+            conn.execute("DELETE FROM accepted WHERE host=? AND rule=? AND key=?", (host, rule, key))
             return "resolved"
         return None
     if row:
-        conn.execute("UPDATE findings SET severity=?, title=?, detail=?, link=?, last_seen=? WHERE id=?",
-                     (f.severity, f.title, f.detail, f.link, ts, row["id"]))
+        conn.execute("UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, last_seen=? "
+                     "WHERE id=?", (f.severity, f.title, f.detail, f.link, f.fix, f.basis, ts, row["id"]))
         return None
-    conn.execute("INSERT INTO findings (host, rule, key, severity, title, detail, link, first_seen, last_seen) "
-                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                 (host, rule, key, f.severity, f.title, f.detail, f.link, ts, ts))
+    conn.execute("INSERT INTO findings (host, rule, key, severity, title, detail, link, fix, basis, "
+                 "first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (host, rule, key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, ts, ts))
     return "opened"
 
 
@@ -299,6 +326,106 @@ def open_findings(conn, host: str) -> list[sqlite3.Row]:
         "SELECT * FROM findings WHERE host = ? AND resolved_at IS NULL", (host,)
     ).fetchall()
     return sorted(rows, key=lambda r: (SEVERITY_ORDER.get(r["severity"], 9), r["first_seen"]))
+
+
+def _finding_dict(r: sqlite3.Row) -> dict:
+    """A findings row as a dict. A database the collector hasn't migrated yet
+    (the web process only reads it) lacks the fix and basis columns."""
+    d = dict(r)
+    d.setdefault("fix", None)
+    d.setdefault("basis", None)
+    return d
+
+
+def _accepted_rows(conn, host: str | None = None) -> dict[tuple[str, str, str], dict]:
+    sql, args = "SELECT * FROM accepted", ()
+    if host is not None:
+        sql, args = sql + " WHERE host = ?", (host,)
+    try:
+        return {(r["host"], r["rule"], r["key"]): dict(r) for r in conn.execute(sql, args)}
+    except sqlite3.OperationalError:  # table not created yet
+        return {}
+
+
+def _split(rows: list[dict], accepted: dict) -> tuple[list[dict], list[dict]]:
+    """(active, accepted). Each finding dict gains "accepted": None, or the
+    acceptance with "changed" set when the finding's basis is no longer the one
+    that was accepted. A changed one counts as active again."""
+    active, held = [], []
+    for d in rows:
+        a = accepted.get((d["host"], d["rule"], d["key"]))
+        d["accepted"] = None
+        if a is None:
+            active.append(d)
+            continue
+        a = dict(a)
+        a["changed"] = a["fingerprint"] != fingerprint(d["rule"], d["key"], d["basis"], d["title"])
+        d["accepted"] = a
+        (active if a["changed"] else held).append(d)
+    return active, held
+
+
+def findings_state(conn, host: str) -> tuple[list[dict], list[dict]]:
+    """The host's open findings as (active, accepted), worst first. Counts,
+    badges and lists of what needs attention use the active ones."""
+    return _split([_finding_dict(r) for r in open_findings(conn, host)], _accepted_rows(conn, host))
+
+
+def active_findings_by_host(conn) -> dict[str, list[dict]]:
+    """Every host's active findings (open and not accepted), for the hub's host list."""
+    rows = [_finding_dict(r) for r in conn.execute("SELECT * FROM findings WHERE resolved_at IS NULL")]
+    active, _held = _split(rows, _accepted_rows(conn))
+    out: dict[str, list[dict]] = {}
+    for d in active:
+        out.setdefault(d["host"], []).append(d)
+    return out
+
+
+def accept_finding(conn, host: str, rule: str, key: str, note: str, by: str, ts: float) -> dict | None:
+    """Accept an open finding with a note (accepting again replaces the old
+    acceptance, which is how a changed one is re-accepted). Returns the
+    finding, or None when it isn't open."""
+    row = conn.execute("SELECT * FROM findings WHERE host = ? AND rule = ? AND key = ? AND resolved_at IS NULL",
+                       (host, rule, key)).fetchone()
+    if row is None:
+        return None
+    d = _finding_dict(row)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "INSERT INTO accepted (host, rule, key, fingerprint, note, accepted_at, accepted_by) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (host, rule, key) DO UPDATE SET "
+            "fingerprint=excluded.fingerprint, note=excluded.note, accepted_at=excluded.accepted_at, "
+            "accepted_by=excluded.accepted_by",
+            (host, rule, key, fingerprint(rule, key, d["basis"], d["title"]), note, ts, by))
+        add_event(conn, host, ts, "finding_accepted", f"Accepted: {d['title']}", detail=note, link=d["link"])
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return d
+
+
+def unaccept_finding(conn, host: str, rule: str, key: str, ts: float) -> dict | None:
+    """Revoke an acceptance. Returns the finding as it was, with its old note
+    under "note", or None when nothing was accepted."""
+    old = conn.execute("SELECT * FROM accepted WHERE host = ? AND rule = ? AND key = ?",
+                       (host, rule, key)).fetchone()
+    if old is None:
+        return None
+    row = conn.execute("SELECT title, link FROM findings WHERE host = ? AND rule = ? AND key = ? "
+                       "AND resolved_at IS NULL", (host, rule, key)).fetchone()
+    title, link = (row["title"], row["link"]) if row else (f"{rule} {key}", None)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM accepted WHERE host = ? AND rule = ? AND key = ?", (host, rule, key))
+        add_event(conn, host, ts, "finding_unaccepted", f"Un-accepted: {title}",
+                  detail=f"Note was: {old['note']}", link=link)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return {"title": title, "note": old["note"]}
 
 
 def recent_events(conn, host: str, limit: int = 8) -> list[sqlite3.Row]:

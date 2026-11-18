@@ -101,6 +101,46 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
 .ds-copy-text { white-space: pre-wrap; overflow-wrap: anywhere; flex: 1 1 auto; min-width: 0; }
 .ds-copy { flex: 0 0 auto; }
 @media (max-width: 480px) { .ds-src-list { grid-template-columns: 1fr; } .ds-src-list dt { margin-top: .4rem; } }
+/* Fixes: a command block with a Copy button (_macros.html fix_block). */
+.ds-fix { display: flex; gap: .5rem; align-items: flex-start; margin: .4rem 0; }
+.ds-fix-code { flex: 1 1 auto; min-width: 0; margin: 0; padding: .5rem .75rem; white-space: pre-wrap;
+  overflow-wrap: anywhere; background: var(--tblr-bg-surface-secondary); border: 1px solid var(--tblr-border-color);
+  border-radius: 4px; }
+.ds-fix-code code { color: inherit; background: none; padding: 0; white-space: inherit; }
+.ds-fix .ds-copy { flex: 0 0 auto; }
+/* Accept with a note: a native <details>, so it works without scripts. */
+.ds-accept > summary { list-style: none; display: inline-flex; }
+.ds-accept > summary::-webkit-details-marker { display: none; }
+.ds-accept-form { margin-top: .4rem; min-width: min(24rem, 100%); }
+.ds-accept-form .form-control { flex: 1 1 14rem; min-width: 0; }
+/* Text for "Copy as text": off screen but not hidden, so it can still be selected and copied. */
+.ds-offscreen { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; }
+/* The block a link or redirect lands on (a finding, a step), flashed once by app.js. */
+.ds-flash:not(tr) { animation: ds-flash-block 2.5s ease-out; }
+@keyframes ds-flash-block { 0%, 40% { background: rgba(var(--tblr-primary-rgb), .15); } }
+@media (prefers-reduced-motion: reduce) { .ds-flash:not(tr) { animation: none; } }
+/* Report steps and findings stay whole when printed. */
+.ds-step, .ds-step .list-unstyled > li, .list-group-item, .card-table tr { break-inside: avoid; }
+@media (max-width: 767.98px) { .ds-fix { flex-direction: column; align-items: stretch; } .ds-fix .ds-copy { align-self: flex-start; } }
+/* Printing: the page content on white, without navigation, menus, buttons or forms.
+   https://developer.mozilla.org/en-US/docs/Web/CSS/@media and
+   https://developer.mozilla.org/en-US/docs/Web/CSS/break-inside */
+@media print {
+  .ds-header, footer, .ds-noprint, .ds-src-btn, .ds-copy, .ds-offscreen, .ds-accept, .btn, button, form, .alert,
+  .ds-js-only { display: none !important; }
+  html, html[data-bs-theme], body { background: #fff !important; color: #000 !important; }
+  html[data-bs-theme] { --tblr-body-bg: #fff; --tblr-body-color: #000; --tblr-bg-surface: #fff;
+    --tblr-bg-surface-secondary: #f4f4f4; --tblr-border-color: #bbb; --tblr-secondary: #444; color-scheme: light; }
+  .card { box-shadow: none !important; background: #fff !important; border: 1px solid #bbb !important;
+    margin-bottom: .75rem !important; }
+  .text-secondary, .text-orange { color: #333 !important; }
+  .ds-fix-code { background: #f4f4f4 !important; color: #000 !important; border-color: #bbb !important; }
+  main.container-xl { max-width: none; padding: 0 !important; }
+  .ds-step, .ds-fix, .list-group-item, tr { break-inside: avoid; page-break-inside: avoid; }
+  h2, h3, .card-header { break-after: avoid; page-break-after: avoid; }
+  a { color: inherit !important; text-decoration: none !important; }
+  .badge { border: 1px solid #888; background: none !important; color: #000 !important; }
+}
 /* Width classes for progress bars, pct-0 to pct-100. */
 .pct-0 { width: 0%; }
 .pct-1 { width: 1%; }

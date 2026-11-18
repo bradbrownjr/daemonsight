@@ -199,17 +199,18 @@ def rules(d):
 def test_findings_use_dnf_commands():
     sec = [{"name": "dnf5", "current": "1", "candidate": "2", "origin": "updates", "arch": "x86_64", "security": True}]
     r = rules(dnf_data(updates=sec, security_count=1))
-    assert "sudo dnf upgrade --refresh" in r["pkg.security_updates"].detail
+    assert r["pkg.security_updates"].fix == "sudo dnf upgrade --refresh"
     assert "apt" not in r["pkg.security_updates"].detail
     other = [{**sec[0], "security": False}]
-    assert "sudo dnf upgrade --refresh" in rules(dnf_data(updates=other))["pkg.updates"].detail
-    assert "systemctl restart" in rules(dnf_data(needrestart={"installed": True, "services": ["a.service"]}))["pkg.restart"].detail
+    assert rules(dnf_data(updates=other))["pkg.updates"].fix == "sudo dnf upgrade --refresh"
+    assert rules(dnf_data(needrestart={"installed": True, "services": ["a.service", "b c"]}))["pkg.restart"].fix == \
+        "sudo systemctl restart a.service 'b c'"
     stale = rules(dnf_data(lists_age=time.time() - 5 * 86400))["pkg.lists_stale"]
     assert "dnf5-makecache" in stale.detail
     assert "dnf needs-restarting" in rules(dnf_data(reboot={"required": True, "pkgs": []}))["pkg.reboot"].detail
     # apt hosts keep their text
     apt = rules(apt_data(updates=other))
-    assert "sudo apt upgrade" in apt["pkg.updates"].detail
+    assert apt["pkg.updates"].fix == "sudo apt upgrade"
 
 
 def test_provenance_per_backend():
@@ -300,7 +301,9 @@ def test_os_eol_soon_finding(support_rules):
     r = support_rules(F43, 2026, 10, 3)  # 60 days
     f = r["os.eol_soon"]
     assert f.severity == "low" and f.title == "Fedora 43 support ends on 2026-12-01" and f.link == "/#os"
-    assert "--releasever=45" in f.detail and "sudo dnf system-upgrade download" in f.detail
+    assert "Fedora 45" in f.detail
+    assert f.fix == ("sudo dnf upgrade --refresh\nsudo dnf system-upgrade download --releasever=45\n"
+                     "sudo dnf system-upgrade reboot")
     assert "os.eol" not in r and "os.lts" not in r
     assert "os.eol_soon" not in support_rules(F44, 2026, 11, 18)
 

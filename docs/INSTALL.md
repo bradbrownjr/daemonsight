@@ -560,6 +560,11 @@ with its next upload, installs that commit, and reports back. The page shows
 The target is always the hub's own version, so update the hub first, then
 its hosts. On Unraid, update the container from the Docker tab.
 
+The order matters from this version on. A collector now sends a fix command
+and a basis with some findings, and a hub from before that refuses the upload
+until the hub is updated. The hub's database moves to schema 4 on its first
+start; no action is needed.
+
 From the command line, on the hub:
 
 ```bash

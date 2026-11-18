@@ -7,7 +7,9 @@ marked resolved. Rule names and severities follow docs/DESIGN.md.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import shlex
 from datetime import date
 from dataclasses import dataclass
 
@@ -23,12 +25,60 @@ def anchor(kind: str, *parts) -> str:
 
 @dataclass(frozen=True)
 class Finding:
+    """One thing a rule found.
+
+    `fix` is the exact command or commands that resolve it, one per line, or
+    None when no single command does (an exposed port: the fix is a decision).
+    `basis` is what the finding is about, apart from numbers that drift (ages,
+    counts): an accepted finding comes back when its basis changes. None means
+    the title.
+    """
     rule: str
     key: str
     severity: str  # critical, high, medium, low
     title: str
     detail: str
     link: str | None = None
+    fix: str | None = None
+    basis: str | None = None
+
+
+# Where a fix sits in the report's steps, by rule. Steps run in this order;
+# a finding with a fix and no step gets a card of its own after "auto-updates",
+# and "os-upgrade" (planning) comes last. A finding with no fix is a decision
+# whatever its step.
+STEP_ORDER = ("upgrade", "restart", "reboot", "auto-updates", "os-upgrade")
+STEP_TITLES = {
+    "upgrade": "Install updates",
+    "restart": "Restart services",
+    "reboot": "Reboot",
+    "auto-updates": "Turn on automatic updates",
+    "os-upgrade": "Upgrade the operating system",
+}
+STEP_OF = {
+    "pkg.lists_stale": "upgrade", "pkg.updates": "upgrade", "pkg.security_updates": "upgrade",
+    "cve.package": "upgrade",
+    "pkg.restart": "restart",
+    "pkg.reboot": "reboot",
+    "pkg.auto_updates_off": "auto-updates",
+    "os.lts": "os-upgrade", "os.eol_soon": "os-upgrade", "os.eol": "os-upgrade",
+}
+
+
+def step_of(rule: str) -> str | None:
+    return STEP_OF.get(rule)
+
+
+def digest(items) -> str:
+    """A short, stable hash of a collection, for a basis too long to store whole."""
+    return hashlib.sha256("\n".join(sorted(map(str, items))).encode()).hexdigest()[:16]
+
+
+def fingerprint(rule: str, key: str, basis: str | None, title: str) -> str:
+    """What an acceptance is tied to. It changes when the finding's basis
+    does, and the finding shows as open again."""
+    raw = f"{rule}\0{key}\0{basis if basis is not None else title}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _data(snaps: dict, source: str) -> dict | None:
@@ -95,7 +145,7 @@ def expose_docker_bypass(snaps, cfg, ctx) -> list[Finding]:
                 f"Container {c['name']} publishes {p['host_ip']}:{p['host_port']}. Docker routes published "
                 f"ports in the nat table, before host firewall rules apply, so the firewall does not block it. "
                 f"If only local services need it, publish it as 127.0.0.1:{p['host_port']}:{p['container_port']}.",
-                f"/services#ctr-{c['name']}",
+                f"/services#ctr-{c['name']}", basis=f"{key}|{c['name']}",
             ))
     return out
 
@@ -110,7 +160,7 @@ def sys_disk(snaps, cfg: Config, ctx) -> list[Finding]:
         if d["percent"] >= limit:
             sev = "high" if d["percent"] >= max(limit, 95) else "medium"
             out.append(Finding("sys.disk", d["mount"], sev, f"Disk {d['mount']} is {d['percent']:.0f}% full",
-                               f"Threshold is {limit:.0f}%.", "/#system"))
+                               f"Threshold is {limit:.0f}%.", "/#system", basis=f"{d['mount']}|{sev}"))
     return out
 
 
@@ -123,7 +173,7 @@ def sys_memory(snaps, cfg: Config, ctx) -> list[Finding]:
         return []
     mins = cfg.thresholds.memory_minutes
     return [Finding("sys.memory", "mem", "medium", f"Memory has averaged {avg:.0f}% for {mins} minutes",
-                    f"Threshold is {limit:.0f}%.", "/#system")]
+                    f"Threshold is {limit:.0f}%.", "/#system", basis="mem")]
 
 
 def source_errors(snaps, cfg, ctx) -> list[Finding]:
@@ -228,7 +278,8 @@ def expose_unexpected(snaps, cfg: Config, ctx) -> list[Finding]:
             "expose.unexpected", key, sev, f"Port {key} is reachable from the internet",
             f"{who} listens on {', '.join(r['addresses'])} {verdict} ({fw['why']}). It is not in "
             f"exposure.expected_public. Bind it to 127.0.0.1, or add it to the list if it is meant to be public.",
-            f"/exposure#{anchor('port', r['port'], r['proto'])}"))
+            f"/exposure#{anchor('port', r['port'], r['proto'])}",
+            basis=f"{key}|{r.get('process') or ''}|{sev}"))
     return out
 
 
@@ -254,7 +305,8 @@ def expose_forward_all(snaps, cfg, ctx) -> list[Finding]:
                 f"The rule forwards {f['ports']}{where}. The provider firewall lets in "
                 f"{', '.join(map(str, reach)) or 'none of them'}. A port added to the provider policy later "
                 f"goes to {f['to']} as well. Listing the ports in the rule removes that dependence.",
-                f"/exposure#{anchor('fwd', f['family'], f['proto'], f['to'])}"))
+                f"/exposure#{anchor('fwd', f['family'], f['proto'], f['to'])}",
+                basis=f"{f['family']} {f['proto']} {f['to']}|{f['ports']}|{','.join(map(str, reach))}"))
             continue
         out.append(Finding(
             "expose.forward_all", f"{f['family']} {f['proto']} {f['to']}", "high",
@@ -262,7 +314,8 @@ def expose_forward_all(snaps, cfg, ctx) -> list[Finding]:
              if f["ports"].startswith("all except ") else f"{proto} ports {f['ports']} are forwarded to {f['to']}"),
             f"Every {proto} port{where} except the ones listed goes to {f['to']} ({count} ports). Anything "
             f"that host listens on, now or later, is reachable from the internet through this one. "
-            f"Forward only the ports it needs.", f"/exposure#{anchor('fwd', f['family'], f['proto'], f['to'])}"))
+            f"Forward only the ports it needs.", f"/exposure#{anchor('fwd', f['family'], f['proto'], f['to'])}",
+            basis=f"{f['family']} {f['proto']} {f['to']}|{f['ports']}|"))
     return out
 
 
@@ -303,7 +356,8 @@ def firewall_duplicates(snaps, cfg, ctx) -> list[Finding]:
     return [Finding("firewall.duplicate_rules", "dups", "low",
                     f"{data['duplicates']} firewall rules are duplicates",
                     "The same rule appears more than once. A script that adds rules each time it runs and "
-                    "never removes them, such as a WireGuard PostUp, leaves this behind." + extra, "/exposure#firewall")]
+                    "never removes them, such as a WireGuard PostUp, leaves this behind." + extra, "/exposure#firewall",
+                    basis="dups")]
 
 
 def _local_listener(ports: dict, proto: str, port: int) -> bool:
@@ -390,7 +444,8 @@ def jail_uncovered(snaps, cfg: Config, ctx) -> list[Finding]:
             "No jail reads its journal or log files. Add a jail, or link an existing one in exposure.jail_covers."
         out.append(Finding("jail.uncovered", name, "high", f"{name} is public with no fail2ban jail",
                            f"It listens on {r['port']}/{r['proto']} from the internet. {why}",
-                           f"/exposure#{anchor('port', r['port'], r['proto'])}"))
+                           f"/exposure#{anchor('port', r['port'], r['proto'])}",
+                           basis=f"{name}|{r['port']}/{r['proto']}"))
     return out
 
 
@@ -416,7 +471,7 @@ def caddy_admin_tcp(snaps, cfg, ctx) -> list[Finding]:
     return [Finding("caddy.admin_tcp", "admin", "low", "Caddy's admin API listens on TCP",
                     f"It is on {listen}. Any local user or process can change Caddy's config through it. "
                     "Caddy recommends a Unix socket with file permissions: admin unix//run/caddy/admin.sock.",
-                    "/routes")]
+                    "/routes", basis=f"admin|{listen}")]
 
 
 # ---- Phase 3a: packages ----------------------------------------------------
@@ -461,13 +516,13 @@ def pkg_security_updates(snaps, cfg, ctx) -> list[Finding]:
     n = len(sec)
     age = data.get("lists_age")
     fresh = age is not None and snaps["packages"].taken_at - age < STALE_LISTS_DAYS * 86400
-    cmd = upgrade_cmd(data)
-    todo = f"Run: {cmd}"
+    todo = "Install them."
     if data.get("unattended_upgrades"):
-        todo = f"unattended-upgrades is installed but is not applying them. Check it, or run: {cmd}"
+        todo = "unattended-upgrades is installed but is not applying them. Check it, or install them yourself."
     return [Finding("pkg.security_updates", "security", "high" if fresh else "medium",
                     f"{n} security update{'s' if n > 1 else ''} waiting",
-                    f"{_names(sec)}. {todo}", "/packages#security")]
+                    f"{_names(sec)}. {todo}", "/packages#security",
+                    fix=upgrade_cmd(data), basis=f"security:{digest(sec)}")]
 
 
 def pkg_updates(snaps, cfg, ctx) -> list[Finding]:
@@ -477,15 +532,21 @@ def pkg_updates(snaps, cfg, ctx) -> list[Finding]:
     if not other or len(other) != len(ups):
         return []
     n = len(other)
+    # Basis: not the package names. Accepting this says regular updates may wait
+    # on this host, and a new batch of them is not a change to that decision.
     return [Finding("pkg.updates", "updates", "low", f"{n} update{'s' if n > 1 else ''} waiting",
-                    f"{_names(other)}. Run: {upgrade_cmd(data)}", "/packages#other")]
+                    f"{_names(other)}. Install them.", "/packages#other",
+                    fix=upgrade_cmd(data), basis="updates")]
 
 
 def pkg_reboot(snaps, cfg, ctx) -> list[Finding]:
     reasons = reboot_reasons(_data(snaps, "packages"))
     if not reasons:
         return []
-    return [Finding("pkg.reboot", "reboot", "medium", "Reboot needed", " ".join(reasons), "/packages#reboot")]
+    # A newer kernel installed since the acceptance is a new reason to reboot.
+    kernel = (_data(snaps, "packages") or {}).get("kernel") or {}
+    return [Finding("pkg.reboot", "reboot", "medium", "Reboot needed", " ".join(reasons), "/packages#reboot",
+                    fix="sudo reboot", basis=f"reboot:{kernel.get('newer_installed') or ''}")]
 
 
 def pkg_restart(snaps, cfg, ctx) -> list[Finding]:
@@ -494,11 +555,14 @@ def pkg_restart(snaps, cfg, ctx) -> list[Finding]:
     if not svcs:
         return []
     n = len(svcs)
-    how = ("Restart them with systemctl restart" if (data or {}).get("backend") == "dnf"
-           else "Restart them, or run: sudo needrestart -r a")
+    if (data or {}).get("backend") == "dnf":
+        fix = "sudo systemctl restart " + " ".join(shlex.quote(s) for s in svcs)
+    else:
+        fix = "sudo needrestart -r a"
     return [Finding("pkg.restart", "restart", "low",
                     f"{n} service{'s use' if n > 1 else ' uses'} old libraries",
-                    f"{_names(svcs)}. {how}", "/packages#reboot")]
+                    f"{_names(svcs)}. Restart them.", "/packages#reboot",
+                    fix=fix if len(fix) <= 1900 else None, basis=f"restart:{digest(svcs)}")]
 
 
 def auto_updates_off(data: dict | None, cfg: Config) -> bool:
@@ -512,24 +576,30 @@ def auto_updates_off(data: dict | None, cfg: Config) -> bool:
     return bool(auto.get("known")) and not auto.get("on")
 
 
-def auto_updates_howto(data: dict) -> str:
-    """What to do about it, for this host's package system."""
+def auto_updates_howto(data: dict) -> tuple[str, str | None]:
+    """What to do about it for this host's package system: the advice in
+    words, and the commands that carry it out (None when it's an edit to a
+    file, which no command does)."""
     auto = data.get("auto_updates") or {}
     if data.get("backend") == "dnf":
         if not auto.get("installed"):
-            return ("Install the dnf5 automatic plugin with sudo dnf install dnf5-plugin-automatic. In "
-                    "/etc/dnf/automatic.conf, under [commands], set apply_updates = yes and, to install only "
-                    "security updates, upgrade_type = security. Then run sudo systemctl enable --now "
-                    "dnf5-automatic.timer.")
+            return ("Install the dnf5 automatic plugin. In /etc/dnf/automatic.conf, under [commands], set "
+                    "apply_updates = yes and, to install only security updates, upgrade_type = security. "
+                    "Then enable the dnf5-automatic timer.",
+                    "sudo dnf install dnf5-plugin-automatic\n"
+                    "# In /etc/dnf/automatic.conf, under [commands], set apply_updates = yes "
+                    "(and upgrade_type = security to install only security updates)\n"
+                    "sudo systemctl enable --now dnf5-automatic.timer")
         if auto.get("timer") != "enabled":
-            return "Run: sudo systemctl enable --now dnf5-automatic.timer"
+            return "Enable the dnf5-automatic timer.", "sudo systemctl enable --now dnf5-automatic.timer"
         return ("In /etc/dnf/automatic.conf, under [commands], set apply_updates = yes. Today it only "
-                "downloads updates.")
+                "downloads updates.", None)
     if not auto.get("installed"):
-        return "Run: sudo apt install unattended-upgrades"
+        return "Install unattended-upgrades.", "sudo apt install unattended-upgrades"
     if (auto.get("unattended") or "") in ("", "0"):
-        return "Run: sudo dpkg-reconfigure -plow unattended-upgrades, and answer Yes."
-    return "Run: sudo systemctl enable --now apt-daily-upgrade.timer"
+        return ("Turn it on by reconfiguring the package, and answer Yes.",
+                "sudo dpkg-reconfigure -plow unattended-upgrades")
+    return "Enable the apt-daily-upgrade timer.", "sudo systemctl enable --now apt-daily-upgrade.timer"
 
 
 def pkg_auto_updates_off(snaps, cfg, ctx) -> list[Finding]:
@@ -537,10 +607,11 @@ def pkg_auto_updates_off(snaps, cfg, ctx) -> list[Finding]:
     if not auto_updates_off(data, cfg):
         return []
     tool = "dnf5 automatic" if data.get("backend") == "dnf" else "unattended-upgrades"
+    how, fix = auto_updates_howto(data)
     return [Finding("pkg.auto_updates_off", "auto", "low", "Security updates aren't installed automatically",
                     f"Nothing on this host installs updates by itself ({tool} is not on), so a security fix "
-                    f"waits until someone runs {upgrade_cmd(data)}. {auto_updates_howto(data)}",
-                    "/packages#auto")]
+                    f"waits until someone installs it. {how}",
+                    "/packages#auto", fix=fix)]
 
 
 def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
@@ -551,6 +622,7 @@ def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
     days = int((snaps["packages"].taken_at - age) // 86400)
     if days < STALE_LISTS_DAYS:
         return []
+    fix = None
     if (data or {}).get("backend") == "dnf":
         why = "dnf's makecache timer may be off (systemctl list-timers 'dnf5-makecache*')."
     elif data.get("periodic_update") is False:
@@ -558,11 +630,13 @@ def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
         if auto_updates_off(data, cfg):
             why += " The automatic updates finding has the fix, since unattended-upgrades sets it."
         else:
-            why += " Run sudo apt update, or install unattended-upgrades, which sets it."
+            why += " Refresh them with apt update, or install unattended-upgrades, which sets it."
+            fix = "sudo apt update"
     else:
         why = "apt's daily timer may be off (systemctl list-timers 'apt-daily*')."
     return [Finding("pkg.lists_stale", "lists", "low", f"Package lists are {days} days old",
-                    f"{why} Updates listed here may be missing newer ones.", "/packages#lists")]
+                    f"{why} Updates listed here may be missing newer ones.", "/packages#lists",
+                    fix=fix, basis="lists")]
 
 
 # ---- OS support -------------------------------------------------------------
@@ -609,11 +683,14 @@ def os_eol_soon(snaps, cfg, ctx) -> list[Finding]:
         return []
     cur = sup.current_version
     detail = f"Fedora stops security updates for {sup.name} on {sup.eol.isoformat()}."
+    fix = None
     if cur and cur != sup.version:
-        detail += (f" Upgrade to Fedora {cur}, the current release: sudo dnf upgrade --refresh, then "
-                   f"sudo dnf system-upgrade download --releasever={cur}, then sudo dnf system-upgrade reboot.")
+        detail += (f" Upgrade to Fedora {cur}, the current release: install pending updates, download the "
+                   f"new release, then reboot into the upgrade.")
+        fix = (f"sudo dnf upgrade --refresh\nsudo dnf system-upgrade download --releasever={cur}\n"
+               f"sudo dnf system-upgrade reboot")
     return [Finding("os.eol_soon", "os", "low", f"{sup.name} support ends on {sup.eol.isoformat()}",
-                    detail, "/#os")]
+                    detail, "/#os", fix=fix)]
 
 
 def os_eol(snaps, cfg, ctx) -> list[Finding]:

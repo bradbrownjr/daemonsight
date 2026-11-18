@@ -19,7 +19,7 @@
   {% else %}
   <div class="table-responsive">
     <table class="table table-vcenter card-table" data-table="hosts">
-      <thead><tr><th data-sort="text">Host</th><th data-sort="text">State</th><th data-sort="num">Last upload</th><th data-sort="num">Findings</th><th data-sort="text">System</th><th data-sort="text">Version</th><th data-sort="text">From</th></tr></thead>
+      <thead><tr><th data-sort="text">Host</th><th data-sort="text">State</th><th data-sort="num">Last upload</th><th data-sort="num">Findings</th><th data-sort="text">System</th><th data-sort="text">Version</th><th data-sort="text">From</th><th>Report</th></tr></thead>
       <tbody>
         {% for h in v.hosts %}
         <tr data-row>
@@ -44,6 +44,7 @@
             {% if h.update_note %}<div class="text-secondary">{{ h.update_note }}</div>{% endif %}
           </td>
           <td class="font-monospace small" data-label="From">{{ h.address }}</td>
+          <td data-label="Report"><a href="/h/{{ h.id }}/report">Report</a></td>
         </tr>
         {% endfor %}
       </tbody>

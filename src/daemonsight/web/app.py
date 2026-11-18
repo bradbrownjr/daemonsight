@@ -10,6 +10,7 @@ import hmac
 import logging
 import sqlite3
 import time
+import unicodedata
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .. import db, full_version, hub
 from ..config import Config
-from . import views
+from . import report, views
 from .auth import PasswordStore, RateLimiter
 
 log = logging.getLogger("daemonsight.auth")
@@ -120,8 +121,15 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     def theme(request: Request) -> str:
         return "light" if request.cookies.get("theme") == "light" else "dark"
 
+    def flash(request: Request, text: str, error: bool = False) -> None:
+        """A one-line notice for the next full page (never a partial refresh)."""
+        request.session["flash"] = {"text": text, "error": error}
+
     def render(request: Request, name: str, ctx: dict, status: int = 200) -> HTMLResponse:
-        ctx = {"theme": theme(request), "path": request.url.path, "base": "", "hub": cfg.hub.enabled, **ctx}
+        notice = None if name.startswith("partials/") else request.session.pop("flash", None)
+        # Accepting a finding writes to the database; only a hub's web process may.
+        ctx = {"theme": theme(request), "path": request.url.path, "base": "", "hub": cfg.hub.enabled,
+               "can_accept": cfg.hub.enabled, "flash": notice, **ctx}
         return templates.TemplateResponse(request, name, ctx, status_code=status)
 
     @app.exception_handler(LoginRequired)
@@ -214,6 +222,29 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                 ctx = views.container_logs(conn, hcfg, cname)
         return render(request, "partials/logs.html", {"logs": ctx, "name": cname, "base": base})
 
+    async def report_page(request: Request, host: str | None = None):
+        require_login(request)
+        with reader() as conn:
+            if conn is None:
+                if cfg.hub.enabled:
+                    raise HTTPException(404)
+                ctx, base = None, ""
+            else:
+                hcfg, base = resolve(conn, host)
+                ctx = report.build(conn, hcfg, base)
+        return render(request, "report.html", {"page": "report", "v": ctx, "base": base})
+
+    async def report_markdown(request: Request, host: str | None = None):
+        require_login(request)
+        with reader() as conn:
+            if conn is None:
+                raise HTTPException(404)
+            hcfg, base = resolve(conn, host)
+            now = time.time()
+            rep = report.build(conn, hcfg, base, now)
+        return Response(rep["markdown"], media_type="text/markdown; charset=utf-8", headers={
+            "Content-Disposition": f"attachment; filename={report.filename(hcfg.host_id, now)}"})
+
     def handler(name: str, partial: bool):
         async def route(request: Request, host: str | None = None, units: str = "active"):
             return await show(request, name, host, partial, units)
@@ -226,6 +257,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             app.add_api_route(f"{prefix}/partials/{name}", handler(name, True), methods=["GET"],
                               response_class=HTMLResponse)
         app.add_api_route(prefix + "/partials/logs/{cname}", logs, methods=["GET"], response_class=HTMLResponse)
+        app.add_api_route(prefix + "/report", report_page, methods=["GET"], response_class=HTMLResponse)
+        app.add_api_route(prefix + "/report.md", report_markdown, methods=["GET"])
 
     if cfg.hub.enabled:
         add_pages("/h/{host}")
@@ -269,6 +302,67 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                 if ids:
                     log.info("Update to %s requested for %s from %s", target, ", ".join(ids), client)
             return RedirectResponse("/", status_code=303)
+
+        def finding_post(request: Request, host: str, next: str) -> str | None:
+            """Checks shared by accept and un-accept. Returns the page to go
+            back to; raises the response to send when a check fails."""
+            require_login(request)
+            # Same check as /hosts/update: the session cookie is SameSite=strict,
+            # and a browser that says where a request came from can't be cross-site.
+            if request.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
+                raise HTTPException(403, "cross-site request refused")
+            if not hub.HOST_RE.match(host) or \
+                    not hub_conn.execute("SELECT 1 FROM hosts WHERE id = ?", (host,)).fetchone():
+                raise HTTPException(404)
+            return _safe_next(next) if next else f"/h/{host}/"
+
+        @app.post("/h/{host}/findings/accept")
+        async def accept_finding(request: Request, host: str, rule: str = Form(""), key: str = Form(""),
+                                 note: str = Form(""), next: str = Form("")):
+            """Accept an open finding with a note (1 to 500 characters). It
+            stays in the database, leaves the counts and comes back when what
+            was accepted changes."""
+            try:
+                back = finding_post(request, host, next)
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    return PlainTextResponse(exc.detail, status_code=403)
+                raise
+            note = note.replace("\r\n", "\n").strip()
+            if not 1 <= len(note) <= 500 or any(ch not in "\n\t" and unicodedata.category(ch) in ("Cc", "Cf")
+                                                for ch in note):
+                flash(request, "A note of 1 to 500 characters is required to accept a finding.", error=True)
+            elif len(rule) > 60 or len(key) > 300:
+                flash(request, "That finding was not found.", error=True)
+            else:
+                by = str(request.session.get("user") or "admin")
+                item = db.accept_finding(hub_conn, host, rule, key, note, by, time.time())
+                if item is None:
+                    flash(request, "That finding is no longer open.", error=True)
+                else:
+                    log.info("Finding %s %s on %s accepted by %s from %s", rule, key, host, by,
+                             request.client.host if request.client else "?")
+                    flash(request, f"Accepted: {item['title']}")
+            return RedirectResponse(back, status_code=303)
+
+        @app.post("/h/{host}/findings/unaccept")
+        async def unaccept_finding(request: Request, host: str, rule: str = Form(""), key: str = Form(""),
+                                   next: str = Form("")):
+            try:
+                back = finding_post(request, host, next)
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    return PlainTextResponse(exc.detail, status_code=403)
+                raise
+            old = db.unaccept_finding(hub_conn, host, rule, key, time.time()) \
+                if len(rule) <= 60 and len(key) <= 300 else None
+            if old is None:
+                flash(request, "That finding was not accepted.", error=True)
+            else:
+                log.info("Finding %s %s on %s un-accepted from %s", rule, key, host,
+                         request.client.host if request.client else "?")
+                flash(request, f"Un-accepted: {old['title']}")
+            return RedirectResponse(back, status_code=303)
 
         add_ingest(app, cfg, hub_conn)
     else:

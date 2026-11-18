@@ -30,6 +30,19 @@ the row they are about, and a port's panel shows the process behind it.
 - **Automatic updates.** The Packages page shows whether unattended-upgrades
   (apt) or dnf5-automatic (Fedora) will install security updates, and a
   low finding says how to turn it on.
+- **Fixes on findings.** A finding that has one command to resolve it shows
+  that command in a block with a Copy button. Findings with no single
+  command, such as an exposed port, are decisions.
+- **Accept with a note.** On a hub, an open finding can be accepted with a
+  note. It leaves the counts and badges and stays under "Accepted", with the
+  note, who and when. It comes back, flagged, when what you accepted
+  changes, such as a new CVE in the same package. It is deleted when the
+  finding resolves.
+- **Per-host report.** One page per host (`/h/<host>/report`, or `/report` on
+  a single host) puts the open findings in order: install updates, restart
+  services, reboot, automatic updates, then the rest, each step with its
+  commands merged and a Copy button. Copy it as text, download it as
+  Markdown, or print it.
 - **Updates from the hub.** The hub's Hosts page, or `daemonsight hub
   update`, moves hosts to the hub's own commit. A host can turn this off.
 - **Retention and backups.** `[retention]` sets how long history stays;

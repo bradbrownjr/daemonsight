@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% from "_macros.html" import fix_block, accept_form, unaccept_form with context %}
+{% block title %}Report · {{ v.host.id }} · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4 d-flex flex-wrap justify-content-between align-items-end gap-3">
+  <div>
+    <div class="page-pretitle">{{ v.host.id }}</div>
+    <h1 class="page-title">Report</h1>
+  </div>
+  <div class="ds-noprint d-flex flex-wrap gap-2">
+    <button type="button" class="btn ds-copy" data-copy-from="report-text">Copy as text</button>
+    <a class="btn" href="{{ base }}/report.md" download>Download Markdown</a>
+  </div>
+</div>
+{# The same Markdown the download holds, for "Copy as text". Off screen rather than hidden, so it can be selected. #}
+<textarea id="report-text" class="ds-offscreen" readonly tabindex="-1" aria-hidden="true">{{ v.markdown }}</textarea>
+
+<section class="card mb-4" aria-labelledby="report-host-title">
+  <div class="card-header"><h2 class="card-title" id="report-host-title">{{ v.host.id }}</h2></div>
+  <div class="card-body">
+    <div class="datagrid">
+      <div class="datagrid-item"><div class="datagrid-title">Operating system</div><div class="datagrid-content">{{ v.host.os or 'Unknown' }}{% if v.host.support_text %} · <span class="badge {{ v.host.support.badge }}">{{ v.host.support_text }}</span>{% endif %}</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">Kernel</div><div class="datagrid-content">{{ v.host.kernel or 'Unknown' }}</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">Uptime</div><div class="datagrid-content">{{ v.host.uptime or 'Unknown' }}</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">Role</div><div class="datagrid-content">{{ v.host.role }}</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">{{ v.host.last_upload_label }}</div><div class="datagrid-content">{{ v.host.last_upload }}</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">DaemonSight</div><div class="datagrid-content">{{ v.host.version or 'Unknown' }}</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">Generated</div><div class="datagrid-content">{{ v.host.generated }}</div></div>
+    </div>
+  </div>
+</section>
+
+<h2 class="h3 mb-3" id="steps">Steps</h2>
+{% if v.steps %}
+{% for c in v.steps %}
+<section class="card mb-3 ds-step" id="step-{{ c.key }}" aria-labelledby="step-{{ c.key }}-title" data-section>
+  <div class="card-header"><h3 class="card-title" id="step-{{ c.key }}-title">{{ loop.index }}. {{ c.title }}</h3></div>
+  <div class="card-body">
+    {% if c.note %}<p>{{ c.note }}</p>{% endif %}
+    {{ fix_block(c.commands) }}
+    <div class="subheader mt-3">Clears</div>
+    <ul class="list-unstyled mb-0">
+      {% for f in c.findings %}
+      <li data-row class="d-flex flex-wrap gap-2 align-items-baseline"><span class="badge {{ f.badge }}">{{ f.label }}</span>
+        {% if f.href %}<a href="{{ f.href }}">{{ f.title }}</a>{% else %}<span>{{ f.title }}</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endfor %}
+{% else %}
+<p class="text-secondary">No finding has a command to run.</p>
+{% endif %}
+
+<h2 class="h3 mb-3 mt-4" id="decide">Decide</h2>
+{% if v.decide %}
+<section class="card mb-4" aria-label="Findings that need a decision" data-section>
+  <div class="list-group list-group-flush">
+    {% for f in v.decide %}
+    <div data-row class="list-group-item d-flex gap-3 align-items-start">
+      <span class="badge ds-sev {{ f.badge }}">{{ f.label }}</span>
+      <div class="ds-min0 flex-fill">
+        <div class="fw-bold">{% if f.href %}<a href="{{ f.href }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}</div>
+        <div class="text-secondary">{{ f.detail }}</div>
+        {% if f.changed_note %}<div class="text-orange small">{{ f.changed_note }}</div>{% endif %}
+        <div class="mt-1">{{ accept_form(f, "d-") }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+<p class="text-secondary">Nothing needs a decision.</p>
+{% endif %}
+
+<h2 class="h3 mb-3 mt-4" id="all">All findings</h2>
+{% if v.open %}
+{% for g in v.groups if g.findings %}
+<section class="card mb-4" id="group-{{ g.key }}" aria-labelledby="group-{{ g.key }}-title" data-section>
+  <div class="card-header"><h3 class="card-title" id="group-{{ g.key }}-title">{{ g.title }}</h3><div class="card-actions text-secondary">{{ g.findings|length }}</div></div>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Severity</th><th>Finding</th><th>Since</th><th>Step</th></tr></thead>
+      <tbody>
+        {% for f in g.findings %}
+        <tr data-row id="{{ f.id }}">
+          <td data-label="Severity"><span class="badge {{ f.badge }}">{{ f.label }}</span></td>
+          <td data-label="Finding">
+            <div class="fw-bold">{% if f.href %}<a href="{{ f.href }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}</div>
+            <div class="text-secondary">{{ f.detail }}</div>
+            {% if f.changed_note %}<div class="text-orange small">{{ f.changed_note }}</div>{% endif %}
+            {{ accept_form(f) }}
+          </td>
+          <td data-label="Since">{{ f.since }}</td>
+          <td data-label="Step">{{ f.step_title or ('Decide' if not f.fix else '') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body text-secondary ds-nomatch">No findings match the filter.</div>
+</section>
+{% endfor %}
+{% else %}
+<p class="text-secondary">Nothing to report.</p>
+{% endif %}
+
+<h2 class="h3 mb-3 mt-4" id="accepted">Accepted</h2>
+{% if v.accepted %}
+<section class="card mb-4" aria-label="Accepted findings" data-section>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table">
+      <thead><tr><th>Finding</th><th>Note</th><th>Accepted by</th><th>When</th><th class="ds-noprint"></th></tr></thead>
+      <tbody>
+        {% for f in v.accepted %}
+        <tr data-row id="{{ f.id }}">
+          <td data-label="Finding"><span class="badge {{ f.badge }} me-1">{{ f.label }}</span>{% if f.href %}<a href="{{ f.href }}" class="text-reset">{{ f.title }}</a>{% else %}{{ f.title }}{% endif %}</td>
+          <td data-label="Note">{{ f.accepted.note }}</td>
+          <td data-label="Accepted by">{{ f.accepted.by }}</td>
+          <td data-label="When">{{ f.accepted.when }}</td>
+          <td data-label="Action" class="ds-noprint">{{ unaccept_form(f) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body text-secondary ds-nomatch">No accepted findings match the filter.</div>
+</section>
+{% else %}
+<p class="text-secondary">Nothing accepted.</p>
+{% endif %}
+{% endblock %}

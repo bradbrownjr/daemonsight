@@ -111,26 +111,38 @@
     try { return document.querySelector(":popover-open") !== null; } catch (e) { return false; }
   }
 
+  // Copy the text next to a button (.ds-copy-text), or, with data-copy-from,
+  // the text of the element with that id (a textarea). navigator.clipboard
+  // is available only in secure contexts (HTTPS):
+  // https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/writeText
+  // On plain HTTP it selects the text and tries the old copy command instead.
   function copyText(button) {
-    var code = button.parentNode.querySelector(".ds-copy-text");
+    var fromId = button.getAttribute("data-copy-from");
+    var code = fromId ? document.getElementById(fromId) : button.parentNode.querySelector(".ds-copy-text");
     if (!code) return;
+    var text = fromId ? code.value : code.textContent;
+    var label = button.getAttribute("data-label-orig") || button.textContent;
+    button.setAttribute("data-label-orig", label);
     var done = function () {
       button.textContent = "Copied";
-      setTimeout(function () { button.textContent = "Copy"; }, 1500);
+      setTimeout(function () { button.textContent = label; }, 1500);
     };
     var fallback = function () {
-      // Plain HTTP on a LAN address has no Clipboard API: select the text instead.
-      var range = document.createRange();
-      range.selectNodeContents(code);
-      var sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
+      if (fromId) {
+        code.select();
+      } else {
+        var range = document.createRange();
+        range.selectNodeContents(code);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
       try { if (document.execCommand("copy")) { done(); return; } } catch (e) { /* not allowed */ }
       button.textContent = "Selected";
-      setTimeout(function () { button.textContent = "Copy"; }, 1500);
+      setTimeout(function () { button.textContent = label; }, 1500);
     };
     if (window.isSecureContext && navigator.clipboard) {
-      navigator.clipboard.writeText(code.textContent).then(done, fallback);
+      navigator.clipboard.writeText(text).then(done, fallback);
     } else {
       fallback();
     }
@@ -256,10 +268,11 @@
       var pop = link && link.closest("[popover]");
       if (pop && pop.hidePopover) { try { pop.hidePopover(); } catch (err) { /* already closed */ } }
     });
-    // Hold the 30-second refresh while a panel is open, or the swap would close it.
+    // Hold the 30-second refresh while a panel or an accept form is open, or the swap would close it.
     document.body.addEventListener("htmx:beforeRequest", function (e) {
       var elt = e.detail && e.detail.elt;
-      if (elt && /every/.test(elt.getAttribute("hx-trigger") || "") && popoverOpen()) e.preventDefault();
+      if (elt && /every/.test(elt.getAttribute("hx-trigger") || "") &&
+          (popoverOpen() || document.querySelector("details.ds-accept[open]"))) e.preventDefault();
     });
     document.body.addEventListener("htmx:afterSettle", function () { applyAll(); applyNotes(); });
     initMenu();

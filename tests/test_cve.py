@@ -201,11 +201,12 @@ def test_kev_makes_a_high_finding(cvedb):
     f = findings_for(cvedb, [["brotli", "1.0.9-2", ["libbrotli1"]]])["brotli"]
     assert f.severity == "high"
     assert f.title == "brotli: CVE-2026-111497 is being exploited (CISA KEV)"
-    assert "sudo apt upgrade" in f.detail and "1.1.0-2+deb13u1" in f.detail and "EPSS 83%" in f.detail
+    assert "1.1.0-2+deb13u1" in f.detail and "EPSS 83%" in f.detail
+    assert f.fix == "sudo apt update\nsudo apt upgrade"   # not offered yet: refresh first
     assert f.link == "/vulnerabilities#cve-brotli"
     assert "apt isn't offering it yet" in f.detail            # not among the pending updates
     f2 = findings_for(cvedb, [["brotli", "1.0.9-2", ["libbrotli1"]]], pending={"libbrotli1"})["brotli"]
-    assert "apt lists this update" in f2.detail
+    assert "apt lists this update" in f2.detail and f2.fix == "sudo apt upgrade"
 
 
 def test_a_fix_is_medium_and_names_the_cves(cvedb):
@@ -475,7 +476,7 @@ def test_fedora_advisories_become_fixes_ranked_with_epss_and_kev(cvedb):
     fs = {f.key: f for f in match.package_findings(rows, {}, set(), 0.1, "dnf")}
     f = fs["libmodulemd"]
     assert (f.rule, f.severity) == ("cve.package", "medium") and "libmodulemd" == f.key
-    assert "sudo dnf upgrade" in f.detail and "apt" not in f.detail
+    assert f.fix == "sudo dnf upgrade --refresh" and "apt" not in f.detail and "apt" not in f.fix
     assert {"pcre2", "pcre2-syntax", "dnf5", "libdnf5"} <= set(fs)
 
 

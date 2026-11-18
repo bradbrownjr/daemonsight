@@ -35,3 +35,40 @@
 {% macro src(id, s) -%}
 {{ src_button(id, s.title) }}{{ src_panel(id, s) }}
 {%- endmacro %}
+
+{# A command block with a Copy button. app.js copies the <code> next to the
+   button. The text is a host's, so it is only ever shown, never run. #}
+{% macro fix_block(text) -%}
+<div class="ds-fix"><pre class="ds-fix-code"><code class="ds-copy-text">{{ text }}</code></pre><button type="button" class="btn btn-sm ds-copy">Copy</button></div>
+{%- endmacro %}
+
+{# Accept a finding with a note. A plain form: it works without scripts. Only
+   a hub can write, so a single host's pages have none. #}
+{% macro accept_form(f, where="") -%}
+{% if can_accept %}
+<details class="ds-accept ds-noprint">
+  <summary class="btn btn-sm btn-ghost-secondary">{{ "Accept again" if f.accepted else "Accept" }}</summary>
+  <form method="post" action="{{ base }}/findings/accept" class="ds-accept-form">
+    <input type="hidden" name="rule" value="{{ f.rule }}">
+    <input type="hidden" name="key" value="{{ f.key }}">
+    <input type="hidden" name="next" value="{{ path }}#{{ f.id }}">
+    <label class="form-label" for="note-{{ where }}{{ f.id }}">Why is this accepted?</label>
+    <div class="d-flex flex-wrap gap-2">
+      <input type="text" class="form-control form-control-sm" id="note-{{ where }}{{ f.id }}" name="note" required minlength="1" maxlength="500" autocomplete="off" value="{{ f.accepted.note if f.accepted else '' }}">
+      <button type="submit" class="btn btn-sm btn-primary">Accept</button>
+    </div>
+  </form>
+</details>
+{% endif %}
+{%- endmacro %}
+
+{% macro unaccept_form(f) -%}
+{% if can_accept %}
+<form method="post" action="{{ base }}/findings/unaccept" class="m-0 ds-noprint">
+  <input type="hidden" name="rule" value="{{ f.rule }}">
+  <input type="hidden" name="key" value="{{ f.key }}">
+  <input type="hidden" name="next" value="{{ path }}#{{ f.id }}">
+  <button type="submit" class="btn btn-sm">Un-accept</button>
+</form>
+{% endif %}
+{%- endmacro %}

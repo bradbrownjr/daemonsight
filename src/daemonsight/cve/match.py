@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import time
 
-from ..findings import Finding, anchor, upgrade_cmd
+from ..findings import Finding, anchor, digest, upgrade_cmd
 from . import debver
 
 STATES = ("fix", "nofix", "minor", "undetermined")
@@ -213,19 +213,24 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
         else:
             continue
         parts = []
+        fix = None
         installed = items[0]["installed"]
         if fixes:
             fv = _fixed_version(fixes)
             names = binaries.get(src, [])
             if backend == "dnf":
-                parts.append(f"Fedora has security advisories for it. Run: {upgrade_cmd({'backend': 'dnf'})}.")
+                parts.append("Fedora has security advisories for it. Install the update.")
+                fix = upgrade_cmd({"backend": "dnf"})
             else:
-                parts.append(f"Installed {installed}; fixed in {fv}. Run: {upgrade_cmd(None)}.")
+                parts.append(f"Installed {installed}; fixed in {fv}. Install the update.")
+                fix = upgrade_cmd(None)
                 if names or src:
                     listed = pending & ({src} | set(names))
                     parts.append("apt lists this update on the Packages page." if listed else
-                                 "apt isn't offering it yet: run sudo apt update, and check the host's apt "
-                                 "sources include the security archive.")
+                                 "apt isn't offering it yet: refresh the package lists with apt update, and "
+                                 "check the host's apt sources include the security archive.")
+                    if not listed:
+                        fix = "sudo apt update\n" + fix
         unfixed = [c for c in items if c["state"] == "nofix"]
         top = ", ".join(_describe(c) for c in items[:TOP_CVES])
         parts.append(f"Top CVEs: {top}" + (f" and {len(items) - TOP_CVES} more." if len(items) > TOP_CVES else "."))
@@ -233,8 +238,10 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
             parts.append(f"Debian has no fix yet. See {TRACKER_URL}{kev[0]['cve']} for mitigations.")
         elif unfixed:
             parts.append(f"{len(unfixed)} more in this package have no fix yet.")
+        # Basis: the CVE ids, so a new CVE in the package brings an accepted finding back.
         out.append(Finding("cve.package", src, sev, title[:300], " ".join(parts)[:3900],
-                           f"/vulnerabilities#{anchor('cve', src)}"))
+                           f"/vulnerabilities#{anchor('cve', src)}", fix=fix,
+                           basis=f"cves:{digest(c['cve'] for c in items)}"))
     out.sort(key=lambda f: (f.severity != "high", f.title))
     return out[:MAX_FINDINGS]
 

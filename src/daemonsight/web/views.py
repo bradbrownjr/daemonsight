@@ -140,13 +140,39 @@ def _source_state(snaps: dict, name: str) -> dict:
     return {"state": "ok", "reason": None}
 
 
+def fmt_when(ts: float) -> str:
+    """An absolute UTC time, for what must still read right when printed or exported."""
+    return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ts))
+
+
+def finding_item(r: dict) -> dict:
+    """One finding (a dict from db.findings_state) as the templates and the
+    report show it."""
+    label, cls = SEVERITY_BADGE.get(r["severity"], (r["severity"], "bg-secondary-lt"))
+    acc = r["accepted"]
+    item = {"id": rules.anchor("finding", r["rule"], r["key"]), "rule": r["rule"], "key": r["key"],
+            "severity": r["severity"], "title": r["title"], "detail": r["detail"], "link": r["link"],
+            "fix": r["fix"], "step": rules.step_of(r["rule"]) if r["fix"] else None,
+            "label": label, "badge": cls, "since": fmt_ago(r["first_seen"]),
+            "src": prov.finding(r["rule"], r["link"]), "accepted": None, "changed_note": None}
+    if acc:
+        item["accepted"] = {"note": acc["note"], "by": acc["accepted_by"], "ago": fmt_ago(acc["accepted_at"]),
+                            "when": fmt_when(acc["accepted_at"]), "changed": acc["changed"]}
+        if acc["changed"]:
+            item["changed_note"] = (f"Accepted on {fmt_when(acc['accepted_at'])[:10]} ({acc['note']}) "
+                                    "\u2014 this has changed since")
+    return item
+
+
+def findings_lists(conn, host: str) -> tuple[list[dict], list[dict]]:
+    """(open, accepted) findings for display. A finding whose acceptance no
+    longer applies is in the open list, with a note saying so."""
+    active, held = db.findings_state(conn, host)
+    return [finding_item(r) for r in active], [finding_item(r) for r in held]
+
+
 def findings_list(conn, host: str) -> list[dict]:
-    out = []
-    for r in db.open_findings(conn, host):
-        label, cls = SEVERITY_BADGE.get(r["severity"], (r["severity"], "bg-secondary-lt"))
-        out.append({"title": r["title"], "detail": r["detail"], "link": r["link"], "label": label,
-                    "badge": cls, "since": fmt_ago(r["first_seen"]), "src": prov.finding(r["rule"], r["link"])})
-    return out
+    return findings_lists(conn, host)[0]
 
 
 def events_list(conn, host: str, limit: int = 8) -> list[dict]:
@@ -239,10 +265,12 @@ def overview(conn, cfg: Config) -> dict:
         glance.append({"title": "Listening sockets", "value": f"{len(ls)} total",
                        "alert": None, "note": f"{wide} on all or public addresses"})
 
+    open_f, accepted_f = findings_lists(conn, host)
     return {
         "host": _host(cfg, snaps),
         "tiles": tiles,
-        "findings": findings_list(conn, host),
+        "findings": open_f,
+        "accepted": accepted_f,
         "events": events_list(conn, host),
         "glance": glance,
         "sources": {name: _source_state(snaps, name)
@@ -605,7 +633,8 @@ def _auto_updates(auto: dict | None, data: dict, cfg: Config) -> dict:
             notes.append(f"apt-daily-upgrade.timer is {auto['timer']}")
     return {"known": True, "on": bool(auto.get("on")), "state": state, "cls": cls, "tool": tool,
             "notes": notes, "workstation": workstation,
-            "howto": "" if auto.get("on") else rules.auto_updates_howto(data)}
+            "howto": "" if auto.get("on") else rules.auto_updates_howto(data)[0],
+            "howto_fix": None if auto.get("on") else rules.auto_updates_howto(data)[1]}
 
 
 def packages(conn, cfg: Config) -> dict:
@@ -814,14 +843,18 @@ def host_config(conn, cfg: Config, host: str) -> Config:
 
 def hosts_list(conn, cfg: Config) -> dict:
     now = time.time()
+    # Accepted findings are left out of the counts and the reboot badge. The
+    # "Not reporting" state still follows host.silent: it says what the host is doing.
     counts: dict[str, dict[str, int]] = {}
-    for r in conn.execute("SELECT host, severity, COUNT(*) AS n FROM findings WHERE resolved_at IS NULL "
-                          "GROUP BY host, severity"):
-        counts.setdefault(r["host"], {})[r["severity"]] = r["n"]
+    reboot = set()
+    for host_id, items in db.active_findings_by_host(conn).items():
+        for d in items:
+            counts.setdefault(host_id, {}).setdefault(d["severity"], 0)
+            counts[host_id][d["severity"]] += 1
+            if d["rule"] == "pkg.reboot":
+                reboot.add(host_id)
     silent = {r["host"]: r["title"] for r in conn.execute(
         "SELECT host, title FROM findings WHERE rule = 'host.silent' AND resolved_at IS NULL")}
-    reboot = {r["host"] for r in conn.execute(
-        "SELECT host FROM findings WHERE rule = 'pkg.reboot' AND resolved_at IS NULL")}
     target = hub.hub_revision()
     rows = []
     for h in conn.execute("SELECT * FROM hosts ORDER BY id"):
