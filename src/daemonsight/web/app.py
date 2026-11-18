@@ -168,7 +168,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     # On a single host the pages live at /, /exposure ... for this host. On a
     # hub, / lists the hosts and each host's pages live under /h/<host>/.
     pages = {"overview": views.overview, "exposure": views.exposure, "routes": views.routes,
-             "services": views.services, "fail2ban": views.jails}
+             "services": views.services, "fail2ban": views.jails, "packages": views.packages}
 
     def resolve(conn, host: str | None) -> tuple[Config, str]:
         if not cfg.hub.enabled:

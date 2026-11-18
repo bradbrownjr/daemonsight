@@ -417,10 +417,94 @@ def caddy_admin_tcp(snaps, cfg, ctx) -> list[Finding]:
                     "/routes")]
 
 
+# ---- Phase 3a: packages ----------------------------------------------------
+
+STALE_LISTS_DAYS = 3
+
+
+def reboot_reasons(data: dict | None) -> list[str]:
+    """Why the host wants a reboot; empty when it doesn't."""
+    data = data or {}
+    out = []
+    reboot = data.get("reboot") or {}
+    if reboot.get("required"):
+        pkgs = reboot.get("pkgs") or []
+        out.append("Updated packages ask for it: " + ", ".join(pkgs[:5]) + "." if pkgs
+                   else "The system asks for it (/var/run/reboot-required).")
+    kernel = data.get("kernel") or {}
+    if kernel.get("managed") and kernel.get("newer_installed"):
+        out.append(f"Kernel {kernel['newer_installed']} is installed, {kernel['running']} is running.")
+    return out
+
+
+def _names(items: list[str], limit: int = 5) -> str:
+    more = f" and {len(items) - limit} more" if len(items) > limit else ""
+    return ", ".join(items[:limit]) + more
+
+
+def pkg_security_updates(snaps, cfg, ctx) -> list[Finding]:
+    data = _data(snaps, "packages")
+    sec = [u["name"] for u in (data or {}).get("updates", []) if u.get("security")]
+    if not sec:
+        return []
+    n = len(sec)
+    age = data.get("lists_age")
+    fresh = age is not None and snaps["packages"].taken_at - age < STALE_LISTS_DAYS * 86400
+    todo = "Run: sudo apt upgrade"
+    if data.get("unattended_upgrades"):
+        todo = "unattended-upgrades is installed but is not applying them. Check it, or run: sudo apt upgrade"
+    return [Finding("pkg.security_updates", "security", "high" if fresh else "medium",
+                    f"{n} security update{'s' if n > 1 else ''} waiting",
+                    f"{_names(sec)}. {todo}", "/packages#security")]
+
+
+def pkg_updates(snaps, cfg, ctx) -> list[Finding]:
+    data = _data(snaps, "packages")
+    ups = (data or {}).get("updates", [])
+    other = [u["name"] for u in ups if not u.get("security")]
+    if not other or len(other) != len(ups):
+        return []
+    n = len(other)
+    return [Finding("pkg.updates", "updates", "low", f"{n} update{'s' if n > 1 else ''} waiting",
+                    f"{_names(other)}. Run: sudo apt upgrade", "/packages#other")]
+
+
+def pkg_reboot(snaps, cfg, ctx) -> list[Finding]:
+    reasons = reboot_reasons(_data(snaps, "packages"))
+    if not reasons:
+        return []
+    return [Finding("pkg.reboot", "reboot", "medium", "Reboot needed", " ".join(reasons), "/packages#reboot")]
+
+
+def pkg_restart(snaps, cfg, ctx) -> list[Finding]:
+    data = _data(snaps, "packages")
+    svcs = ((data or {}).get("needrestart") or {}).get("services") or []
+    if not svcs:
+        return []
+    n = len(svcs)
+    return [Finding("pkg.restart", "restart", "low",
+                    f"{n} service{'s use' if n > 1 else ' uses'} old libraries",
+                    f"{_names(svcs)}. Restart them, or run: sudo needrestart -r a", "/packages#reboot")]
+
+
+def pkg_lists_stale(snaps, cfg, ctx) -> list[Finding]:
+    data = _data(snaps, "packages")
+    age = (data or {}).get("lists_age")
+    if age is None:
+        return []
+    days = int((snaps["packages"].taken_at - age) // 86400)
+    if days < STALE_LISTS_DAYS:
+        return []
+    return [Finding("pkg.lists_stale", "lists", "low", f"Package lists are {days} days old",
+                    "apt's daily timer may be off (systemctl list-timers 'apt-daily*'). Updates listed "
+                    "here may be missing newer ones.", "/packages#lists")]
+
+
 RULES = [svc_failed, ctr_down, expose_docker_bypass, sys_disk, sys_memory, source_errors,
          expose_unexpected, expose_forward_all, firewall_default_accept, firewall_duplicates,
          route_upstream_down, route_upstream_failing, jail_uncovered,
-         jail_log_missing, caddy_admin_tcp]
+         jail_log_missing, caddy_admin_tcp, pkg_security_updates, pkg_updates, pkg_reboot,
+         pkg_restart, pkg_lists_stale]
 
 
 def evaluate(snaps: dict, cfg: Config, ctx: dict | None = None) -> list[Finding]:

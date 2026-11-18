@@ -1,0 +1,114 @@
+{% from "_macros.html" import src, src_button, src_panel with context %}
+{% macro updates_card(id, title, rows, part, empty) %}
+<section class="card mb-4" id="{{ id }}" aria-labelledby="{{ id }}-title" data-section{% if not rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="{{ id }}-title">{{ title }}</h2>{{ src("src-pkg-" ~ id, v.src[part]) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ rows|length }} packages</div>
+  </div>
+  {% if v.state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.state.reason }}</div>
+  {% elif not rows %}
+  <div class="card-body text-secondary">{{ empty }}</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="{{ id }}">
+      <thead><tr><th data-sort="text">Package</th><th data-sort="text">Installed</th><th data-sort="text">Available</th><th data-sort="text">From</th></tr></thead>
+      <tbody>
+        {% for p in rows %}
+        <tr data-row id="{{ p.anchor }}">
+          <td data-label="Package"><strong>{{ p.name }}</strong></td>
+          <td class="font-monospace small" data-label="Installed">{{ p.current }}</td>
+          <td class="font-monospace small" data-label="Available">{{ p.candidate }}</td>
+          <td class="small" data-label="From">{{ p.origin }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No packages match the filter.</div>
+</section>
+{% endmacro %}
+<div id="live" hx-get="{{ base }}/partials/packages" hx-trigger="every 60s" hx-swap="outerHTML">
+{% if v %}
+{{ updates_card("security", "Security updates", v.security, "security", "No security updates waiting.") }}
+{{ updates_card("other", "Other updates", v.other, "other", "No other updates waiting.") }}
+{% if v.removals or v.kept_back %}
+<div class="text-secondary mb-4">
+  {% if v.removals %}Upgrading would also remove {{ v.removals }} package{{ 's' if v.removals > 1 }}. {% endif %}
+  {% if v.kept_back %}Kept back: {{ v.kept_back|join(', ') }}.{% endif %}
+</div>
+{% endif %}
+
+<section class="card mb-4" id="held" aria-labelledby="held-title" data-section{% if not v.held %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="held-title">Held packages</h2>{{ src("src-pkg-held", v.src.held) }}
+  </div>
+  {% if v.state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.state.reason }}</div>
+  {% elif not v.held %}
+  <div class="card-body text-secondary">No packages are held.</div>
+  {% else %}
+  <div class="list-group list-group-flush">
+    {% for h in v.held %}<div class="list-group-item" data-row id="{{ 'pkg-' ~ h }}"><strong>{{ h }}</strong></div>{% endfor %}
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No packages match the filter.</div>
+</section>
+
+<section class="card mb-4" id="reboot" aria-labelledby="reboot-title" data-section>
+  <div class="card-header">
+    <h2 class="card-title" id="reboot-title">Reboot and restarts</h2>{{ src("src-pkg-reboot", v.src.reboot) }}
+  </div>
+  {% if v.state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.state.reason }}</div>
+  {% else %}
+  <div class="card-body">
+    <div class="datagrid">
+      <div class="datagrid-item">
+        <div class="datagrid-title">Reboot</div>
+        <div class="datagrid-content">{% if v.reboot_needed %}<span class="text-orange">Needed</span>{% else %}Not needed{% endif %}</div>
+        {% for r in v.reboot_reasons %}<div class="text-secondary small">{{ r }}</div>{% endfor %}
+      </div>
+      <div class="datagrid-item">
+        <div class="datagrid-title">Kernel</div>
+        {% if v.kernel.managed %}
+        <div class="datagrid-content font-monospace">{{ v.kernel.running }}</div>
+        <div class="text-secondary small">{% if v.kernel.newer_installed %}Newest installed: {{ v.kernel.newer_installed }}{% else %}Newest installed kernel is running{% endif %}</div>
+        {% else %}
+        <div class="datagrid-content text-secondary">Kernel managed by the host</div>
+        {% if v.kernel.running %}<div class="text-secondary small font-monospace">{{ v.kernel.running }}</div>{% endif %}
+        {% endif %}
+      </div>
+      <div class="datagrid-item">
+        <div class="datagrid-title">Services on old libraries</div>
+        {% if not v.needrestart.installed %}
+        <div class="datagrid-content text-secondary">needrestart isn't installed</div>
+        <div class="text-secondary small">To see them: <code>sudo apt install needrestart</code></div>
+        {% elif v.needrestart.services %}
+        <div class="datagrid-content">
+          {% for s in v.needrestart.services %}<div class="font-monospace" data-row id="{{ 'pkg-' ~ s }}">{{ s }}</div>{% endfor %}
+        </div>
+        <div class="text-secondary small">Restart them, or run <code>sudo needrestart -r a</code></div>
+        {% else %}
+        <div class="datagrid-content">None</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card mb-4" id="lists" aria-labelledby="lists-title">
+  <div class="card-header">
+    <h2 class="card-title" id="lists-title">Package lists</h2>{{ src("src-pkg-lists", v.src.lists) }}
+  </div>
+  <div class="card-body text-secondary">
+    {% if v.lists_age %}Updated {{ v.lists_age }}{% if v.lists_stale %} <span class="text-orange">(old: apt's daily timer may be off)</span>{% endif %}.{% else %}No package lists found.{% endif %}
+    {% if v.timer %}apt-daily.timer is {{ v.timer }}.{% endif %}
+    DaemonSight never runs apt update; the host's timer does. Checked {{ v.checked }}.
+  </div>
+  {% for part, msg in v.errors.items() %}<div class="card-body text-red">Could not read {{ part }}: {{ msg }}</div>{% endfor %}
+</section>
+{% endif %}
+</div>

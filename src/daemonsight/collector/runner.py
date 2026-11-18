@@ -15,6 +15,7 @@ from .sources.caddy import CaddySource
 from .sources.docker import DockerSource
 from .sources.fail2ban import Fail2banSource
 from .sources.firewall import FirewallSource
+from .sources.packages import PackagesSource
 from .sources.ports import PortsSource
 from .sources.system import SystemSource
 from .sources.systemd import SystemdSource
@@ -33,6 +34,7 @@ def build_sources(cfg: Config) -> list[Source]:
         CaddySource(c.interval_caddy, c.caddy_admin),
         Fail2banSource(c.interval_fail2ban, c.fail2ban_socket),
         FirewallSource(c.interval_firewall, c.nft),
+        PackagesSource(c.interval_packages),
     ]
 
 
@@ -139,6 +141,19 @@ def diff_events(source: str, prev: dict | None, cur: dict | None, eph: tuple[int
         if shape(prev) != shape(cur) or prev.get("forwards") != cur.get("forwards"):
             events.append({"kind": "firewall_changed", "severity": "medium",
                            "title": "Firewall rules changed", "detail": None, "link": "/exposure"})
+    elif source == "packages":
+        def secnames(d):
+            return {u["name"] for u in d.get("updates", []) if u.get("security")}
+        new = sorted(secnames(cur) - secnames(prev))
+        if new:
+            n = len(new)
+            events.append({"kind": "pkg_security", "severity": "medium",
+                           "title": f"{n} new security update{'s' if n > 1 else ''}",
+                           "detail": ", ".join(new[:5]) + (f" and {n - 5} more" if n > 5 else ""),
+                           "link": "/packages#security"})
+        if findings.reboot_reasons(cur) and not findings.reboot_reasons(prev):
+            events.append({"kind": "pkg_reboot", "severity": "medium", "title": "Reboot needed",
+                           "detail": findings.reboot_reasons(cur)[0], "link": "/packages#reboot"})
     return events
 
 
@@ -208,7 +223,9 @@ class Collector:
         if self.config_file is not None:
             tasks.append(asyncio.create_task(_backups(self.cfg, self.config_file, stop), name="backup"))
         if self.cfg.upload.url:
-            longest = max((s.interval for s in self.sources), default=60)
+            # Silence detection is per upload, not per read: the hourly packages
+            # source must not stretch the time the hub waits before flagging this host.
+            longest = max((min(s.interval, 300) for s in self.sources), default=60)
             uploader = Uploader(self.cfg, self.conn, self._lock, self.eph, longest)
             tasks.append(asyncio.create_task(uploader.run(stop), name="upload"))
         await stop.wait()

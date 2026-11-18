@@ -34,6 +34,8 @@
 # interval_caddy = 60
 # interval_fail2ban = 60
 # interval_firewall = 300
+# Pending apt updates, reboots and services on old libraries (never runs apt update).
+# interval_packages = 3600
 # docker_socket = "/var/run/docker.sock"
 # Caddy's admin address, written as Caddy writes it. A Unix socket is safer:
 # set `admin unix//run/caddy/admin.sock` in the Caddyfile and use the same here.

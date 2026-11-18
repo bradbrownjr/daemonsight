@@ -27,13 +27,14 @@ SECTION_READ = {
     "caddy": "Caddy admin API: GET /config/ and GET /reverse_proxy/upstreams",
     "fail2ban": "fail2ban control socket: status, status <jail> and get <jail> commands",
     "firewall": "iptables-save and ip6tables-save, and nft -j list ruleset for native nft tables",
+    "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
     "findings": "DaemonSight's rules, applied to the latest reading from each source",
     "events": "DaemonSight compares each new reading with the one before it",
 }
 
 SECTION_TITLE = {
     "system": "System health", "systemd": "systemd services", "ports": "Listening sockets",
-    "docker": "Containers", "caddy": "Caddy", "fail2ban": "fail2ban", "firewall": "Firewall",
+    "docker": "Containers", "caddy": "Caddy", "fail2ban": "fail2ban", "firewall": "Firewall", "packages": "Packages",
     "findings": "Findings", "events": "Recent changes",
 }
 
@@ -101,11 +102,37 @@ def section(source: str, cfg: Config, extra: dict | None = None) -> dict:
     elif source == "firewall":
         entries = [cmd("IPv4 rules", "sudo iptables-save"), cmd("IPv6 rules", "sudo ip6tables-save"),
                    cmd("nftables", "sudo nft list ruleset")]
+    elif source == "packages":
+        entries = [cmd("Pending updates", "apt list --upgradable"), cmd("Held packages", "apt-mark showhold")]
     elif source == "findings":
         entries = [{"kind": "url", "label": "Rules", "text": "Rule list in DESIGN.md",
                     "href": "https://github.com/bradbrownjr/daemonsight/blob/main/docs/DESIGN.md#findings"}]
     return {"title": SECTION_TITLE.get(source, source), "read": SECTION_READ.get(source),
             "entries": entries + _web_ui(cfg, source)}
+
+
+PACKAGES_PARTS = {
+    "security": ("Security updates", "apt-get -s dist-upgrade: Inst lines whose origin is a security archive",
+                 [cmd("Pending updates", "apt list --upgradable"),
+                  cmd("Where one comes from", "apt-cache policy <package>")]),
+    "other": ("Other updates", "apt-get -s dist-upgrade: the remaining Inst lines",
+              [cmd("Pending updates", "apt list --upgradable")]),
+    "held": ("Held packages", "apt-mark showhold", [cmd("Held packages", "apt-mark showhold")]),
+    "reboot": ("Reboot and restarts",
+               "/var/run/reboot-required, dpkg-query for linux-image packages, and needrestart -b -r l",
+               [file("Reboot flag", "/var/run/reboot-required.pkgs"),
+                cmd("Why a reboot is needed", "cat /var/run/reboot-required.pkgs"),
+                cmd("Running kernel", "uname -r"), cmd("Installed kernels", "dpkg -l 'linux-image-*'"),
+                cmd("Services on old libraries", "sudo needrestart -b -r l")]),
+    "lists": ("Package lists", "The newest modification time of /var/lib/apt/lists/*InRelease",
+              [cmd("Newest lists", "ls -lt /var/lib/apt/lists/*InRelease | head -3"),
+               cmd("apt's timers", "systemctl list-timers 'apt-daily*'")]),
+}
+
+
+def packages(part: str) -> dict:
+    title, read, entries = PACKAGES_PARTS[part]
+    return {"title": title, "read": read, "entries": list(entries)}
 
 
 def unit(u: dict) -> dict:
@@ -243,10 +270,10 @@ def forward(f: dict) -> dict:
 
 
 PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/services": "Services",
-             "/fail2ban": "fail2ban"}
+             "/fail2ban": "fail2ban", "/packages": "Packages"}
 
 RULE_SOURCE = {"svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
-               "jail": "fail2ban", "firewall": "firewall", "sys": "system", "collector": "events"}
+               "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "collector": "events"}
 
 
 def finding(rule: str, link_href: str | None) -> dict:

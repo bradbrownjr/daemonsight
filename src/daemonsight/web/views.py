@@ -201,6 +201,14 @@ def overview(conn, cfg: Config) -> dict:
     if fw is not None:
         glance.append({"title": "Firewall", "value": "Filtering inbound" if fw.get("filtering") else "No inbound filtering",
                        "alert": None if fw.get("filtering") else "accepts everything", "note": None})
+    pk = _snap_data(snaps, "packages")
+    if pk is not None:
+        n_sec = pk.get("security_count") or 0
+        n_all = len(pk.get("updates", []))
+        glance.append({"title": "Updates", "value": f"{n_all} waiting",
+                       "alert": f"{n_sec} security" if n_sec else None,
+                       "note": "Reboot needed" if rules.reboot_reasons(pk) else None,
+                       "link": "/packages"})
     pt = snaps.get("ports")
     if pt and pt.data:
         ls = pt.data["listeners"]
@@ -215,7 +223,7 @@ def overview(conn, cfg: Config) -> dict:
         "events": events_list(conn, host),
         "glance": glance,
         "sources": {name: _source_state(snaps, name)
-                    for name in ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall")},
+                    for name in ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall", "packages")},
         "src": {name: prov.section(name, cfg) for name in ("system", "findings", "events")},
     }
 
@@ -543,6 +551,45 @@ def jails(conn, cfg: Config) -> dict:
         "f2b_state": _source_state(snaps, "fail2ban"),
         "public_host": rules.host_is_public(_snap_data(snaps, "ports")),
         "src": {"fail2ban": prov.section("fail2ban", cfg), "ports": prov.section("ports", cfg)},
+    }
+
+
+def packages(conn, cfg: Config) -> dict:
+    snaps = db.get_snapshots(conn, cfg.host_id)
+    data = _snap_data(snaps, "packages")
+    snap = snaps.get("packages")
+    now = time.time()
+
+    def row(u):
+        return {"anchor": rules.anchor("pkg", u["name"]), "name": u["name"],
+                "current": u.get("current") or "new", "candidate": u.get("candidate") or "—",
+                "origin": u.get("origin") or "—"}
+
+    ups = (data or {}).get("updates", [])
+    kernel = (data or {}).get("kernel") or {}
+    nr = (data or {}).get("needrestart") or {}
+    reboot = (data or {}).get("reboot") or {}
+    age = (data or {}).get("lists_age")
+    reasons = rules.reboot_reasons(data)
+    return {
+        "host": _host(cfg, snaps),
+        "state": _source_state(snaps, "packages"),
+        "checked": fmt_ago(snap.taken_at) if snap else "never",
+        "security": [row(u) for u in ups if u.get("security")],
+        "other": [row(u) for u in ups if not u.get("security")],
+        "kept_back": (data or {}).get("kept_back", []),
+        "removals": (data or {}).get("removals", 0),
+        "held": (data or {}).get("held", []),
+        "reboot_needed": bool(reasons),
+        "reboot_reasons": reasons,
+        "reboot_pkgs": reboot.get("pkgs", []),
+        "kernel": kernel,
+        "needrestart": nr,
+        "lists_age": fmt_ago(age, now) if age else None,
+        "lists_stale": bool(age) and now - age > rules.STALE_LISTS_DAYS * 86400,
+        "timer": (data or {}).get("daily_timer"),
+        "errors": (data or {}).get("errors", {}),
+        "src": {part: prov.packages(part) for part in prov.PACKAGES_PARTS},
     }
 
 

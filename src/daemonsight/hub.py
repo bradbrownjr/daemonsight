@@ -23,7 +23,7 @@ from .findings import Finding
 
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 HUB_RULES = "host."
-SOURCES = ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall")
+SOURCES = ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall", "packages")
 SILENT_AFTER_INTERVALS = 3
 SKEW_SECONDS = 300
 
@@ -37,6 +37,7 @@ SOURCE_SHAPE: dict[str, dict[str, type]] = {
     "caddy": {"sites": list, "servers": list},
     "fail2ban": {"jails": list},
     "firewall": {"input": list, "forwards": list},
+    "packages": {"updates": list},
 }
 
 Severity = Literal["critical", "high", "medium", "low", "info"]

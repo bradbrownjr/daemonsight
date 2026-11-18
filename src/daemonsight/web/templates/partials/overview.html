@@ -88,7 +88,7 @@
         <div class="datagrid">
           {% for g in v.glance %}
           <div class="datagrid-item">
-            <div class="datagrid-title">{{ g.title }}</div>
+            <div class="datagrid-title">{% if g.link %}<a href="{{ base }}{{ g.link }}" class="text-reset">{{ g.title }}</a>{% else %}{{ g.title }}{% endif %}</div>
             <div class="datagrid-content">{{ g.value }}{% if g.alert %} · <span class="text-red">{{ g.alert }}</span>{% endif %}</div>
             {% if g.note %}<div class="text-secondary small">{{ g.note }}</div>{% endif %}
           </div>

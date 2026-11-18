@@ -64,6 +64,7 @@ capabilities each source needs is listed under "To verify".
 | Caddy | `GET /config/` for servers and routes, `GET /reverse_proxy/upstreams` for `address`, `num_requests`, `fails` | 60 s | Default `localhost:2019`; also supports a Unix socket, which Caddy recommends. On TCP the admin API checks the Host header (admin.go `checkHost`); on a Unix socket it doesn't. [4] |
 | fail2ban | The server's control socket (`/var/run/fail2ban/fail2ban.sock`): `status`, `status <jail>`, `get <jail> logpath / journalmatch / bantime / findtime / maxretry / ignoreip / actions`, `get <jail> banip --with-time` | 60 s | Pickled Python values framed by `<F2B_END_COMMAND>`, read with an unpickler that accepts builtins only. See "Answered in phase 2". [5] |
 | Firewall | `iptables-save` and `ip6tables-save` when installed; `nft -j list ruleset` for native nft tables | 5 min | Input chains (default verdict, ports accepted, following jumps) and DNAT forwards. With iptables' nf_tables backend, nft shows extension matches such as multiport only as opaque `xt` expressions, so iptables-save is read for those tables. [6] |
+| Packages | `apt-get -s -o Debug::NoLocking=1 dist-upgrade` (a simulation: pending upgrades, with the archive each comes from, so security updates are known), `apt-mark showhold`, `dpkg-query` for installed `linux-image-*`, `/var/run/reboot-required(.pkgs)`, the mtime of `/var/lib/apt/lists/*InRelease`, `systemctl is-enabled apt-daily.timer`, and `needrestart -b -r l` if installed | 1 h | Never runs `apt update`; the host's apt timers do, and the lists' age is reported. The simulation needs no root and changes nothing. A kernel that no installed `linux-image` package matches (an LXC, a custom kernel) is "managed by the host" and raises nothing. needrestart's batch mode lists services using old libraries without restarting them. [12][13] |
 | CVEs, host | `trivy rootfs --scanners vuln --format json /` with `--skip-dirs` for `/proc`, `/sys`, `/var/lib/docker` | 6 h | Without `--pkg-types os` it also finds language packages (Python venvs, `node_modules`) of apps on the host. [7][8] |
 | CVEs, images | `trivy image --format json <image>` for each running image | 6 h | Fields used: `VulnerabilityID`, `PkgName`, `InstalledVersion`, `FixedVersion`, `Status`, `Severity`. [8] |
 | CVEs, cross-check | `debsecan --suite <codename> --only-fixed --format detail` | 6 h | Debian's own view of fixable packages. Needs network access. [9] |
@@ -90,6 +91,11 @@ DaemonSight knows when it first appeared and when it cleared.
 | `route.upstream_failing` | An upstream's `fails` is above zero (Caddy only counts fails with passive health checks on) | Medium |
 | `jail.uncovered` | A public service (listener or Caddy host) has no jail reading its logs | High |
 | `jail.log_missing` | A jail's `logpath` does not exist | Medium |
+| `pkg.security_updates` | A pending update comes from a security archive | High; Medium if the package lists are over 3 days old |
+| `pkg.updates` | Updates are pending, none of them security | Low |
+| `pkg.reboot` | `/var/run/reboot-required` exists, or a newer kernel than the running one is installed | Medium |
+| `pkg.restart` | needrestart lists services using old libraries | Low |
+| `pkg.lists_stale` | The package lists are over 3 days old | Low |
 | `cve.fixable_exposed` | A fixable CVE sits in a package or image whose process owns a public listener or Caddy upstream | The CVE's severity, raised one level |
 | `cve.fixable` | Any other fixable CVE | The CVE's severity |
 | `svc.failed` | A unit is in `failed` | High |
@@ -158,7 +164,7 @@ matches the logo's gem. Light mode is a toggle. Tabler ships both as built-in
 attributes (`data-bs-theme`, `data-bs-theme-base`, `data-bs-theme-primary`), so
 there is no custom CSS to maintain.
 
-Pages: Overview, Exposure, Caddy routes, Services and containers, fail2ban.
+Pages: Overview, Exposure, Caddy routes, Services and containers, fail2ban, Packages.
 On a hub, Hosts is the front page. Vulnerabilities comes with phase 3.
 
 Row links: a finding links to the row it is about, such as an Exposure port,
@@ -210,7 +216,10 @@ supports ntfy and SMTP email. Daily digest optional.
 2. Caddy, fail2ban, nftables sources. Exposure, Routes and fail2ban pages. The `expose`, `route` and `jail` rules. Done.
    2b. Remote sources: the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware) and the Unraid API (array, disks, containers, VMs). Each shows as its own host. See "Remote sources". Planned.
    2c. The hub: collectors upload to one install that shows every host, with the container image and Unraid template, retention and backups, and updates from the hub. See "Hub". Done.
-3. Next: Scanner unit, Trivy and debsecan. Vulnerabilities page. The `cve` rules.
+3. Package and CVE checks.
+   3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done.
+   3b. Next: CVE matching on the hub, from the Debian security tracker.
+   3c. Next: CVEs in container images (Trivy), with the Vulnerabilities page and the `cve` rules.
 4. Alerts, recent-changes feed, history charts.
 5. `.deb` package and docs.
 
@@ -576,3 +585,5 @@ to the lines behind them.
 9. debsecan(1), Debian 12: https://manpages.debian.org/bookworm/debsecan/debsecan.1.en.html
 10. Docker Compose labels: https://github.com/docker/compose/blob/main/pkg/api/labels.go
 11. Wazuh architecture: https://documentation.wazuh.com/current/getting-started/architecture.html
+12. apt-get(8) (`-s` simulation, `Debug::NoLocking`), Debian 13: https://manpages.debian.org/trixie/apt/apt-get.8.en.html
+13. needrestart(1) and batch mode output: https://github.com/liske/needrestart (man/needrestart.1, README.batch.md)

@@ -96,6 +96,18 @@ After a change, restart both units:
 sudo systemctl restart daemonsight-collector daemonsight-web
 ```
 
+### Updates and reboots
+
+The Packages page needs nothing extra on Debian or Ubuntu. DaemonSight runs
+`apt-get -s dist-upgrade`, a simulation that changes nothing, once an hour
+(`interval_packages`, in seconds). It never runs `apt update`; keep apt's daily
+timer on so the lists stay current. The page shows the lists' age.
+
+`needrestart` is optional. With it installed (`sudo apt install needrestart`)
+the page also lists services still running old libraries after an upgrade.
+Without it, that card says so. DaemonSight only lists; it never restarts a
+service.
+
 ### Which ports should be public
 
 Two lists in `[exposure]` tell DaemonSight what you meant to expose. They
@@ -162,7 +174,7 @@ caddy = "https://router.example.lan/ui/caddy/reverse_proxy"
 ```
 
 Sources: `system`, `systemd`, `ports`, `docker`, `caddy`, `fail2ban`,
-`firewall`.
+`firewall`, `packages`.
 
 ## Back up and restore
 

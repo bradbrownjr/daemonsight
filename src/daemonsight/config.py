@@ -38,6 +38,7 @@ class CollectorConfig:
     interval_caddy: int = 60
     interval_fail2ban: int = 60
     interval_firewall: int = 300
+    interval_packages: int = 3600
     docker_socket: str = "/var/run/docker.sock"
     # Caddy's admin address as Caddy writes it: "localhost:2019" or
     # "unix//run/caddy/admin.sock".
