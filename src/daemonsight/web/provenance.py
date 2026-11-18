@@ -273,6 +273,34 @@ def caddy_sites_on(proto: str, port: int, caddy: dict | None) -> list[str]:
 
 
 CADDY_SITE_LIMIT = 8
+CADDY_HANDLER_LIMIT = 6
+HANDLER_KIND = {"proxy": "Proxy", "files": "Files", "redirect": "Redirect", "respond": "Respond"}
+
+
+def caddy_handler_text(h: dict) -> str:
+    """One Caddy handler as a line, e.g. "Redirect /cpanelwebcall/* → <target>"."""
+    kind = HANDLER_KIND.get(h.get("kind"), str(h.get("kind") or "Handle").title())
+    paths = " ".join(h.get("paths") or [])
+    if h.get("kind") == "proxy":
+        to = ", ".join(u.get("text", "") for u in h.get("upstreams") or []) or "dynamic upstream"
+    elif h.get("kind") == "files":
+        to = h.get("root") or "site root"
+    elif h.get("kind") == "redirect":
+        to = h.get("target") or ""
+    else:
+        to = str(h.get("status") or 200)
+    return " ".join(x for x in (kind, paths, "→", to) if x)
+
+
+def caddy_handlers_on(proto: str, port: int, host: str, caddy: dict | None) -> list[str]:
+    """What a site does on this port: its handlers, as lines."""
+    out: list[str] = []
+    servers = {s["name"] for s in (caddy or {}).get("servers", [])
+               if any(_listen_port(a) == (proto, port) for a in s.get("listen") or [])}
+    for site in (caddy or {}).get("sites", []):
+        if site["server"] in servers and site["host"] == host:
+            out += [caddy_handler_text(h) for h in site.get("handlers", [])]
+    return out
 
 
 def _is_caddy(r: dict) -> bool:
@@ -306,6 +334,11 @@ def listener(r: dict, names: dict | None = None, caddy: dict | None = None) -> d
         hosts = caddy_sites_on(r["proto"], r["port"], caddy)
         for h in hosts[:CADDY_SITE_LIMIT]:
             entries.append(link("Caddy site", f"/routes#{anchor('site', h)}", h))
+            lines = caddy_handlers_on(r["proto"], r["port"], h, caddy)
+            for line in lines[:CADDY_HANDLER_LIMIT]:
+                entries.append(text("Handles", line))
+            if len(lines) > CADDY_HANDLER_LIMIT:
+                entries.append(plain("Handles", f"{len(lines) - CADDY_HANDLER_LIMIT} more on the Routes page"))
         if len(hosts) > CADDY_SITE_LIMIT:
             entries.append(link("More Caddy sites", "/routes", f"{len(hosts) - CADDY_SITE_LIMIT} more"))
     return {"title": f"Port {r['port']}/{r['proto']}",

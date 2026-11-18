@@ -117,6 +117,19 @@ def test_listener_caddy_sites_link_to_routes_rows():
     assert not [e for e in prov.listener(not_caddy, caddy=_caddy())["entries"] if "Caddy" in e["label"]]
 
 
+def test_listener_shows_what_the_caddy_site_does_on_that_port():
+    caddy = _caddy()
+    caddy["sites"][-1]["handlers"] = [
+        {"kind": "redirect", "paths": ["/hook/*"], "target": "https://panel.example.net:2083{http.request.uri}"},
+        {"kind": "proxy", "paths": [], "upstreams": [{"text": "127.0.0.1:8080"}]}]
+    p = prov.listener(_caddy_row(port=2083), caddy=caddy)
+    assert [e["value"] for e in p["entries"] if e["label"] == "Handles"] == [
+        "Redirect /hook/* → https://panel.example.net:2083{http.request.uri}",
+        "Proxy → 127.0.0.1:8080"]
+    # Only the site's handlers, and only on this port.
+    assert not [e for e in prov.listener(_caddy_row(), caddy=caddy)["entries"] if e["label"] == "Handles"]
+
+
 def test_listener_caddy_sites_capped():
     p = prov.listener(_caddy_row(), caddy=_caddy(12))
     assert len([e for e in p["entries"] if e["label"] == "Caddy site"]) == 8

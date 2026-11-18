@@ -29,6 +29,39 @@
     </dl>
     {% endif %}
   </div>
+  {% if s.finding and can_accept %}{{ panel_accept(id, s.finding, s.anchor) }}{% endif %}
+</div>
+{%- endmacro %}
+
+{# The finding behind a row, at the foot of its panel: accept it with a note
+   where the evidence is, or close the panel. Back to the row afterwards. #}
+{% macro panel_accept(id, f, row) -%}
+<div class="card-footer ds-noprint">
+  <div class="subheader">Finding</div>
+  <p class="mb-2"><span class="badge {{ f.badge }} me-1">{{ f.label }}</span>{{ f.title }}</p>
+  {% if f.accepted and not f.accepted.changed %}
+  <p class="mb-2">Accepted by {{ f.accepted.by }}, {{ f.accepted.ago }}: {{ f.accepted.note }}</p>
+  <form method="post" action="{{ base }}/findings/unaccept" class="d-flex gap-2 m-0">
+    <input type="hidden" name="rule" value="{{ f.rule }}">
+    <input type="hidden" name="key" value="{{ f.key }}">
+    <input type="hidden" name="next" value="{{ path }}#{{ row }}">
+    <button type="submit" class="btn btn-sm">Un-accept</button>
+    <button type="button" class="btn btn-sm btn-ghost-secondary" popovertarget="{{ id }}" popovertargetaction="hide">Close</button>
+  </form>
+  {% else %}
+  {% if f.changed_note %}<p class="text-orange small mb-2">{{ f.changed_note }}</p>{% endif %}
+  <form method="post" action="{{ base }}/findings/accept" class="m-0">
+    <input type="hidden" name="rule" value="{{ f.rule }}">
+    <input type="hidden" name="key" value="{{ f.key }}">
+    <input type="hidden" name="next" value="{{ path }}#{{ row }}">
+    <label class="form-label" for="pnote-{{ id }}">Why is this accepted?</label>
+    <input type="text" class="form-control form-control-sm mb-2" id="pnote-{{ id }}" name="note" required minlength="1" maxlength="500" autocomplete="off" placeholder="Why it is fine as it is">
+    <div class="d-flex gap-2 justify-content-end">
+      <button type="button" class="btn btn-sm btn-ghost-secondary" popovertarget="{{ id }}" popovertargetaction="hide">Cancel</button>
+      <button type="submit" class="btn btn-sm btn-primary">Accept risk</button>
+    </div>
+  </form>
+  {% endif %}
 </div>
 {%- endmacro %}
 

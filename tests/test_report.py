@@ -301,6 +301,21 @@ def test_accept_and_unaccept_flow(hubapp):
     assert "was not accepted" in c.get("/h/testhost/").text
 
 
+def test_port_panel_accepts_its_finding(hubapp):
+    c, conn, _ = hubapp
+    db.put_snapshot(conn, "testhost", "ports", time.time(), True, None, {
+        "listeners": [{"proto": "tcp", "port": 8000, "addresses": ["0.0.0.0"], "scope": "all", "pid": 1,
+                       "process": "python3", "owner": {"kind": "unknown", "id": None}}],
+        "owners_known": True, "addresses": [{"nic": "eth0", "ip": "203.0.113.10", "scope": "public"}]})
+    page = c.get("/h/testhost/exposure").text
+    panel = page.split('id="port-8000-tcp"')[1]
+    assert "Accept risk" in panel and "Cancel" in panel and 'value="/h/testhost/exposure#port-8000-tcp"' in panel
+    r = accept(c, "expose.unexpected", "8000/tcp", note="On purpose", next_="/h/testhost/exposure#port-8000-tcp")
+    assert r.headers["location"] == "/h/testhost/exposure#port-8000-tcp"
+    panel = c.get("/h/testhost/exposure").text.split('id="port-8000-tcp"')[1]
+    assert "Un-accept" in panel and "On purpose" in panel and "Accept risk" not in panel.split("</tr>")[0]
+
+
 def test_next_must_be_a_local_path(hubapp):
     c, _, _ = hubapp
     assert accept(c, "pkg.updates", "updates", next_="//evil.example/").headers["location"] == "/"

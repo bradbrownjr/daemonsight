@@ -185,6 +185,11 @@ accepted_at, accepted_by), and the finding stays in `findings`.
   replaces the acceptance.
 - When a finding resolves, its acceptance is deleted. If it returns, it is a
   new finding.
+- A port's panel on the Exposure page ends with that port's exposure finding:
+  a note field with Accept risk and Cancel, or, once accepted, the note and
+  Un-accept. Accepting from there returns to the port's row. The panel also
+  lists what each Caddy site on the port does (its handlers), so the decision
+  can be made from the panel.
 - Accepting and un-accepting write "Accepted: <title>" and "Un-accepted:
   <title>" to Recent changes, with the note.
 - Only a hub can accept. The web process of a single host opens the database

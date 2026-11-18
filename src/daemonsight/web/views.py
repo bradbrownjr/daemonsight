@@ -423,6 +423,9 @@ def exposure(conn, cfg: Config) -> dict:
     f2b = _snap_data(snaps, "fail2ban")
     jails = (f2b or {}).get("jails", [])
     expected = set(cfg.exposure.expected_public)
+    # The port's exposure finding, open or accepted, so its panel can accept it.
+    active, held = findings_lists(conn, cfg.host_id)
+    port_findings = {f["key"]: f for f in active + held if f["rule"] == "expose.unexpected"}
     public_keys = {(r["proto"], r["port"]) for r in rules.public_listeners(snaps, {"eph": _eph(snaps)})}
     ctr_names = {c["id"]: c["name"] for c in (_snap_data(snaps, "docker") or {}).get("containers", [])}
     rows = []
@@ -446,7 +449,9 @@ def exposure(conn, cfg: Config) -> dict:
             "fw": FW_LABEL[fw["state"]], "fw_badge": FW_BADGE[fw["state"]], "fw_why": fw["why"],
             "expected": ("Yes" if key in expected else "No") if internet else "—",
             "jail": (jail or "None") if internet else "—", "jail_bad": internet and not jail,
-            "anchor": rules.anchor("port", r["port"], r["proto"]), "src": prov.listener(r, ctr_names, _snap_data(snaps, "caddy")),
+            "anchor": rules.anchor("port", r["port"], r["proto"]),
+            "src": {**prov.listener(r, ctr_names, _snap_data(snaps, "caddy")), "finding": port_findings.get(key),
+                    "anchor": rules.anchor("port", r["port"], r["proto"])},
         })
     docker = []
     for c in (_snap_data(snaps, "docker") or {}).get("containers", []):
