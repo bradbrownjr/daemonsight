@@ -315,3 +315,15 @@ textarea.ds-set-input { max-width: 28rem; }
   .ds-js .ds-header .ds-account { order: 6; padding-top: .5rem; border-top: 1px solid var(--tblr-border-color); }
   .ds-acct-item { padding-left: 0; padding-right: 0; }
 }
+
+/* Account menu: toggles first, then Settings and Log out as menu items (icon,
+   full width, a hover background) so they read as things to click. */
+.ds-acct-item { display: flex; align-items: center; gap: .6rem; width: 100%; padding: .45rem .5rem;
+  border: 0; border-radius: var(--tblr-border-radius); background: none; color: var(--tblr-body-color);
+  font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.ds-acct-item:hover, .ds-acct-item:focus-visible { background: var(--tblr-bg-surface-secondary, rgba(255, 255, 255, .06));
+  color: var(--tblr-body-color); text-decoration: none; }
+.ds-acct-item[aria-current="page"] { color: var(--tblr-primary); }
+.ds-acct-item svg { flex: 0 0 auto; opacity: .8; }
+.ds-acct-sep { margin: .35rem 0; opacity: .5; }
+@media (max-width: 767.98px) { .ds-acct-item { padding-left: 0; padding-right: 0; } }

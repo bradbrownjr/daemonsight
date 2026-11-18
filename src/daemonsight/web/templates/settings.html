@@ -9,22 +9,15 @@
 {% for p in v.problems %}<div class="alert alert-danger" role="alert">{{ p }}</div>{% endfor %}
 {% if v.errors %}<div class="alert alert-danger" role="alert">Nothing was saved. Fix the marked settings and save again.</div>{% endif %}
 
+{% if not v.can_edit %}
 <div class="card mb-4" id="how">
   <div class="card-body">
-    <p class="mb-2">Each setting has three possible sources, in this order:
-      <strong>Set here</strong> (saved on this page), then <strong>Config file</strong>
-      (<code>{{ v.config_path }}</code>), then <strong>Default</strong>.
-      The config file is never rewritten.</p>
-    {% if v.can_edit %}
-    <p class="mb-0 text-secondary">Reset puts a setting back to the config file's value, or the default when the file
-      doesn't set it. A change takes effect the next time the job that uses it runs (within about a minute).</p>
-    {% else %}
     <p class="mb-0 text-secondary">This install is not a hub, and its web page opens the database read-only by design,
       so it can't save changes. To change a value, edit <code>{{ v.config_path }}</code> and restart:
       <code>sudo systemctl restart daemonsight-collector daemonsight-web</code>.</p>
-    {% endif %}
   </div>
 </div>
+{% endif %}
 
 {% for g in v.groups %}
 {% set gid = g.id %}
@@ -138,5 +131,10 @@
   <div class="card-body text-secondary">No changes made here yet.</div>
   {% endif %}
 </section>
+{% endif %}
+{% if v.can_edit %}
+<p class="text-secondary small" id="how">A value saved here wins over the config file (<code>{{ v.config_path }}</code>), which
+  wins over the default; the file is never rewritten. Reset goes back to the file's value, or the default.
+  Changes apply within about a minute.</p>
 {% endif %}
 {% endblock %}
