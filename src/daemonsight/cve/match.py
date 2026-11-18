@@ -62,6 +62,16 @@ def classify(status: str, fixed: str | None, urgency: str | None, nodsa: str | N
     return None
 
 
+def _kernel_installed(src: str, bins) -> bool:
+    """Kernel CVEs apply only where a Debian kernel image is installed. A
+    container or a host on another kernel can still have linux-libc-dev (the
+    headers for compiling) or tools built from the same source; those don't
+    run the kernel, so its CVEs aren't theirs. Other sources always match."""
+    if src != "linux" and not src.startswith("linux-signed"):
+        return True
+    return any(isinstance(b, str) and b.startswith("linux-image-") for b in (bins or []))
+
+
 def match_host(conn, host: str, inv: dict, gen: str) -> dict:
     """Replace the host's rows in `match`. Returns {"packages", "cves", "note"}."""
     release = release_of(inv)
@@ -71,7 +81,9 @@ def match_host(conn, host: str, inv: dict, gen: str) -> dict:
         note = ("CVE matching covers Debian and Raspberry Pi OS hosts so far" if inv.get("backend") == "apt"
                 else "This host's package system isn't matched here")
     else:
-        for src, ver, _bins in inv.get("sources", []):
+        for src, ver, bins in inv.get("sources", []):
+            if not _kernel_installed(src, bins):
+                continue
             for r in conn.execute("SELECT cve, status, fixed, urgency, nodsa FROM deb WHERE release = ? AND source = ?",
                                   (release, src)):
                 state = classify(r["status"], r["fixed"], r["urgency"], r["nodsa"], ver)

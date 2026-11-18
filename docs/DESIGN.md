@@ -640,10 +640,16 @@ Limits, all shown or documented rather than hidden:
 
 - A package installed from another repository (Docker, NodeSource) is matched
   by name and may be wrong. `dpkg-query` doesn't say where a package came from.
-- The tracker lists kernel CVEs under the `linux` source. A kernel image
-  built from `linux-signed-*` has its own source name and version, so it
-  isn't matched; only `linux` binaries (headers, tools) are. Unverified on a
-  host with a distro kernel.
+- The tracker lists kernel CVEs under the `linux` source. Debian's kernel
+  images come from `linux-signed-<arch>`, whose version (`6.1.164+1`) isn't
+  the kernel's, so the collector lists the running kernel's image
+  (`linux-image-<uname -r>`) under `linux` with the image's own version
+  (`6.1.164-1`), which is the kernel's. Other installed kernels aren't running
+  and are left out. Kernel CVEs are matched only when a kernel image is
+  listed: a container on its host's kernel, or a host on a kernel Debian
+  didn't build, can have `linux-libc-dev` (headers) without running that
+  kernel. After a kernel update, the running kernel still matches until the
+  reboot, which is the point.
 - Debian's tracker covers the release's own archives. Backports aren't
   tracked per release.
 
@@ -909,7 +915,7 @@ The collector must stay light:
 - The Caddy source against the VPS's Caddy.
 - fail2ban 1.0.2 on Debian 12.
 - Fedora: `dnf needs-restarting -C -s` output (the parser takes lines naming `*.service`; not captured, since a container has no D-Bus), the JSON for "no reboot needed", the whole collector on a real Fedora 44 KDE host, and `install.sh` under SELinux enforcing. dnf5 was tested in `fedora:44` containers only.
-- CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); kernel CVEs for a distro kernel (`linux-signed-*` sources); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
+- CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
 - Whether the Docker source works against Podman's Docker-compatible socket.
 - The Docker source on a real Docker host (alpha or the VPS).
 - The systemd sandboxing in `daemonsight-web.service` inside an unprivileged LXC.

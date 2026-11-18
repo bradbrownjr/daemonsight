@@ -154,6 +154,29 @@ def test_match_host_states(cvedb):
     assert states(cvedb, "h", "nodejs") == {"CVE-2026-111497": "minor"}
 
 
+def test_running_kernel_is_listed_under_linux():
+    text = "".join(f"ii \t{s}\t{sv}\t{b}\t{bv}\n" for s, sv, b, bv in [
+        ("linux-signed-amd64", "6.1.158+1", "linux-image-6.1.0-41-cloud-amd64", "6.1.158-1"),
+        ("linux-signed-amd64", "6.1.164+1", "linux-image-6.1.0-44-cloud-amd64", "6.1.164-1"),
+        ("linux", "6.1.164-1", "linux-libc-dev", "6.1.164-1"),
+        ("c-ares", "1.18.1-3", "libc-ares2", "1.18.1-3")])
+    rows = inv.parse_dpkg_query(text, "6.1.0-41-cloud-amd64")
+    assert ["linux", "6.1.158-1", ["linux-image-6.1.0-41-cloud-amd64"]] in rows
+    assert ["linux", "6.1.164-1", ["linux-libc-dev"]] in rows
+    assert not any(r[0].startswith("linux-signed") for r in rows)
+    # Another kernel running (a container on its host's kernel): no image listed.
+    assert not any("linux-image" in b for r in inv.parse_dpkg_query(text, "6.18.38-Unraid") for b in r[2])
+
+
+def test_kernel_sources_need_a_kernel_image():
+    # A container on another kernel can have the headers without the kernel.
+    assert not match._kernel_installed("linux", ["linux-libc-dev"])
+    assert match._kernel_installed("linux", ["linux-image-6.12.115-amd64", "linux-libc-dev"])
+    assert match._kernel_installed("linux-signed-amd64", ["linux-image-6.1.0-56-cloud-amd64"])
+    assert not match._kernel_installed("linux-signed-amd64", [])
+    assert match._kernel_installed("c-ares", [])
+
+
 def test_match_is_replaced_not_added(cvedb):
     match.match_host(cvedb, "h", inventory([["c-ares", "1.10.0-1", []]]), "g")
     match.match_host(cvedb, "h", inventory([["c-ares", "1.19.1-2", []]]), "g")  # now fixed everywhere

@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import platform
 import re
 import shutil
 import subprocess
@@ -46,19 +47,31 @@ MAX_BINARIES = 30
 MAX_SOURCES = 20_000
 
 
-def parse_dpkg_query(text: str) -> list[list]:
+def parse_dpkg_query(text: str, running_kernel: str | None = None) -> list[list]:
     """[source, source version, [binary packages]] for every installed package,
     one row per distinct source and version, sorted. A binary list that is
     only the source's own name is left empty to keep the upload small. Lines
-    for packages that are removed but not purged ("rc") are skipped."""
+    for packages that are removed but not purged ("rc") are skipped.
+
+    Debian's kernel images come from linux-signed-<arch>, whose version
+    ("6.1.164+1") isn't the kernel's, and the tracker lists kernel CVEs under
+    `linux` only. The running kernel's image (linux-image-<uname -r>) carries
+    the `linux` version as its own ("6.1.164-1"), so it is listed under
+    `linux` with that version. Other installed kernels aren't running and are
+    left out."""
     groups: dict[tuple[str, str], set[str]] = {}
+    image = f"linux-image-{running_kernel}" if running_kernel else None
     for line in text.splitlines():
         parts = line.split("\t")
         if len(parts) != 5 or len(parts[0]) < 2 or parts[0][1] != "i":
             continue
-        _, src, src_ver, binary, _ = parts
+        _, src, src_ver, binary, bin_ver = parts
         if not src or not src_ver or not binary:
             continue
+        if src.startswith("linux-signed"):
+            if binary != image or not bin_ver:
+                continue
+            src, src_ver = "linux", bin_ver
         groups.setdefault((src, src_ver), set()).add(binary)
     rows = []
     for (src, ver), bins in sorted(groups.items()):
@@ -71,9 +84,9 @@ def fingerprint(*parts) -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
 
 
-def inventory_apt(dpkg_text: str, osr: dict[str, str]) -> dict:
+def inventory_apt(dpkg_text: str, osr: dict[str, str], running_kernel: str | None = None) -> dict:
     ident = distro.os_ident(osr)
-    rows = parse_dpkg_query(dpkg_text)
+    rows = parse_dpkg_query(dpkg_text, running_kernel)
     return {"available": True, "backend": "apt", "os_id": ident["os_id"], "version_id": ident["version_id"],
             "codename": ident["version_codename"], "sources": rows, "count": len(rows),
             "hash": fingerprint(ident, rows)}
@@ -139,7 +152,7 @@ def collect_sync() -> dict:
                               errors="replace", timeout=TIMEOUT, env=ENV, stdin=subprocess.DEVNULL)
         if proc.returncode != 0:
             raise RuntimeError(f"dpkg-query exited {proc.returncode}")
-        return inventory_apt(proc.stdout, read_os_release())
+        return inventory_apt(proc.stdout, read_os_release(), platform.release())
     raise SourceUnavailable("CVE matching needs apt and dpkg, or dnf5")
 
 
