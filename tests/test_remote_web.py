@@ -114,8 +114,10 @@ def test_the_form_and_its_links(c):
         h = c.get(page).text
         assert 'href="/remotes/new"' in h
     # The menu (which becomes the phone menu panel) links to it from every hub page.
-    assert re.search(r'class="nav-link"\s+href="/remotes/new">Add a system</a>', c.get("/").text)
-    assert re.search(r'class="nav-link"\s+href="/remotes/new">Add a system</a>', c.get("/h/nothing/").text) or True
+    nav = re.compile(r'class="nav-link ds-nav-add"\s+href="/remotes/new" title="Add a system" aria-label="Add a system">')
+    assert nav.search(c.get("/").text)
+    # A divider between the hub's items and a host's sections, only on host pages.
+    assert 'class="ds-nav-sep"' not in c.get("/").text
     assert re.search(r'aria-current="page"\s+href="/remotes/new"', html)
 
 

@@ -48,7 +48,9 @@
     <ul class="nav nav-pills gap-1">
       {% if hub %}
       <li class="nav-item"><a class="nav-link{{ ' active' if page == 'hosts' }}" {% if page == 'hosts' %}aria-current="page"{% endif %} href="/">Hosts</a></li>
-      <li class="nav-item"><a class="nav-link{{ ' active' if page == 'remotes' }}" {% if page == 'remotes' %}aria-current="page"{% endif %} href="/remotes/new">Add a system</a></li>
+      {# A + on wide screens; the phone menu has room for the words. #}
+      <li class="nav-item"><a class="nav-link ds-nav-add{{ ' active' if page == 'remotes' }}" {% if page == 'remotes' %}aria-current="page"{% endif %} href="/remotes/new" title="Add a system" aria-label="Add a system"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg><span class="ds-nav-add-text">Add a system</span></a></li>
+      {% if base %}<li class="ds-nav-sep" aria-hidden="true"></li>{% endif %}
       {% endif %}
       {% if not hub or base %}
       {% if host and host.kind == 'unraid' %}

@@ -114,8 +114,10 @@
 {# A status label: Unexpected, Accepted, Changed or Expected. An accepted one
    carries its note as a tooltip; the note is also written in the row, so it
    reads on a phone, where there is no hover. #}
-{% macro status_badge(s) -%}
-<span class="badge {{ s.badge }} ds-status" data-status-label="{{ s.key }}"{% if s.note %} title="{{ s.note }}"{% endif %}>{{ s.label }}</span>
+{# quiet: in a findings list every open finding is Unexpected, so that label
+   is left to screen readers and only Accepted and Changed show. #}
+{% macro status_badge(s, quiet=False) -%}
+<span class="badge {{ s.badge }} ds-status{{ ' visually-hidden' if quiet and s.key == 'unexpected' }}" data-status-label="{{ s.key }}"{% if s.note %} title="{{ s.note }}"{% endif %}>{{ s.label }}</span>
 {%- endmacro %}
 
 {# A table cell's status: the label, with an accepted one's note under it, or a dash when the row isn't reachable from the internet. #}
