@@ -224,7 +224,51 @@ def test_saving_a_key_writes_a_0600_file_and_nothing_else(web):
     assert "Shodan API key saved" in hub_events(conn)
     assert KEY not in surfaces(c, conn, cfg)
     html = c.get("/settings").text
-    assert "A key is saved" in html and "Replace the key" in html and "Remove key" in html and KEY not in html
+    assert "A key is saved" in html and "Paste a new key to replace it" in html and "Remove key" in html
+    assert KEY not in html
+
+
+OUTSIDE_FORM = {"group": "outside", "outside.enabled": "on", "outside.refresh_hours": "24", "outside.addresses": ""}
+
+
+def test_the_key_box_sits_under_source_and_shows_only_for_the_shodan_api(web):
+    c, conn, cfg, fake = web
+    html = c.get("/settings").text
+    form = re.search(r'<form method="post" action="/settings".*?</form>', html.split('id="outside"')[1], re.S).group(0)
+    assert 'id="shodan-key"' in form and 'name="shodan_key"' in form          # in the group's own form
+    assert 'data-ds-when="f-outside-source=shodan"' in form
+    assert form.count("<form") == 1                                           # no nested form
+    assert 'formaction="/settings/shodan-key"' in form and "How to get" not in html.split('id="outside"')[0]
+
+
+def test_one_save_stores_the_key_and_the_shodan_api_source(web):
+    c, conn, cfg, fake = web
+    r = c.post("/settings", data={**OUTSIDE_FORM, "outside.source": "shodan", "shodan_key": KEY})
+    assert r.status_code == 303 and r.headers["location"] == "/settings#outside"
+    assert shodan.read_key(cfg) == KEY and oct(cfg.shodan_key_path.stat().st_mode & 0o777) == "0o600"
+    assert settings.effective(cfg, conn).outside.source == "shodan"
+    assert "shodan_key" not in {x["key"] for x in conn.execute("SELECT key FROM settings")}
+    assert "Shodan API key saved" in hub_events(conn)
+    html, note = flash_of(c)
+    assert "Shodan API key" in note and KEY not in html
+    assert KEY not in surfaces(c, conn, cfg)
+
+
+def test_a_bad_key_with_the_group_saves_nothing(web):
+    c, conn, cfg, fake = web
+    r = c.post("/settings", data={**OUTSIDE_FORM, "outside.source": "shodan", "shodan_key": "not a key"})
+    assert r.status_code == 400 and "does not look like a Shodan API key" in r.text
+    assert not cfg.shodan_key_path.exists()
+    assert not list(conn.execute("SELECT key FROM settings"))
+    assert "Shodan API key saved" not in hub_events(conn)
+
+
+def test_test_key_from_the_group_form_uses_the_typed_key(web):
+    c, conn, cfg, fake = web
+    r = c.post("/settings/shodan-key", data={**OUTSIDE_FORM, "outside.source": "shodan", "shodan_key": KEY,
+                                             "action": "test"})
+    assert r.status_code == 303 and not cfg.shodan_key_path.exists()
+    assert KEY not in surfaces(c, conn, cfg)
 
 
 def test_the_key_is_replaced_and_removed(web):

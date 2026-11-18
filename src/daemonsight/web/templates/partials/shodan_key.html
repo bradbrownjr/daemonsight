@@ -1,0 +1,32 @@
+{# The Shodan API key, inside the Source row of Outside view. Shown while Source is "Shodan API" (app.js hides
+   it otherwise; without JavaScript it always shows). The key box belongs to the group's form, so one Save
+   stores the key and the source together; Test key and Remove key post the same form to /settings/shodan-key
+   (formaction), so no form is nested. The key is never put back into the page. #}
+{% set guide = v.groups|selectattr('id', 'equalto', 'outside')|map(attribute='guide')|first %}
+<div class="ds-subpanel mt-2 mb-1" id="shodan-key" data-ds-when="{{ fid }}=shodan">
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <span class="fw-bold">API key</span>
+    {% if v.shodan.saved %}<span class="badge bg-green-lt">A key is saved</span>{% else %}<span class="badge bg-secondary-lt">No key saved</span>{% endif %}
+  </div>
+  {% if v.can_edit %}
+  <label class="visually-hidden" for="shodan-key-new">{{ 'New API key' if v.shodan.saved else 'API key' }}</label>
+  <div class="d-flex flex-wrap gap-2">
+    <div class="input-group ds-key-input">
+      <input type="password" class="form-control" id="shodan-key-new" name="shodan_key" autocomplete="new-password"
+        maxlength="128" spellcheck="false" placeholder="{{ 'Paste a new key to replace it' if v.shodan.saved else 'Paste your API key' }}">
+      <button type="submit" class="btn" formaction="/settings/shodan-key" name="action" value="test" formnovalidate>Test key</button>
+    </div>
+    {% if v.shodan.saved %}<button type="submit" class="btn btn-outline-danger" formaction="/settings/shodan-key" name="action" value="remove" formnovalidate>Remove key</button>{% endif %}
+  </div>
+  <div class="form-hint mt-1">Saved with the group to a file only the hub can read, and never shown again. Test key shows your plan and credits.</div>
+  {% endif %}
+  {% if guide %}
+  <details class="mt-2" id="outside-guide">
+    <summary>{{ guide.title }}</summary>
+    <ol class="ps-3 mt-2 mb-2">
+      {% for step in guide.steps %}<li class="mb-1">{{ step }}</li>{% endfor %}
+    </ol>
+    {% for text, href in guide.links %}<a href="{{ href }}" class="me-3 d-inline-block" target="_blank" rel="noopener noreferrer">{{ text }}</a>{% endfor %}
+  </details>
+  {% endif %}
+</div>

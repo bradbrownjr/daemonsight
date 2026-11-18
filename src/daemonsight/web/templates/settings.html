@@ -21,10 +21,20 @@
 
 {% for g in v.groups %}
 {% set gid = g.id %}
-{% if g.guide %}<div class="row"><div class="col-xl-8">{% endif %}
 <section class="card mb-4" id="{{ gid }}" aria-labelledby="{{ gid }}-title">
   <div class="card-header">
-    <h2 class="card-title" id="{{ gid }}-title">{{ g.title }}</h2>
+    <h2 class="card-title d-flex align-items-center gap-1" id="{{ gid }}-title">{{ g.title }}{% if g.note %}<button type="button" class="ds-src-btn" popovertarget="{{ gid }}-note" title="{{ g.note_title or 'More about this' }}" aria-label="{{ g.note_title or 'More about this' }}"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M12 9h.01"/><path d="M11 12h1v4h1"/></svg></button>{% endif %}</h2>
+    {% if g.note %}
+    <div popover id="{{ gid }}-note" class="ds-pop card" aria-label="{{ g.note_title or 'More about this' }}">
+      <div class="card-header">
+        <h3 class="card-title">{{ g.note_title or 'More about this' }}</h3>
+        <div class="card-actions"><button type="button" class="btn-close" popovertarget="{{ gid }}-note" popovertargetaction="hide" aria-label="Close"></button></div>
+      </div>
+      <div class="card-body"><p class="mb-0">{{ g.note }}</p>
+        {% if g.note_links %}<div class="mt-3">{% for text, href in g.note_links %}<div><a href="{{ href }}" target="_blank" rel="noopener noreferrer">{{ text }}</a></div>{% endfor %}</div>{% endif %}
+      </div>
+    </div>
+    {% endif %}
     {% if g.hub_only %}<div class="card-actions"><span class="badge bg-secondary-lt">{{ 'Hub only' if v.can_edit else 'Hub only: not used on this install' }}</span></div>{% endif %}
   </div>
   {% if v.can_edit %}
@@ -32,7 +42,6 @@
   {% endif %}
   <div class="card-body">
     <p class="text-secondary">{{ g.intro }}</p>
-    {% if g.note %}<div class="alert alert-warning" role="note">{{ g.note }}</div>{% endif %}
     {% for it in g.fields %}
     {% set f = it.field %}
     {% set fid = 'f-' ~ it.key|replace('.', '-') %}
@@ -74,6 +83,7 @@
           <div id="{{ fid }}">{% if f.kind == 'choice' %}<strong>{{ it.text }}</strong>{% elif f.kind == 'addresses' %}{% if it.value %}<div class="font-monospace">{% for a in it.value %}{{ a }}{% if not loop.last %}<br>{% endif %}{% endfor %}</div>{% else %}none{% endif %}
             {% else %}<strong>{{ it.text }}</strong>{% if f.unit and it.value is not none %} {{ f.unit }}{% endif %}{% endif %}</div>
         {% endif %}
+        {% if it.key == 'outside.source' %}{% include "partials/shodan_key.html" %}{% endif %}
         <div class="form-hint mt-1">{{ f.help }}</div>
         <div class="text-secondary small mt-1">Default: {{ it.default }}{% if f.unit and f.kind != 'addresses' and it.default != 'automatic' %} {{ f.unit }}{% endif %}{% if it.range %} · Allowed: {{ it.range }}{% endif %}{% if it.source != 'Default' and it.file != it.default %} · Config file: {{ it.file }}{% endif %}</div>
         {% if it.set %}
@@ -93,66 +103,7 @@
   </div>
   </form>
   {% endif %}
-  {% if gid == 'outside' %}
-  <div class="card-body border-top" id="shodan-key">
-    <h3 class="card-title mb-2">Shodan API key</h3>
-    {% if v.shodan.saved %}
-    <p class="mb-2"><span class="badge bg-green-lt">A key is saved</span>
-      <span class="text-secondary">in <code>{{ v.shodan.path }}</code>. It is never shown again, and is not in the database, the pages or the logs.</span></p>
-    {% else %}
-    <p class="mb-2"><span class="badge bg-secondary-lt">No key saved</span>
-      <span class="text-secondary">Only the Shodan API source needs one. InternetDB takes none.</span></p>
-    {% endif %}
-    {% if v.can_edit %}
-      {% if v.shodan.saved %}
-      <div class="d-flex flex-wrap gap-2 mb-3">
-        <form method="post" action="/settings/shodan-key"><button type="submit" class="btn" name="action" value="test">Test key</button></form>
-        <form method="post" action="/settings/shodan-key"><button type="submit" class="btn btn-outline-danger" name="action" value="remove">Remove key</button></form>
-      </div>
-      <details>
-        <summary class="mb-2">Replace the key</summary>
-        <form method="post" action="/settings/shodan-key" autocomplete="off">
-          <label class="form-label" for="shodan-key-new">New API key</label>
-          <input type="password" class="form-control ds-set-input" id="shodan-key-new" name="key" autocomplete="new-password" maxlength="128" spellcheck="false" required>
-          <div class="d-flex flex-wrap gap-2 mt-2">
-            <button type="submit" class="btn btn-primary" name="action" value="save">Save key</button>
-            <button type="submit" class="btn" name="action" value="test" formnovalidate>Test key (not saved)</button>
-          </div>
-        </form>
-      </details>
-      {% else %}
-      <form method="post" action="/settings/shodan-key" autocomplete="off">
-        <label class="form-label" for="shodan-key-new">API key</label>
-        <input type="password" class="form-control ds-set-input" id="shodan-key-new" name="key" autocomplete="new-password" maxlength="128" spellcheck="false" required>
-        <div class="form-hint mt-1">Copy it from your Shodan account page. It is written to a file only the hub can read, and never shown again.</div>
-        <div class="d-flex flex-wrap gap-2 mt-2">
-          <button type="submit" class="btn btn-primary" name="action" value="save">Save key</button>
-          <button type="submit" class="btn" name="action" value="test" formnovalidate>Test key (not saved)</button>
-        </div>
-      </form>
-      {% endif %}
-      <div class="form-hint mt-2">Test key asks Shodan's <code>api-info</code> page for the plan and the credits left. Shodan's reply shows the plan name only; whether that plan allows your use is Shodan's terms, linked on the right.</div>
-    {% endif %}
-  </div>
-  {% endif %}
 </section>
-{% if g.guide %}
-</div>
-<div class="col-xl-4">
-  <div class="card mb-4" id="{{ gid }}-guide">
-    <div class="card-header"><h2 class="card-title">{{ g.guide.title }}</h2></div>
-    <div class="card-body">
-      <ol class="ps-3 mb-3">
-        {% for step in g.guide.steps %}<li class="mb-1">{{ step }}</li>{% endfor %}
-      </ol>
-      {% for text, href in g.guide.links %}
-      <div><a href="{{ href }}" target="_blank" rel="noopener noreferrer">{{ text }}</a></div>
-      {% endfor %}
-    </div>
-  </div>
-</div>
-</div>
-{% endif %}
 {% endfor %}
 
 <section class="card mb-4" id="config-file-only" aria-labelledby="ro-title">

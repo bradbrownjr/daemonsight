@@ -460,6 +460,41 @@ a Caddy site, a forward or a jail (the row's `id` is built by
 filter that hides it and flashes it once; the flash is off under
 `prefers-reduced-motion`.
 
+### Layout and wording rules
+
+These apply to every page. Check each layout change in a browser at desktop
+(1400 px) and phone (390 px) widths before it ships.
+
+- **One column.** Cards are full width and stack. Nothing sits beside a card,
+  so every card lines up. A guide that would sit beside a card goes inside it,
+  folded (`details`).
+- **Short up front.** A card opens with one sentence at most. Longer text
+  (terms, caveats, how something is worked out) goes behind an (i) button in the
+  card title that opens a popover, or in a small note at the foot of the page.
+  On the Settings page that is a group's `note`, `note_title` and `note_links`
+  in `settings.GROUPS`; on data pages it is the source panel (`src_button`,
+  `src_panel`).
+- **Alerts are for now.** A coloured alert box is for something that just
+  happened or needs action now (a save, an error). Standing information never
+  goes in one.
+- **Dependent options sit under their control.** An option that only matters
+  for one value of another setting (the Shodan key under Source) is indented
+  under it (`.ds-subpanel`) and shown only while that value is chosen
+  (`data-ds-when="<select id>=<value>"`, read by `app.js`). Without JavaScript
+  it stays visible. It belongs to the same form and the same Save button; any
+  other action on it posts that form elsewhere with `formaction`, never a
+  nested form.
+- **Field help.** One or two short sentences under the control; the default and
+  allowed range go on the line below.
+- **Menus.** Toggles and choices come first. Then a line, then things you go to
+  or do, as menu items with an icon, full width and a hover background, so they
+  never look like labels. The account menu is Theme, Hide empty sections, a
+  line, Settings, Log out.
+- **Navigation.** The header's sections are tabs. "Add a system" is a +, and a
+  vertical line separates hub-wide items from the host's own sections.
+- **Secrets.** Never shown back. A badge says whether one is saved ("A key is
+  saved").
+
 ### Status labels
 
 Every list says where each item stands, with one label:
@@ -1144,9 +1179,11 @@ and its tests use a fake server with the documented reply shape.
 **The key.** One line in `<data>/shodan.key` (or `[outside] key_file`), mode
 0600, written atomically. It is never in the `settings` table, an event, a
 log line, a page or an error, and it is not shown after it is saved. The
-Settings page saves, replaces, removes and tests it (`POST
-/settings/shodan-key`: login required, cross-site posts refused, one action
-per request). Saving and removing write the hub events "Shodan API key saved"
+Settings page takes it in the Outside view form, under Source: saving the
+group writes the key file first (the `shodan_key` field never reaches the
+`settings` table), and Test key and Remove key post the same form to `POST
+/settings/shodan-key` (login required, cross-site posts refused, one action per
+request). Saving and removing write the hub events "Shodan API key saved"
 and "Shodan API key removed" (who, never the key). Choosing the Shodan API as
 the source is refused without a saved key, and removing the key is refused while
 it is the source. If the file is missing anyway (a hand-edited config), the

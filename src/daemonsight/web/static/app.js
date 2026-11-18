@@ -289,7 +289,21 @@
     el.classList.add("ds-flash");
   }
 
+  // Dependent options: an element with data-ds-when="<select id>=<value>" shows only while that select has that
+  // value (the Shodan key under Source). Without JavaScript it always shows.
+  function bindDependents() {
+    document.querySelectorAll("[data-ds-when]").forEach(function (el) {
+      var rule = el.getAttribute("data-ds-when").split("=");
+      var select = document.getElementById(rule[0]);
+      if (!select) return;
+      var sync = function () { el.hidden = select.value !== rule[1]; };
+      select.addEventListener("change", sync);
+      sync();
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
+    bindDependents();
     filterInput = document.getElementById("ds-filter");
     hideEmptySwitch = document.getElementById("ds-hide-empty");
     if (filterInput) {

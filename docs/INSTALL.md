@@ -579,15 +579,17 @@ not turn any of this on for you.
 2. Choose a plan that allows your use on https://developer.shodan.io/pricing.
    For commercial use, a plan that lists Commercial Use (above).
 3. Copy the API key from your account page.
-4. On the hub's Settings page, Outside view, paste it into API key and press
-   Save key. It is written to a file only the hub can read, and never shown
-   again. Replace and Remove are there too.
+4. On the hub's Settings page, Outside view, set Source to Shodan API (your
+   key). The API key box opens under it. Paste the key.
 5. Press Test key. It asks Shodan's `api-info` page and shows your plan name
    and your credits, or the reason Shodan refused the key. (Test key does not
-   say whether the plan allows your use: that is Shodan's terms.)
-6. Set Source to Shodan API (your key) and save the group. The page refuses
-   this until a key is saved, and refuses to remove the key while the Shodan API
-   is the source.
+   say whether the plan allows your use: that is Shodan's terms, under the (i)
+   beside Outside view.)
+6. Press Save outside view. The key and the source are saved together; the key
+   goes to a file only the hub can read, and is never shown again. To replace
+   it, paste a new one and save; Remove key is beside the box. The page refuses
+   the Shodan API with no key, and refuses to remove the key while the Shodan
+   API is the source.
 
 To turn it on, open Settings (account menu), choose Outside view, set Enabled
 to On and save. It starts at the next pass, with no restart. Or add this to

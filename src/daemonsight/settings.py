@@ -64,18 +64,18 @@ class Field:
 
 GROUPS = {
     "outside": {"title": "Outside view", "hub_only": True,
-                "intro": "Asks Shodan what the internet sees of each host's public addresses: InternetDB, which is "
-                         "free for non-commercial use and needs no key, or the Shodan API with your own key. Only "
-                         "the IP address is sent; the API also gets your key.",
+                "intro": "Asks Shodan what the internet sees of each host's public addresses. Only the IP address "
+                         "is sent.",
+                "note_title": "Shodan's terms",
                 "note": "InternetDB is free for non-commercial use only. Shodan: \"If you're using the InternetDB "
-                        "API to make money then you need an enterprise license.\" It takes no key, so a key does "
-                        "not change that. For commercial use, choose the Shodan API and use your own key on a plan "
-                        "that allows it: Shodan's pricing page lists Commercial Use on its Freelancer, Small "
-                        "Business and Corporate API plans, and says the API may be used in products \"as long as "
-                        "the data is attributed to Shodan\" (DaemonSight names Shodan wherever it shows this "
-                        "data). That page does not say whether the one-time Membership allows commercial use, so "
-                        "ask Shodan before relying on it. The Enterprise Data License covers commercial use "
-                        "without attribution."},
+                        "API to make money then you need an enterprise license.\" A key doesn't change that. "
+                        "For commercial use, choose the Shodan API on a plan that lists Commercial Use "
+                        "(Freelancer, Small Business or Corporate). Shodan allows its API in products \"as long as the "
+                        "data is attributed to Shodan\"; DaemonSight names Shodan wherever it shows it. Shodan doesn't say whether the "
+                        "one-time Membership allows commercial use, so ask them. The Enterprise Data License "
+                        "allows it without attribution.",
+                "note_links": (("Shodan plans and pricing", "https://developer.shodan.io/pricing"),
+                               ("InternetDB and its terms", "https://internetdb.shodan.io/"))},
     "cve": {"title": "CVE checks", "hub_only": True,
             "intro": "Downloads the Debian security tracker, FIRST's EPSS scores and CISA's KEV list, and matches "
                      "each host's packages against them.", "note": ""},
@@ -96,16 +96,11 @@ GUIDES = {
     "outside": {
         "title": "Getting a Shodan API key",
         "steps": [
-            "Decide which source fits your use. InternetDB needs no key but is for non-commercial use only. For "
-            "commercial use, choose a Shodan API plan that lists Commercial Use (Freelancer, Small Business or "
-            "Corporate on Shodan's pricing page).",
-            "Create a Shodan account at account.shodan.io, then pick a plan. Looking up IPs through the API needs "
-            "at least a Membership: a free account's key is refused.",
-            "On your account page, copy the API key.",
-            "Paste it into API key here and press Save key. It is never shown again.",
-            "Press Test key. It shows your plan and credits, or why Shodan refused the key.",
-            "Set Source to Shodan API (your key) and save the group. Host lookups use no query credits, and the "
-            "limit is one request a second.",
+            "Create a Shodan account at account.shodan.io and pick a plan. IP lookups need at least a "
+            "Membership; a free account's key is refused. For commercial use, see Shodan's terms (the i button).",
+            "Copy the API key from your account page.",
+            "Choose Shodan API (your key) as the Source and paste the key.",
+            "Press Test key to see your plan and credits, then Save outside view. Lookups use no query credits.",
         ],
         "links": [
             ("Your Shodan account and API key", "https://account.shodan.io/"),
@@ -121,9 +116,8 @@ FIELDS: tuple[Field, ...] = (
     Field("outside.enabled", "Enabled", "outside", "bool",
           "Ask Shodan about each host's public addresses. Off makes no requests and closes any outside.* finding at the next pass."),
     Field("outside.source", "Source", "outside", "choice",
-          "InternetDB: free for non-commercial use, no key, no banners, updated weekly. Shodan API: your key, "
-          "one lookup per address with each port's transport, product, version and the time Shodan last saw it. "
-          "Choosing the Shodan API needs a saved key; set it below.",
+          "InternetDB needs no key. The Shodan API adds each port's protocol, product, version and last-seen "
+          "time, and needs your key.",
           choices=(("internetdb", "InternetDB (free, non-commercial)"), ("shodan", "Shodan API (your key)"))),
     Field("outside.addresses", "Extra addresses", "outside", "addresses",
           "One per line: an IP address, or ip=hostid to attach an address no collector reports (a router's, "
@@ -461,7 +455,8 @@ def describe(base: Config, conn, hub: bool) -> list[dict]:
                 "range": _range_text(f) if f.lo is not None else "",
             })
         out.append({"id": gid, "hub_only": g["hub_only"], "title": g["title"], "intro": g["intro"],
-                    "note": g["note"], "fields": items, "guide": GUIDES.get(gid)})
+                    "note": g["note"], "note_title": g.get("note_title", ""), "note_links": g.get("note_links", ()),
+                    "fields": items, "guide": GUIDES.get(gid)})
     return out
 
 

@@ -292,6 +292,7 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
 .ds-set-row { display: grid; grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr); gap: .5rem 1.5rem; }
 .ds-set-row + .ds-set-row { border-top: 1px solid var(--tblr-border-color); padding-top: 1rem; margin-top: 1rem; }
 .ds-set-input { max-width: 16rem; }
+select.ds-set-input { max-width: 20rem; }
 textarea.ds-set-input { max-width: 28rem; }
 .ds-set-meta { display: flex; flex-wrap: wrap; gap: .25rem .75rem; align-items: center; }
 @media (max-width: 767.98px) { .ds-set-row { grid-template-columns: minmax(0, 1fr); } }
@@ -327,3 +328,8 @@ textarea.ds-set-input { max-width: 28rem; }
 .ds-acct-item svg { flex: 0 0 auto; opacity: .8; }
 .ds-acct-sep { margin: .35rem 0; opacity: .5; }
 @media (max-width: 767.98px) { .ds-acct-item { padding-left: 0; padding-right: 0; } }
+
+/* A setting's dependent options (the Shodan key under Source): indented under its control. */
+.ds-subpanel { border-left: 2px solid var(--tblr-border-color); padding: .25rem 0 .25rem .9rem; max-width: 36rem; }
+.ds-subpanel[hidden] { display: none; }
+.ds-key-input { max-width: 26rem; }

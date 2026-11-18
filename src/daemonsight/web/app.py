@@ -240,6 +240,10 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             items = [(k, v) for k, v in form.multi_items() if isinstance(v, str)]
             by = str(request.session.get("user") or "admin")
             client = request.client.host if request.client else "?"
+            # The Shodan key box sits in the Outside view form, so its key arrives with the group. It is
+            # taken out here and written to its own file, never to the settings table.
+            typed_key = next((v for k, v in items if k == "shodan_key"), "").strip()
+            items = [(k, v) for k, v in items if k != "shodan_key"]
             refused = [k for k, _ in items if k not in settings.BY_KEY and k not in ("group", "reset")]
             resets = [v for k, v in items if k == "reset"]
             if resets and (len(resets) > 1 or resets[0] not in settings.BY_KEY):
@@ -267,25 +271,42 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                     values[key] = settings.parse(settings.BY_KEY[key], raw)
                 except settings.Invalid as exc:
                     errors[key] = str(exc)
-            if values.get("outside.source") == "shodan" and not shodan.key_saved(cfg):
-                errors["outside.source"] = ("No Shodan API key is saved. Save your key under API key first, then "
-                                            "choose the Shodan API.")
+            if typed_key:
+                try:
+                    typed_key = shodan.clean_key(typed_key)
+                except ValueError as exc:
+                    errors["outside.source"] = str(exc)
+            if values.get("outside.source") == "shodan" and not typed_key and not shodan.key_saved(cfg):
+                errors["outside.source"] = "No Shodan API key is saved. Paste your key under Source, then save."
             if errors:
                 with reader() as conn:
                     return settings_page(request, conn, 400, errors=errors, posted=posted)
+            key_saved = False
+            if typed_key:
+                try:
+                    shodan.write_key(cfg, typed_key)
+                except OSError as exc:
+                    log.error("Could not save the Shodan API key: %s", exc.strerror or type(exc).__name__)
+                    flash(request, "Nothing was saved: the key file could not be written. Check the data folder's "
+                                   "permissions.", error=True)
+                    return RedirectResponse("/settings#outside", status_code=303)
+                db.add_event(hub_conn, db.HUB_HOST, time.time(), "setting", "Shodan API key saved", detail=f"by {by}")
+                log.info("Shodan API key saved by %s from %s", by, client)
+                key_saved = True
             changed = settings.save(hub_conn, cfg, values, by)
             for key in changed:
                 log.info("Setting %s changed by %s from %s", key, by, client)
             group = next((k.split(".")[0] for k in posted), "")
-            if changed:
-                flash(request, "Saved: " + "; ".join(settings.BY_KEY[k].name for k in changed)
-                      + ". It applies at the next pass of the chore that uses it.")
+            if changed or key_saved:
+                names = [settings.BY_KEY[k].name for k in changed] + (["Shodan API key"] if key_saved else [])
+                flash(request, "Saved: " + "; ".join(names) + ". It applies at the next pass of the chore that uses it.")
             else:
                 flash(request, "No changes: those values are already in effect.")
             return RedirectResponse(f"/settings#{group}" if group else "/settings", status_code=303)
 
         @app.post("/settings/shodan-key")
-        async def shodan_key_post(request: Request, key: str = Form(""), action: str = Form("")):
+        async def shodan_key_post(request: Request, key: str = Form(""), shodan_key: str = Form(""),
+                                  action: str = Form("")):
             """Save, replace, remove or test the Shodan API key. The key is typed here once and written to a 0600
             file; it is never put into a page, an event, a log line or the database, and these routes never show
             it. Test uses the key typed in the box, else the saved one, and shows Shodan's plan and credits or
@@ -296,7 +317,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             by = str(request.session.get("user") or "admin")
             client = request.client.host if request.client else "?"
             back = RedirectResponse("/settings#outside", status_code=303)
-            typed = key.strip()
+            typed = (key or shodan_key).strip()   # shodan_key: the box in the Outside view form
             if action == "save":
                 try:
                     shodan.write_key(cfg, typed)
