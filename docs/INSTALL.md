@@ -16,12 +16,13 @@ sudo systemctl start daemonsight-web
 
 `install.sh` creates the `daemonsight` user, a Python environment in
 `/opt/daemonsight`, the config folder `/etc/daemonsight`, the database folder
-`/var/lib/daemonsight`, and two systemd units:
+`/var/lib/daemonsight`, and these systemd units:
 
 | Unit | Runs as | Does |
 |---|---|---|
 | `daemonsight-collector` | root | Reads every source and writes the database |
 | `daemonsight-web` | `daemonsight` | Shows the pages |
+| `daemonsight-update.path` and `.service` | root | Installs an update the hub asks for (see "Updating from the hub") |
 
 Options:
 
@@ -242,7 +243,7 @@ day (see "Back up and restore").
 Create the folder with the right owner first, then start the container.
 
 On Unraid, use the template so the Docker tab manages the container like any
-other app: icon, web UI link, autostart, "Check for updates" and Edit. Copy
+other app: icon, web UI link, autostart (from Unraid's autostart list), "Check for updates" and Edit. Copy
 `deploy/unraid/daemonsight.xml` to
 `/boot/config/plugins/dockerMan/templates-user/my-daemonsight.xml`, then add
 the container from Docker → Add Container → Template. A container started

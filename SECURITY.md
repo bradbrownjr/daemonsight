@@ -34,7 +34,8 @@ socket, the fail2ban socket and the firewall needs it.
 - **No commands from anywhere.** The collector takes no input from the web UI
   or the network. Its one outbound connection is the upload to a hub, when
   `[upload]` is set, and it reads nothing from the reply but a sequence
-  number. Actions such as ban or restart would need their own design.
+  number and an update commit (see "The hub"). Actions such as ban or restart
+  would need their own design.
 - **fail2ban replies are unpickled safely.** fail2ban's socket speaks Python
   pickle. The collector's unpickler accepts builtin data types and exception
   names only, so a reply can't run code.
@@ -217,4 +218,4 @@ Your part on the hub:
 - Set `web.trusted_proxies` when the proxy is on another machine.
 - Set `web.secure_cookies = true` when serving over HTTPS.
 - Install the fail2ban jail where the login can be reached from outside.
-- Update with `git pull` and `sudo ./install.sh`.
+- Update with `sudo daemonsight-update`.

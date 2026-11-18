@@ -11,12 +11,22 @@
 
 ---
 
-**Status:** phase 2 of 5. The collector reads system health, systemd
-services, listening sockets, Docker, Caddy, fail2ban and the firewall. The
-web UI has Overview, Exposure, Routes, Services and fail2ban pages. A hub,
-shipped as a container, shows every host on one page; each host's collector
-uploads to it over HTTPS. Remote sources (OPNsense and Unraid APIs) and CVE
-scanning come next. See [docs/DESIGN.md](docs/DESIGN.md).
+**Status:** phase 2 of 5 is done, and phase 3 (CVE scanning) is next. The
+collector reads system health, systemd services, listening sockets, Docker,
+Caddy, fail2ban and the firewall. The web UI has Overview, Exposure, Routes,
+Services and fail2ban pages, and a stacked layout on phones. Findings link to
+the row they are about, and a port's panel shows the process behind it.
+
+- **Hub.** A container image (with an Unraid template) shows every host on
+  one page. Each host's collector uploads to it over HTTPS.
+- **Updates from the hub.** The hub's Hosts page, or `daemonsight hub
+  update`, moves hosts to the hub's own commit. A host can turn this off.
+- **Retention and backups.** `[retention]` sets how long history stays;
+  scheduled backups and `daemonsight restore` cover the database, config and
+  secrets.
+
+Remote sources (OPNsense and Unraid APIs), log collection and alerts are
+planned. See [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Install
 
@@ -81,7 +91,7 @@ FastAPI, HTMX and Tabler, with no Node build step.
   runs as an unprivileged user and only reads them.
 - **Not public by default.** The UI binds to localhost or a WireGuard
   interface. A monitoring dashboard on a VPS is itself something to attack.
-- **Alerts on change.** Examples: a new listening port, a new CVE with a fix,
+- **Alerts on change (planned, phase 4).** Examples: a new listening port, a new CVE with a fix,
   a stopped jail, a failed service.
 
 ## License

@@ -1,6 +1,6 @@
 # DaemonSight design
 
-Status: draft for review, 2026-11-15.
+Status: phases 1, 2 and 2c are built; phase 3 is next. Updated 2026-11-18.
 
 ## Goal
 
@@ -15,7 +15,7 @@ Targets for v1:
 
 ## Not in v1
 
-- Log storage or shipping. DaemonSight reads logs to answer specific questions; it is not a SIEM.
+- Log storage or shipping. DaemonSight reads logs to answer specific questions; it is not a SIEM. Log collection is planned after phase 3; see "Log collection and auditing (planned)".
 - Changing the host. v1 is read-only: no bans, restarts or firewall edits.
 - A hub that ships as anything but a container. A collector-and-web install can't also be a hub.
 - Podman, Kubernetes, nginx, Apache, iptables-legacy.
@@ -36,13 +36,14 @@ Targets for v1:
  └──────────────────────────────┘                     browser (via Caddy)
 ```
 
-Three systemd units:
+Systemd units. `daemonsight-scan` arrives with phase 3.
 
 | Unit | Runs as | Does |
 |------|---------|------|
 | `daemonsight-collector.service` | root | Long-running asyncio loop. Each source has its own interval. Writes snapshots, computes findings, sends alerts. |
 | `daemonsight-scan.service` + `.timer` | root | Oneshot every 6 hours. Runs Trivy and debsecan, writes results. Separate because scans are slow and memory-heavy. |
 | `daemonsight-web.service` | `daemonsight` | Serves the UI. Opens the database read-only. Never touches sockets, logs or tools. |
+| `daemonsight-update.path` + `.service` | root | Installs an update the hub asked for. See "Updates from the hub". |
 
 The split exists because the collector needs privileges the web process must
 never have: the Docker socket (equivalent to root), the fail2ban socket, other
@@ -58,7 +59,7 @@ capabilities each source needs is listed under "To verify".
 |------|--------|----------|-------|
 | CPU, memory, disk, network | psutil: `cpu_percent`, `virtual_memory`, `disk_usage`, `net_io_counters(pernic=True)` | 15 s | Kept as time series. |
 | systemd services | D-Bus `org.freedesktop.systemd1.Manager.ListUnits`; per unit `ActiveState`, `SubState`, `ActiveEnterTimestamp`; per service `NRestarts`, `MemoryCurrent`, `CPUUsageNSec` | 30 s | systemd docs: read access is granted to all clients, so this source needs no privilege. [1] |
-| Listening ports | `psutil.net_connections()` (fd, family, type, laddr, raddr, status, pid), or `/proc/net/{tcp,tcp6,udp,udp6}` plus socket inodes | 60 s | PID → owner via `/proc/<pid>/cgroup`: a systemd unit, or `docker-<id>.scope` for a container. [2] |
+| Listening ports | `psutil.net_connections()` (fd, family, type, laddr, raddr, status, pid), or `/proc/net/{tcp,tcp6,udp,udp6}` plus socket inodes | 60 s | PID → owner via `/proc/<pid>/cgroup`: a systemd unit, or `docker-<id>.scope` for a container. Per process it also records the command line (secrets masked, cut to 400 characters), the executable, the user and the start time. [2] |
 | Docker | Engine API on `/var/run/docker.sock`: container list, inspect (`State.Health`, `State.OOMKilled`, port bindings), logs, one-shot stats | 30 s | The client sends GET only. A socket proxy is needed only if the collector itself runs in a container; Tecnativa's blocks POST by default. [3] |
 | Caddy | `GET /config/` for servers and routes, `GET /reverse_proxy/upstreams` for `address`, `num_requests`, `fails` | 60 s | Default `localhost:2019`; also supports a Unix socket, which Caddy recommends. On TCP the admin API checks the Host header (admin.go `checkHost`); on a Unix socket it doesn't. [4] |
 | fail2ban | The server's control socket (`/var/run/fail2ban/fail2ban.sock`): `status`, `status <jail>`, `get <jail> logpath / journalmatch / bantime / findtime / maxretry / ignoreip / actions`, `get <jail> banip --with-time` | 60 s | Pickled Python values framed by `<F2B_END_COMMAND>`, read with an unpickler that accepts builtins only. See "Answered in phase 2". [5] |
@@ -115,21 +116,21 @@ web process is the writer.
 events and resolved findings for good. The collector prunes its own host's
 rows hourly; the hub prunes every host's. Open findings are never pruned.
 
+- `snapshots`: source, taken_at, ok, error, data (JSON). The latest row per source is current state.
+- `findings`: rule, key, severity, first_seen, last_seen, resolved_at, details (JSON).
+- `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down.
+- `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
+
 Backups (`backup.py`): one owner-only `.tar.gz` with a consistent copy of
 the database (SQLite's online backup API, so the writer keeps running), the
 config, the password hash, the session secret and any upload token, plus a
-manifest. The hub, and a collector that keeps its own data, make one every
+manifest. The folder is 0700 and each archive 0600. The hub, and a collector that keeps its own data, make one every
 `[backup] interval_hours` (24) and keep `keep` (7). A collector that
 uploads skips them unless `interval_hours` is set: the hub's backups hold
 its history. `daemonsight restore` refuses while the writer
 holds `daemonsight.lock` in the data folder, checks the archive's names (it
 never extracts by path), the database's integrity and its schema version,
 and keeps every file it replaces as `<name>.before-restore`.
-
-- `snapshots`: source, taken_at, ok, error, data (JSON). The latest row per source is current state.
-- `findings`: rule, key, severity, first_seen, last_seen, resolved_at, details (JSON).
-- `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down.
-- `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
 
 ## Web UI
 
@@ -144,6 +145,9 @@ loads from a CDN at runtime, and there is no Node build step.
 | Tabler Icons | 3.52.0 | MIT |
 | uPlot | 1.6.32 | MIT |
 
+Only Tabler's CSS and HTMX are vendored so far. Tabler Icons and uPlot come
+with the charts (phase 4).
+
 Why not React and MUI like ECTLogger: DaemonSight runs on the machine it
 protects, so its own dependency tree is attack surface and shows up in its own
 CVE scan. The pages are tables and a few charts that refresh every 30–60
@@ -154,8 +158,17 @@ matches the logo's gem. Light mode is a toggle. Tabler ships both as built-in
 attributes (`data-bs-theme`, `data-bs-theme-base`, `data-bs-theme-primary`), so
 there is no custom CSS to maintain.
 
-Pages: Overview, Exposure, Caddy routes, Services and containers, fail2ban,
-Vulnerabilities.
+Pages: Overview, Exposure, Caddy routes, Services and containers, fail2ban.
+On a hub, Hosts is the front page. Vulnerabilities comes with phase 3.
+
+Row links: a finding links to the row it is about, such as an Exposure port,
+a Caddy site, a forward or a jail (the row's `id` is built by
+`findings.anchor`). `app.js` (`showTarget`) scrolls to that row, clears a
+filter that hides it and flashes it once; the flash is off under
+`prefers-reduced-motion`.
+
+Phones: below 768 px each table row becomes a stacked card, one labelled line
+per cell, with the header row hidden from view but kept for screen readers.
 
 Source panels: every card and most rows have an (i) button. It opens a panel
 with two parts. "Read from" says how DaemonSight got the data (the D-Bus call,
@@ -163,7 +176,9 @@ the API path, the socket command). "Check it yourself" lists the unit file and
 drop-ins, the Compose folder and files, a jail's log paths, and read-only
 commands to copy (`systemctl status`, `journalctl -u`, `docker logs`,
 `fail2ban-client status`, `iptables -S`, `ss -ltnp`). Some entries link to the
-row that owns the item: a port links to its unit or container. A `[links]`
+row that owns the item: a port links to its unit or container. A port's panel
+also shows its process's command line (masked), program, user and start time,
+and the Caddy sites served on that port when Caddy owns it. A `[links]`
 table in the config adds a web UI link per source, such as the OPNsense Caddy
 page. The panels are native HTML popovers, so they need no script library and
 work under the CSP. The 30-second refresh waits while one is open. The unit
@@ -182,8 +197,8 @@ supports ntfy and SMTP email. Daily digest optional.
 
 ## Install and deploy
 
-- `install.sh` for v1: creates a venv in `/opt/daemonsight`, the `daemonsight` user, the units and `/etc/daemonsight/config.toml`, and records its options in `/etc/daemonsight/install.options`. A `.deb` comes later.
-- `daemonsight-update` (in `/usr/local/sbin`) updates from GitHub into a root-owned clone and reruns `install.sh` with the recorded options. Installing only from GitHub, never a user's checkout, is what makes a password-less sudo rule for it reasonable on a development server. See [INSTALL.md](INSTALL.md#update).
+- `install.sh` for v1: creates a venv in `/opt/daemonsight`, the `daemonsight` user, the units (including the update path unit) and `/etc/daemonsight/config.toml`, and records its options in `/etc/daemonsight/install.options`. A `.deb` comes later.
+- `daemonsight-update` (in `/usr/local/sbin`) updates from GitHub into a root-owned clone and reruns `install.sh` with the recorded options. After installing it waits 20 seconds and goes back to the previous commit if the collector isn't running. Installing only from GitHub, never a user's checkout, is what makes a password-less sudo rule for it reasonable on a development server. See [INSTALL.md](INSTALL.md#update).
 - Requires `fail2ban`, `nftables` and `debsecan` from Debian, and Trivy from Aqua's apt repo.
 - Testing order: beta LXC first (Claude Code runs there and updates it with `sudo daemonsight-update` after each push), then alpha, then the VPS.
 - VPS: the web process on `127.0.0.1:8466`, reached over WireGuard, or through Caddy with the hostname restricted to the WireGuard range.
@@ -191,13 +206,16 @@ supports ntfy and SMTP email. Daily digest optional.
 
 ## Phases
 
-1. Skeleton: config, SQLite, collector loop, system/systemd/ports/Docker sources, Overview and Services pages, login.
-2. Caddy, fail2ban, nftables sources. Exposure, Routes and fail2ban pages. The `expose`, `route` and `jail` rules.
-   2b. Remote sources: the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware) and the Unraid API (array, disks, containers, VMs). Each shows as its own host. See "Remote sources".
-   2c. The hub: collectors upload to one install that shows every host. See "Hub". Done.
-3. Scanner unit, Trivy and debsecan. Vulnerabilities page. The `cve` rules.
+1. Skeleton: config, SQLite, collector loop, system/systemd/ports/Docker sources, Overview and Services pages, login. Done.
+2. Caddy, fail2ban, nftables sources. Exposure, Routes and fail2ban pages. The `expose`, `route` and `jail` rules. Done.
+   2b. Remote sources: the OPNsense API (Caddy plugin routes, firewall, gateways, WireGuard, firmware) and the Unraid API (array, disks, containers, VMs). Each shows as its own host. See "Remote sources". Planned.
+   2c. The hub: collectors upload to one install that shows every host, with the container image and Unraid template, retention and backups, and updates from the hub. See "Hub". Done.
+3. Next: Scanner unit, Trivy and debsecan. Vulnerabilities page. The `cve` rules.
 4. Alerts, recent-changes feed, history charts.
 5. `.deb` package and docs.
+
+Planned after phase 3: log collection and auditing. See "Log collection and
+auditing (planned)".
 
 Later: actions (ban, unban, restart), CrowdSec,
 Podman, and an optional check from outside the host to confirm what's
@@ -232,7 +250,8 @@ A collector with a URL under `[upload]` runs an uploader beside its sources
 (`collector/upload.py`). Every `interval` seconds (30) it sends one `POST` to
 `/api/v1/ingest` with `Authorization: Bearer <token>` and a gzipped JSON body:
 `host`, `seq`, `sent_at`, its version, its longest interval, its own
-`[exposure]` and `[links]` settings and ephemeral port range, the snapshots
+`[exposure]` and `[links]` settings and ephemeral port range, whether
+`[upload] remote_update` is on, the result of its last update, the snapshots
 that changed, the metrics and events the hub hasn't confirmed (up to 20,000
 and 1,000 a time; the rest follows a second later), and its open findings.
 
@@ -264,8 +283,10 @@ and 1,000 a time; the rest follows a second later), and its open findings.
 - **TLS:** `[upload] url` must be `https://`, except to a hub on the same
   machine, and the certificate is checked against the system CA store with
   no setting to turn that off.
-- **No commands:** the reply is `{"last_seq": n}` and nothing else. Actions
-  (ban, unban, restart) would need their own design.
+- **One command:** the reply is `{"last_seq": n}`, plus `update_to` (a
+  commit) when the hub has asked the host to update. The collector acts on
+  nothing else in it. See "Updates from the hub". Other actions (ban, unban,
+  restart) would need their own design.
 - **Findings:** each collector works out its own findings with its own
   `[exposure]` settings and sends them. The hub adds `host.silent` (High)
   when a host misses three of its longest intervals, or never reports within
@@ -282,13 +303,69 @@ traffic) are the checks it can't forge.
 ### Pages
 
 On a hub, `/` lists the hosts: state, last upload, open findings by
-severity, system, version and the address it uploads from. Each host's pages
+severity, system, version and the address it uploads from. The Version
+column holds the update buttons (see "Updates from the hub"). Each host's pages
 are the usual ones under `/h/<host>/`, built with that host's own settings
 from its last upload, so its Exposure page uses its own `expected_public`
 and `upstream_allow`. A single-host install keeps its URLs.
 
 The hub's web process is the database writer (it stores uploads); on a host
 the web process stays read-only.
+
+### Updates from the hub
+
+The hub can ask a host to update to the hub's own commit. It is the only
+thing the hub can make a host do. The pieces:
+
+- **Request.** From the Hosts page ("Update to <commit>" for one host,
+  "Update N hosts" for all) or `daemonsight hub update NAME|--all`, the hub
+  sets `update_to` and `update_asked` on the host's row. Only hosts that have
+  reported, run another commit and haven't turned updates off are offered.
+  A request that hasn't been picked up can be cancelled. The page's update
+  action refuses cross-site posts.
+- **Reply.** While `update_to` is set, each upload's reply carries it as
+  `update_to`, unless the upload said `remote_update` is off.
+- **Collector.** `collector/remote_update.py` checks the value is a commit
+  (7 to 40 hex characters) and not the host's own, and that
+  `[upload] remote_update` is on. It then writes the commit to
+  `update.request` in the data folder (0600). It installs nothing itself,
+  because installing restarts it, and it runs under systemd's sandboxing.
+  If a request is waiting, or the last attempt at that commit
+  started or ended less than an hour ago, it does nothing, so a failing
+  update isn't retried every 30 seconds.
+- **Path and service.** `daemonsight-update.path` starts
+  `daemonsight-update.service` when `update.request` exists. The service runs
+  `daemonsight-update --hub-request` as root, unsandboxed, with a 20 minute
+  limit.
+- **Commit check.** The script deletes the request, reads the commit from it,
+  and re-checks `remote_update` from the host's own config. It fetches the
+  GitHub repo into its root-owned clone and refuses a commit that isn't in
+  it, or that is neither an ancestor of `origin/main` nor contained in a
+  `v*` tag. The hub never names a repository.
+- **Result.** The script writes `update.result` (`ref`, `status`, `at`,
+  `detail`; 0640). The collector sends it with each upload. `detail` is a
+  fixed phrase from the script, never command output. Statuses: `running`,
+  `done`, `failed` (the script stopped with an error), `refused` (updates
+  off, or the commit isn't in the repo or on main or a release tag) and
+  `rolled_back`.
+- **Rollback.** After installing, the script waits 20 seconds. If
+  `daemonsight-collector` isn't active, it installs the commit it replaced
+  and reports `rolled_back`. When the previous commit is unknown, it reports
+  `failed` and leaves the new one.
+- **Hub side.** On each upload the hub compares what the host reports with
+  the request. If the host's version now ends in the target commit, it
+  clears `update_to` and logs an event, "Updated to <commit>". If the host
+  reports `failed`, `refused` or `rolled_back` for that commit, dated after
+  the request, it clears `update_to` and logs a medium event, "Update to
+  <commit> failed", "was refused" or "failed and was rolled back", with the
+  detail. Until one of those, the Hosts page shows "Updating to <commit>".
+  A host that reports `remote_update` off gets no `update_to`.
+- **`[upload] remote_update`** is on by default and is set only in the host's
+  own config. The hub can't change it; it only learns the value from the
+  upload.
+- **Deploy order.** The target is the hub's own commit, so update the hub
+  first, then the hosts. On a hub whose commit isn't known (an image built
+  without a revision), there is nothing to offer.
 
 ### Reverse proxy
 
@@ -310,9 +387,14 @@ and every action are pinned to a digest or commit.
 
 It runs as uid 10001 with everything in `/data`: the config (written from
 `packaging/docker/hub.toml` on first start), the password, the session
-secret and the database. The remote sources in phase 2b (OPNsense, Unraid)
-will run in the hub, since they are API calls from the LAN. An Unraid
-template can come later.
+secret, the database, `backups/` and `daemonsight.log` (`log_file`, rotated
+at 5 MB, four files). The remote sources in phase 2b (OPNsense, Unraid)
+will run in the hub, since they are API calls from the LAN.
+
+`deploy/unraid/daemonsight.xml` is an Unraid template for it: icon, web UI
+link, the read-only and no-capabilities options, and a data path and port.
+It sets no restart policy, so Unraid's autostart list starts the container.
+The Docker tab then manages it, including updating it from the new image.
 
 Collectors stay native packages on each Linux host (LXC, VPS). They need root,
 the host's D-Bus, `/proc` and netlink, which a container would only get by
@@ -395,6 +477,65 @@ monitoring on the host; these rules say which process is responsible:
 - Outbound connections to well-known mining pool ports (3333, 4444, 5555, 7777, 14444) or `stratum+tcp`
 - A new systemd unit, timer or cron entry
 - Outbound traffic or packet rate far above the host's own recent baseline
+
+## Log collection and auditing (planned)
+
+Planned after phase 3. Nothing here is built.
+
+Goal: replace the LogWard stack on the Unraid server (Fluent Bit receiving
+syslog on 514/udp and 514/tcp, TimescaleDB, its own web UI) with log
+collection in DaemonSight, so one tool shows a host's state and its logs.
+
+### Inputs
+
+- **Hosts with a collector** send their systemd journal through the existing
+  upload, with a cursor like the one for events, so nothing is lost while the
+  hub is down.
+- **Devices that can't run a collector** (a firewall, Wi-Fi access points,
+  switches) send syslog straight to the hub: RFC 3164 and RFC 5424 over UDP
+  and TCP, and TLS (6514) where the device supports it.
+
+### Storage
+
+On the hub, in a separate database file from `state.db`, so log volume can't
+crowd out the rest. It gets its own `[retention]` setting and full-text
+search. SQLite FTS5 is the first candidate; it needs measuring at real
+volume.
+
+### Finding problems
+
+In order of effort:
+
+1. **Built-in rules** for known patterns: repeated SSH or web login
+   failures, sudo use, the OOM killer, kernel disk and filesystem errors,
+   segfaults, units failing, disks filling. Each raises a finding or event
+   with a link to the matching lines.
+2. **Your own rules:** a match pattern, a severity and optionally a count
+   within a window. Possibly in an existing shared format such as Sigma
+   rules (to research).
+3. **Rate spikes:** a source or severity logging far more than its usual
+   rate.
+4. **New kinds of messages:** group lines into templates (for example with
+   the Drain algorithm, to research) and flag a template never seen before.
+
+### Auditing
+
+A trail of who did what, per host and across hosts: logins and their source
+address, sudo commands, user and group changes, package installs and
+removals, service and config changes.
+
+### Pages
+
+A Logs page per host and across hosts, with filter and search. Findings link
+to the lines behind them.
+
+### Open questions
+
+- Volume, and how long SQLite holds up.
+- What to keep and what to drop.
+- The move from LogWard. Both can't listen on 514 at once, so point devices
+  at the hub one at a time.
+- Whether the journal upload should be opt-in per host.
 
 ## Answered in phase 1
 
