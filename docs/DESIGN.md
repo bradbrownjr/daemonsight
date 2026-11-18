@@ -1714,7 +1714,7 @@ VMs and Notifications. Cells carry `data-label`, rows have anchors
 (`disk-disk1`, `ctr-<name>`, `vm-<name>`, `notif-<id>`) that findings link to,
 and each section's panel names the GraphQL query, its curl form and the Unraid
 page to compare with. The Hosts page shows "Unraid <version> · API" (and "<new> available" when a newer stable release is out), the address, the
-last poll and the last error. At a glance shows the version the same way. Report and Accept are the same as for any host.
+last poll and the last error. At a glance shows the version the same way. Report and Accept are the same as for any host. On every host's Overview the system tiles sit at the top of the main column, and the side column runs from the top, level with them.
 Text from the server (container names, notification titles) is untrusted: cut
 to a length, stripped of control characters and escaped by the templates.
 

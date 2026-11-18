@@ -2,6 +2,8 @@
 <div id="live" hx-get="{{ base }}/partials/overview" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
 {% set t = v.tiles %}
+<div class="ds-cols">
+  <div class="ds-main-col">
 {% if t %}
 {{ src_panel("src-system", v.src.system) }}
 <section id="system" class="ds-tiles mb-4" aria-label="System health">
@@ -57,9 +59,6 @@
   {% endif %}
 </section>
 {% endif %}
-
-<div class="ds-cols">
-  <div class="ds-main-col">
   <section class="card" id="findings" aria-labelledby="findings-title" data-section data-status-filter{% if not v.findings %} data-empty{% endif %}>
     <div class="card-header">
       <h2 class="card-title" id="findings-title">Findings</h2>{{ src("src-findings", v.src.findings) }}
