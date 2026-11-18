@@ -217,7 +217,8 @@ def containers(conn, cfg: Config) -> dict:
         rows.append({
             "anchor": rules.anchor("ctr", c["name"]), "name": c["name"], "image": c["image"], "status": c["status"],
             "state": c["state"].lower(), "state_badge": "bg-green-lt" if c["state"] == "RUNNING" else "bg-secondary-lt",
-            "update": "Update available" if up else ("Up to date" if up is False else "Unknown"),
+            # Not "update": in a template c.update is the dict's update method.
+            "update_text": "Available" if up else ("Current" if up is False else "Unknown"),
             "update_badge": "bg-azure-lt" if up else "bg-secondary-lt", "update_v": {True: 0, None: 1, False: 2}[up],
             "auto": "yes" if c["auto_start"] else "no", "orphaned": c.get("orphaned"),
             "ports": [{"text": f"{p['ip'] or '*'}:{int(p['public'])}→{int(p['private'])}/{(p['type'] or '').lower()}"}

@@ -96,8 +96,9 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
 .ds-pop::backdrop { background: rgba(0, 0, 0, .35); }
 .ds-pop .card-title { font-family: inherit; }
 .ds-src-list { display: grid; grid-template-columns: minmax(7rem, auto) 1fr; gap: .4rem .75rem; margin: .25rem 0 0; }
-.ds-src-list dt { font-weight: 600; }
-.ds-src-list dd { margin: 0; display: flex; gap: .5rem; align-items: flex-start; min-width: 0; }
+/* Label, value and Copy button share the row's middle line. */
+.ds-src-list dt { font-weight: 600; align-self: center; }
+.ds-src-list dd { margin: 0; display: flex; gap: .5rem; align-items: center; min-width: 0; }
 .ds-copy-text { white-space: pre-wrap; overflow-wrap: anywhere; flex: 1 1 auto; min-width: 0; }
 .ds-copy { flex: 0 0 auto; }
 @media (max-width: 480px) { .ds-src-list { grid-template-columns: 1fr; } .ds-src-list dt { margin-top: .4rem; } }

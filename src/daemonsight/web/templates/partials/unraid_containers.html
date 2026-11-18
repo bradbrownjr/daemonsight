@@ -20,7 +20,7 @@
           <td data-label="Name"><strong>{{ c.name }}</strong>{{ src("src-c-" ~ loop.index, c.src) }}{% if c.orphaned %}<div class="text-secondary small">no template</div>{% endif %}</td>
           <td class="font-monospace" data-label="Image">{{ c.image }}</td>
           <td data-label="State"><span class="badge {{ c.state_badge }}">{{ c.state }}</span><div class="text-secondary small">{{ c.status }}</div></td>
-          <td data-v="{{ c.update_v }}" data-label="Update"><span class="badge {{ c.update_badge }}">{{ c.update }}</span></td>
+          <td data-v="{{ c.update_v }}" data-label="Update"><span class="badge {{ c.update_badge }}">{{ c.update_text }}</span></td>
           <td data-label="Auto-start">{{ c.auto }}</td>
           <td class="font-monospace" data-label="Published">{% for p in c.ports %}<div>{{ p.text }}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
         </tr>

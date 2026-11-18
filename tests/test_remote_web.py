@@ -363,6 +363,12 @@ def test_overview(polled):
     assert re.search(r"Read (just now|\d+ s ago)", html) and "tower" in html
 
 
+def test_container_update_column_says_what_it_is(polled):
+    html = polled.get("/h/tower/containers").text
+    assert "built-in method" not in html and "object at 0x" not in html
+    assert re.search(r'data-label="Update"><span class="badge [^"]+">(Available|Current|Unknown)</span>', html)
+
+
 def test_pages_have_labelled_cells_row_anchors_and_source_panels(polled):
     for path, anchors, query in (
             ("/h/tower/disks", ("array", "parity", "disk-parity", "disk-disk1", "disk-flash"), "array { state"),
