@@ -2,14 +2,18 @@
 the trimmed real responses in tests/fixtures/unraid/, checks the x-api-key
 header, and records every request body."""
 
+import asyncio
+import contextlib
 import copy
 import json
+import ssl
 from pathlib import Path
 
 import httpx
+import websockets
 
 from daemonsight.remote import unraid
-from daemonsight.remote.client import Net
+from daemonsight.remote.client import STATS_SUBSCRIPTION, Net
 
 FIX = Path(__file__).parent / "fixtures" / "unraid"
 KEY = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
@@ -17,6 +21,55 @@ KEY = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
 
 def load(name: str) -> dict:
     return json.loads((FIX / f"{name}.json").read_text())
+
+
+def stat(container_id: str, cpu: float, mem_usage: str, mem_percent: float) -> dict:
+    """One `dockerContainerStats` payload, as Unraid sends it."""
+    return {"id": container_id, "cpuPercent": cpu, "memUsage": mem_usage, "memPercent": mem_percent}
+
+
+class FakeSocket:
+    """The server side of one graphql-transport-ws connection (https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md),
+    as the object `Net.websocket` yields: `send(str)`, `recv() -> str`. It answers connection_init with
+    connection_ack (or closes with 4403 for a wrong key), answers subscribe with the staged `next` messages and then
+    stays quiet, as the real stream does until the client completes."""
+
+    def __init__(self, owner: "FakeUnraid"):
+        self.owner = owner
+        self.sent: list[dict] = []          # what the client sent, parsed
+        self.inbox: list[str | Exception] = []
+        self.closed = False
+        self.completed = False
+
+    async def send(self, raw: str) -> None:
+        msg = json.loads(raw)
+        self.sent.append(msg)
+        owner = self.owner
+        if msg["type"] == "connection_init":
+            if (msg.get("payload") or {}).get("x-api-key") != owner.key:
+                self.inbox.append(websockets.exceptions.ConnectionClosed(
+                    websockets.frames.Close(4403, "Forbidden"), None))
+            elif owner.ws_silent:
+                pass
+            else:
+                self.inbox += owner.ws_before_ack + [json.dumps({"type": "connection_ack"})]
+        elif msg["type"] == "subscribe":
+            query = msg["payload"]["query"]
+            if query != STATS_SUBSCRIPTION:
+                self.inbox.append(json.dumps({"id": msg["id"], "type": "error",
+                                              "payload": [{"message": "Cannot query field"}]}))
+            else:
+                self.inbox += owner.ws_script(msg["id"])
+        elif msg["type"] == "complete":
+            self.completed = True
+
+    async def recv(self) -> str:
+        while not self.inbox:
+            await asyncio.sleep(0.005)
+        item = self.inbox.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 class FakeUnraid:
@@ -34,9 +87,22 @@ class FakeUnraid:
             unraid.Q_UPS: load("ups"), unraid.Q_DISKS: load("disks"), unraid.Q_NOTIFICATIONS: load("notifications"),
         }
         self.errors: dict[str, list] = {}      # query -> GraphQL errors to add
+        # The statistics subscription (WebSocket). `stats` is the list of `dockerContainerStats` payloads one tick
+        # sends; by default every container in docker.json reports once.
+        self.stats = [stat(c["id"], 1.5 + n, f"{100 + n}MiB / 2GiB", round((100 + n) / 2048 * 100, 2))
+                      for n, c in enumerate(load("docker")["data"]["docker"]["containers"])]
+        self.stats_ticks = 1
+        self.ws_before_ack: list[str] = []     # messages sent before connection_ack (a ping, say)
+        self.ws_silent = False                 # never answer connection_init
+        self.ws_fail: Exception | None = None  # raised when connecting
+        self.sockets: list[FakeSocket] = []
         self.release = load("release")         # what releases.unraid.net answers
         self.release_requests: list[httpx.Request] = []
         self.release_status = 200
+
+    def ws_script(self, op_id: str) -> list[str]:
+        return [json.dumps({"id": op_id, "type": "next", "payload": {"data": {"dockerContainerStats": s}}})
+                for _ in range(self.stats_ticks) for s in self.stats]
 
     def set(self, query: str, fn) -> None:
         """Change a reply in place: fn receives the data dict."""
@@ -76,6 +142,23 @@ class FakeUnraid:
                                                  "self-signed certificate (_ssl.c:1029)")
                     return fake.handler(request)
                 return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5, follow_redirects=False)
+
+            def websocket(self_, url, tls="verify", pem=None):
+                @contextlib.asynccontextmanager
+                async def connect():
+                    if fake.ws_fail:
+                        raise fake.ws_fail
+                    if fake.server_cert is not None and (tls == "verify" or pem != fake.server_cert):
+                        raise ssl.SSLCertVerificationError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                                                           "self-signed certificate (_ssl.c:1029)")
+                    sock = FakeSocket(fake)
+                    sock.url = url
+                    fake.sockets.append(sock)
+                    try:
+                        yield sock
+                    finally:
+                        sock.closed = True
+                return connect()
 
             async def certificate(self_, url):
                 if fake.server_cert is None:

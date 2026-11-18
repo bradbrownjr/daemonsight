@@ -433,21 +433,34 @@ def finding(rule: str, link_href: str | None) -> dict:
 UNRAID_TITLE = {
     "unraid_system": "System", "unraid_array": "Array and parity", "unraid_disks": "Disks (SMART)",
     "unraid_docker": "Containers", "unraid_folders": "Docker folders", "unraid_vms": "Virtual machines", "unraid_notifications": "Notifications",
-    "unraid_ups": "UPS",
+    "unraid_ups": "UPS", "unraid_stats": "Container CPU and memory",
 }
 UNRAID_UI = {
     "unraid_system": "Dashboard", "unraid_array": "Main, Array Operation", "unraid_disks": "Main, click a disk, SMART",
     "unraid_docker": "Docker", "unraid_folders": "Docker (the folders you arranged)", "unraid_vms": "VMs", "unraid_notifications": "the bell icon in the header",
     "unraid_ups": "Settings, UPS Settings",
+    "unraid_stats": "Docker, Advanced View, the CPU & Memory load column",
 }
 
 
 def unraid_section(source: str, url: str | None = None, interval: int = 60) -> dict:
     """The panel for one Unraid source: the exact query, how often, and how to look yourself."""
-    from ..remote import unraid
+    from ..remote import client, unraid
     query = unraid.QUERY_OF[source]
-    tier = unraid.SOURCES[source][2]
+    tier = unraid.SOURCES[source][2] if source in unraid.SOURCES else unraid.STATS_TIER
     every = f"{max(unraid.SLOW_SECONDS, interval) // 60} min" if tier == unraid.SLOW else f"{interval} s"
+    if source == unraid.STATS:
+        # A subscription over a WebSocket, not a query: no curl form. It is `docker stats` on the server.
+        return {"title": UNRAID_TITLE[source],
+                "read": "Unraid's GraphQL API, the one read-only subscription the hub sends, over a WebSocket "
+                        f"(graphql-transport-ws, on /graphql): {query}",
+                "entries": [plain("Unraid web UI", UNRAID_UI[source]),
+                            plain("How often", f"Sampled for a few seconds every {every}: the hub stops as soon as every running container "
+                                               f"has reported, and after {int(client.SAMPLE_SECONDS)} s at most. Unraid runs docker stats "
+                                               "only while the hub is subscribed"),
+                            cmd("The same figures, on the server", "docker stats --no-stream"),
+                            plain("What the figures are", "CPU is Docker's reading over about one second, where 100% is one core. "
+                                                          "Without a memory limit Docker reports the server's memory as the limit.")]}
     entries = [plain("Unraid web UI", UNRAID_UI[source]), plain("How often", f"The hub reads it every {every}")]
     if url:
         body = '{"query":' + _json_str(query) + "}"

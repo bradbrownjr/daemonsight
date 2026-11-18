@@ -21,3 +21,8 @@ temperatures, error counts, parity history) are the real ones.
   longer has.
 - `release.json`: not captured. The reply of `https://releases.unraid.net/os?branch=stable`, in the shape
   read from that public page (`version`, `name`, `date`, `changelogPretty`, ...).
+- `docker.json`: each container has an `id` in Unraid's PrefixedID form (`<server id>:<64 hex digits>`); the ids
+  here are made up (the server part is a counting pattern, the rest a SHA-256 of the container name). The
+  statistics subscription (`dockerContainerStats`) is not a fixture: `tests/fake_unraid.py` builds its messages,
+  from the shape read in the schema and seen live (one message per container, the first of each refresh with a
+  terminal control code in front of its id).

@@ -43,6 +43,46 @@ def _states(snaps: dict) -> dict:
     return {name: views._source_state(snaps, name) for name in unraid.SOURCES if name not in unraid.OPTIONAL}
 
 
+NO_LIMIT_AT = 0.98      # Docker reports the host's memory as the limit of a container that has none
+TOP_N = 5
+
+
+def _stats(snaps: dict, now: float | None = None) -> dict:
+    """The container statistics as the pages show them: {"by": {name: reading}, "state", "ago", "error",
+    "host_mem"}. A sample that failed keeps the last reading, so `error` says why it is old and `ago` how old."""
+    now = time.time() if now is None else now
+    data = _data(snaps, "unraid_stats")
+    sysd = _data(snaps, "unraid_system")
+    host_mem = ((sysd or {}).get("memory") or {}).get("total")
+    state = views._source_state(snaps, "unraid_stats")
+    by = (data or {}).get("containers") or {}
+    when = (data or {}).get("sampled_at")
+    return {"by": by, "state": state["state"], "error": state["reason"] if state["state"] == "error" else None,
+            "ago": fmt_ago(when, now) if when else None, "age": (now - when) if when else None, "host_mem": host_mem}
+
+
+def _reading(r: dict | None, host_mem) -> dict:
+    """The table cells and sort values for one container's reading (None: no reading)."""
+    if not r:
+        return {"cpu": "—", "cpu_v": "", "mem": "—", "mem_v": "", "mem_detail": ""}
+    used, limit, pct = r.get("mem_used"), r.get("mem_limit"), r.get("mem_percent")
+    detail = ""
+    if pct is not None:
+        no_limit = limit is not None and host_mem and limit >= host_mem * NO_LIMIT_AT
+        detail = f"{pct:.1f}% of " + ("host memory, no limit" if no_limit else _bytes(limit))
+    return {"cpu": f"{r['cpu']:.1f}%", "cpu_v": _sortval(r["cpu"]), "mem": _bytes(used),
+            "mem_v": _sortval(used), "mem_detail": detail}
+
+
+def _bytes(v) -> str:
+    return fmt_bytes(v) if v is not None else "—"
+
+
+def _top(rows: list[dict], key: str, n: int = TOP_N) -> list[dict]:
+    """The n containers with the largest `key` reading, skipping those with none or zero."""
+    return sorted((r for r in rows if r[key]), key=lambda r: -r[key])[:n]
+
+
 def _check_line(pc: dict | None, hist: list[dict]) -> tuple[str, str | None]:
     """A one-line parity check summary: (text, alert or None)."""
     pc = pc or {}
@@ -136,10 +176,28 @@ def overview(conn, cfg: Config) -> dict:
     return {
         "host": views._host(cfg, snaps), "tiles": tiles, "findings": open_f, "accepted": accepted_f,
         "events": views.events_list(conn, host), "glance": glance,
-        "sources": _states(snaps),
+        "sources": _states(snaps), "top": top_containers(snaps, dk),
         "src": {"system": prov.unraid_section("unraid_system", url, interval), "findings": prov.section("findings", cfg),
-                "events": prov.section("events", cfg)},
+                "events": prov.section("events", cfg), "stats": prov.unraid_section("unraid_stats", url, interval)},
     }
+
+
+def top_containers(snaps: dict, dk: dict | None) -> dict | None:
+    """The busiest running containers by CPU and by memory, each linking to its row on the Containers page.
+    None until there is a reading."""
+    st = _stats(snaps)
+    if not st["by"] or not dk:
+        return None
+    running = {c["name"] for c in dk["containers"] if c["state"] == "RUNNING"}
+    rows = []
+    for name, r in st["by"].items():
+        if name in running:
+            cells = _reading(r, st["host_mem"])
+            rows.append({"name": name, "link": f"/containers#{rules.anchor('ctr', name)}", "cpu_value": r["cpu"],
+                         "mem_value": r.get("mem_used") or 0, "cpu": cells["cpu"], "mem": cells["mem"],
+                         "mem_detail": cells["mem_detail"]})
+    return {"cpu": _top(rows, "cpu_value"), "mem": _top(rows, "mem_value"), "ago": st["ago"], "error": st["error"],
+            "count": len(rows)}
 
 
 def _temp_class(d: dict, thr: dict) -> str:
@@ -213,10 +271,12 @@ def containers(conn, cfg: Config) -> dict:
     snaps = db.get_snapshots(conn, host)
     dk = _data(snaps, "unraid_docker")
     url, interval = _panels(conn, cfg)
+    st = _stats(snaps)
     rows = []
     for c in (dk or {}).get("containers", []):
         up = c.get("update")
-        rows.append({
+        reading = _reading(st["by"].get(c["name"]) if c["state"] == "RUNNING" else None, st["host_mem"])
+        rows.append({**reading,
             "anchor": rules.anchor("ctr", c["name"]), "name": c["name"], "image": c["image"], "status": c["status"],
             "state": c["state"].lower(), "state_badge": "bg-green-lt" if c["state"] == "RUNNING" else "bg-secondary-lt",
             # Not "update": in a template c.update is the dict's update method.
@@ -229,8 +289,9 @@ def containers(conn, cfg: Config) -> dict:
         })
     return {"host": views._host(cfg, snaps), "rows": rows, "groups": _groups(rows, _data(snaps, "unraid_folders")),
             "folders_state": views._source_state(snaps, "unraid_folders"),
-            "state": views._source_state(snaps, "unraid_docker"),
-            "src": {"docker": prov.unraid_section("unraid_docker", url, interval)}}
+            "state": views._source_state(snaps, "unraid_docker"), "stats": st,
+            "src": {"docker": prov.unraid_section("unraid_docker", url, interval),
+                    "stats": prov.unraid_section("unraid_stats", url, interval)}}
 
 
 def _groups(rows: list[dict], folders: dict | None) -> list[dict]:

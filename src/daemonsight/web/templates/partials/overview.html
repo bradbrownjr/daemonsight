@@ -137,6 +137,24 @@
       </div>
     </section>
 
+    {% if v.top %}
+    <section class="card" id="top-containers" aria-labelledby="top-title" data-section>
+      <div class="card-header"><h2 class="card-title" id="top-title">Top containers</h2>{{ src("src-stats", v.src.stats) }}
+        <div class="card-actions text-secondary">sampled {{ v.top.ago }}</div></div>
+      {% if v.top.error %}<div class="card-body text-secondary small">The latest sample failed ({{ v.top.error }}); these are the last good readings.</div>{% endif %}
+      <div class="list-group list-group-flush">
+        <div class="list-group-item pb-1"><div class="subheader">By CPU</div></div>
+        {% for t in v.top.cpu %}
+        <div class="list-group-item d-flex justify-content-between gap-2" data-row><a href="{{ base }}{{ t.link }}" class="text-reset ds-min0 text-truncate">{{ t.name }}</a><span class="text-nowrap">{{ t.cpu }}</span></div>
+        {% else %}<div class="list-group-item text-secondary">No container is using CPU.</div>{% endfor %}
+        <div class="list-group-item pb-1"><div class="subheader">By memory</div></div>
+        {% for t in v.top.mem %}
+        <div class="list-group-item d-flex justify-content-between gap-2" data-row><a href="{{ base }}{{ t.link }}" class="text-reset ds-min0 text-truncate">{{ t.name }}</a><span class="text-nowrap">{{ t.mem }}</span></div>
+        {% else %}<div class="list-group-item text-secondary">No memory readings.</div>{% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
     <section class="card" aria-labelledby="events-title" data-section{% if not v.events %} data-empty{% endif %}>
       <div class="card-header"><h2 class="card-title" id="events-title">Recent changes</h2>{{ src("src-events", v.src.events) }}</div>
       {% if v.events %}

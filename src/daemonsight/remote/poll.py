@@ -10,6 +10,12 @@ Per system, one poll:
      every five minutes, the rest every `interval`). Each is its own query,
      so one that fails (VMs switched off, say) doesn't stop the others; it
      keeps its last data and shows its error.
+     The container statistics (`unraid_stats`) are the one source that is not
+     a query: Unraid offers them only as a subscription, so once the container
+     list is read a task subscribes for up to SAMPLE_SECONDS (it stops at once
+     when every running container has reported, about two seconds on 69
+     running ones) while the remaining queries run. A failed sample keeps the
+     last data, and shows its age and error on the page; it never ends the poll.
   3. Rules (unraid_rules.py) make the open `unraid.*` findings match.
 
 Unreachable: a poll that can't read the server leaves every stored reading as
@@ -22,6 +28,7 @@ minutes) without a good poll the hub opens `remote.unreachable` (High).
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -120,6 +127,27 @@ def unraid_rules_evaluate(conn, host: str, now: float) -> list[Finding]:
     return unraid_rules.evaluate(_rule_inputs(conn, host), now)
 
 
+async def _sample_stats(graph: Graph, docker: dict | None, key: str, now: float) -> tuple[bool, str | None, dict | None]:
+    """The container statistics, as (ok, error, data) like any other source. Never raises. `docker` is the parsed
+    container list: it says which containers are running (so the sample can stop when all have reported) and what
+    each Docker id is called."""
+    if docker is None:
+        return False, "The container list is not available yet.", None
+    containers = [c for c in docker.get("containers", []) if c.get("id")]
+    expected = {c["id"] for c in containers if c.get("state") == "RUNNING"}
+    if not expected:
+        return True, None, {"containers": {}, "sampled_at": now, "reported": 0, "seconds": 0}
+    try:
+        sample = await graph.sample(expected=expected)
+        if not sample.items:
+            raise RemoteError("graphql", "The server sent no container statistics.")
+        return True, None, unraid.parse_stats(sample, {c["id"]: c["name"] for c in containers}, now)
+    except RemoteError as exc:
+        return False, unraid.error_text(exc, key), None
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        return False, f"Unexpected reply: {type(exc).__name__}", None
+
+
 async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -> None:
     """One poll of one system. Never raises."""
     now = time.time() if now is None else now
@@ -131,10 +159,12 @@ async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -
         return
     results: dict[str, tuple[bool, str | None, dict | None]] = {}
     try:
-        graph = Graph(row["url"], key, net.http(row["tls"], row["tls_cert"]))
+        graph = Graph(row["url"], key, net.http(row["tls"], row["tls_cert"]),
+                      ws=functools.partial(net.websocket, tls=row["tls"], pem=row["tls_cert"]))
     except RemoteError as exc:
         _record_failure(conn, row, now, unraid.error_text(exc, key))
         return
+    stats_task: asyncio.Task | None = None
     try:
         try:
             me = (await graph.query(unraid.Q_ME, ("me",))).data["me"]
@@ -142,6 +172,8 @@ async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -
             if problem:
                 raise RemoteError("key", problem)
             snaps = db.get_snapshots(conn, host)
+            prev_stats = snaps.get(unraid.STATS)
+            stats_due = unraid.due(now, prev_stats.taken_at if prev_stats else None, unraid.STATS_TIER, row["interval"])
             for source, (doc, require, tier) in unraid.SOURCES.items():
                 prev = snaps.get(source)
                 if not unraid.due(now, prev.taken_at if prev else None, tier, row["interval"]):
@@ -155,7 +187,20 @@ async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -
                     results[source] = (False, unraid.error_text(exc, key), None)
                 except (KeyError, TypeError, ValueError, AttributeError) as exc:
                     results[source] = (False, f"Unexpected reply: {type(exc).__name__}", None)
+                if source == "unraid_docker" and stats_due:
+                    # With the list just read (or the last good one), sample in the background while the rest is read.
+                    fresh = results.get(source)
+                    old = snaps.get(source)
+                    docker = fresh[2] if fresh and fresh[0] else (old.data if old and old.data else None)
+                    stats_task = asyncio.create_task(_sample_stats(graph, docker, key, now))
+            if stats_due and stats_task is None:      # the container list was not due: use the last one
+                old = snaps.get("unraid_docker")
+                stats_task = asyncio.create_task(_sample_stats(graph, old.data if old and old.data else None, key, now))
+            if stats_task is not None:
+                results[unraid.STATS] = await stats_task
         finally:
+            if stats_task is not None and not stats_task.done():
+                stats_task.cancel()
             await graph.aclose()
     except RemoteError as exc:
         current = store.get(conn, host)

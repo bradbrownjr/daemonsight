@@ -903,7 +903,8 @@ Done. The hub reads the Unraid GraphQL API with an `x-api-key` header
 [31][32]. Unraid's API has a `VIEWER` role, "Read-only access to all
 resources" (enum `Role` in `api/generated-schema.graphql`, github.com/unraid/api)
 [33], so the key is read-only on the server's side too. The hub's own client
-is read-only as well (see below).
+is read-only as well (see below), with one named exception: a single
+subscription for container CPU and memory (see "Container CPU and memory").
 
 Data flow:
 
@@ -914,13 +915,17 @@ Data flow:
  │  every `interval`: me, system, array,├──────────►│ x-api-key: Viewer key│
  │  docker, vms, ups; every 5 min: disks│  query    │ (read-only role)     │
  │  and notifications                   │◄──────────┤                      │
- │ snapshots unraid_*  ─► unraid_rules  │  JSON     └──────────────────────┘
- │  ─► findings, events, metrics        │
+ │  every `interval`, beside the queries│  WebSocket│ /graphql             │
+ │  once the container list is read:    ├──────────►│ docker stats, while  │
+ │  a few seconds of container stats    │  1 subscr.│ subscribed           │
+ │ snapshots unraid_*  ─► unraid_rules  │◄──────────┤                      │
+ │  ─► findings, events, metrics        │  JSON     └──────────────────────┘
  └──────────────────────────────────────┘
 ```
 
 **Queries.** All are written from the published schema [33]; none is a
-mutation. Every request body is `{"query": ...}` and nothing else.
+mutation. Every HTTP request body is `{"query": ...}` and nothing else. The
+one WebSocket message that carries a document is the subscription below.
 
 | Source (snapshot) | Query | Schema reference |
 |-------|-------|------------------|
@@ -928,11 +933,12 @@ mutation. Every request body is `{"query": ...}` and nothing else.
 | `unraid_system` | `vars { name version }`, `info { os { hostname release kernel uptime } versions { core { unraid api } } cpu { brand cores threads } }`, `metrics { cpu { percentTotal } memory { total available percentTotal swapTotal swapUsed } }` | `Query.vars`, `Query.info`, `Query.metrics` |
 | `unraid_array` | `array { state capacity { kilobytes { free used total } disks { used total } } parityCheckStatus { ... } parities disks caches boot }`, `display { hot max warning critical }`, `parityHistory { date duration speed status errors }` | `UnraidArray`, `ArrayDisk`, `ArrayCapacity`, `ParityCheck`, `Display` |
 | `unraid_disks` | `disks { device type name vendor size interfaceType smartStatus temperature isSpinning }` | `Query.disks: [Disk!]!`, `Disk.smartStatus: DiskSmartStatus` |
-| `unraid_docker` | `docker { containers { names image state status autoStart isUpdateAvailable isOrphaned ports { ip privatePort publicPort type } } }` | `Docker.containers`, `DockerContainer` |
+| `unraid_docker` | `docker { containers { id names image state status autoStart isUpdateAvailable isOrphaned ports { ip privatePort publicPort type } } }` | `Docker.containers`, `DockerContainer` |
 | `unraid_vms` | `vms { domains { name state } }` (null when VMs are off) | `Vms.domains`, `VmDomain` |
 | `unraid_notifications` | `notifications { overview { unread { info warning alert total } } alerts: list(filter: {type: UNREAD, importance: ALERT, offset: 0, limit: 2000}) { id title subject description importance link timestamp } warnings: list(filter: {... WARNING ...}) { same fields } }` | `Notifications.overview`, `Notifications.list(filter: NotificationFilter!)`, `Notification` (`description: String!`, `link: String`), `NotificationFilter { importance type offset limit }` |
 | `unraid_folders` | `docker { organizer { version views { id name rootId flatEntries { id type name parentId depth position path hasChildren childrenIds meta { names } } } } }` | `Docker.organizer: ResolvedOrganizerV1!`, `ResolvedOrganizerView`, `FlatOrganizerEntry` |
 | `unraid_ups` | `upsDevices { id name model status battery { chargeLevel estimatedRuntime health } power { loadPercentage } }` | `Query.upsDevices: [UPSDevice!]!` |
+| `unraid_stats` | subscription `dockerContainerStats { id cpuPercent memUsage memPercent }` (over a WebSocket, not a query) | `Subscription.dockerContainerStats: DockerContainerStats!`; `DockerContainerStats { id: PrefixedID!, cpuPercent: Float!, memUsage: String!, memPercent: Float! }` |
 
 The exact strings are the constants in `src/daemonsight/remote/unraid.py`.
 
@@ -947,10 +953,17 @@ the resources it could change, and says where to make a Viewer key: Settings
 → Management Access → API Keys. Nothing else is asked of an over-privileged
 key.
 
-**Read-only in the hub.** `remote/client.py` offers one method, `query`. It
-refuses any document that does not start with `{` or `query`, or that contains
-`mutation` or `subscription`, before sending, follows no redirects, and caps a
-reply at 8 MiB. A test asserts that no request body the hub sends contains
+**Read-only in the hub.** `remote/client.py` has two ways to talk to the
+server. `Graph.query` refuses any document that does not start with `{` or
+`query`, or that contains `mutation` or `subscription`, before sending, follows
+no redirects, and caps a reply at 8 MiB. `Graph.sample` is the only code that
+opens a WebSocket: it accepts exactly one document, the constant
+`STATS_SUBSCRIPTION`, compared as a whole string (so not "a subscription that
+looks like it", and not that text with anything added), and raises before
+connecting for anything else. It is a separate method so that loosening one
+guard never loosens the other, and `query` still refuses the allowed
+subscription. Tests assert that no other subscription and no mutation can be
+sent, and that no request body or WebSocket message the poller sends contains
 "mutation".
 
 **TLS.** Verification is on by default, with the system's trust store (httpx
@@ -980,6 +993,11 @@ key is never sent to it. There is no "don't verify" option.
   (about 1.1 s per list, 2.1 s for alerts and warnings) and the Docker folders.
 - Once a day, for the whole hub: the newest stable release (below).
 
+The container statistics are sampled in the same poll, every `interval` (the
+fast tier), as a task that starts once the container list is read and runs
+beside the remaining queries (below). It has its own timeout (at most 5 s of
+collection) and never ends the poll.
+
 Requests use httpx timeouts (5 s to connect, 20 s for anything else). A source that fails
 keeps its previous data and records its error on its snapshot; the other
 sources go on. A connection, TLS, authentication or key-check failure ends the
@@ -989,6 +1007,109 @@ findings stay as they were. After 3 intervals and at least 3 minutes without a
 good read, `remote.unreachable` (High) opens; the next good read resolves it
 and writes "Reading this system again". `host.silent` is not used, since
 nobody uploads for a remote system, and `hub update` skips these hosts.
+
+**Container CPU and memory.** `unraid_stats`. Unraid has these only as a
+subscription: `Subscription.dockerContainerStats` in
+`api/generated-schema.graphql`, and no query or field on `DockerContainer`
+carries them [33][44]. What was read and checked live (read-only, against a
+real Unraid with 93 containers, 69 running):
+
+- *Protocol.* The API server speaks `graphql-ws`, the library, so the
+  WebSocket sub-protocol is `graphql-transport-ws`, at `/graphql` (the same
+  path as HTTP): `api/src/unraid-api/graph/graph.module.ts`
+  (`subscriptions: { 'graphql-ws': ... }`) and `request-protection.ts`
+  (`path: '/graphql'`); the message flow is the graphql-ws protocol [45]:
+  `connection_init`, `connection_ack`, `subscribe`, `next` ..., `complete`.
+  The legacy `subscriptions-transport-ws` is not used (the server's own
+  client, `internal-graphql-client.factory.ts`, is `graphql-ws`'s `createClient`).
+- *The key.* Passed the way Unraid's own client passes it: in the
+  `connection_init` payload as `{"x-api-key": <key>}` (`internal-graphql-client.factory.ts`,
+  `connectionParams`). `authentication.guard.ts` merges those connection
+  parameters into the request headers, and `header.strategy.ts` reads
+  `x-api-key` from them, so it is the same check as the HTTP header. The key is
+  in the first message after the TLS handshake and in no URL or header of the
+  upgrade request. Checked live: the handshake and a stream with an Admin key.
+- *What it carries.* One message per container per tick, `id` included and no
+  name: `id` is the PrefixedID `<server id>:<64 hex digits>`, the same value as
+  `DockerContainer.id`, so the hub adds `id` to the containers query and maps
+  it to the name. Ticks were about 0.5 s apart live, and the first message
+  arrived 1 to 2 s after subscribing (the server starts `docker stats` then:
+  `docker-stats.service.ts` runs `docker stats --format ... --no-trunc` while
+  there is at least one subscriber and kills it when the last one leaves; the
+  topic is registered in `docker.resolver.ts` with `SubscriptionTrackerService`).
+  All 69 running containers had reported by the end of the first tick.
+  Docker refreshes each figure once a second, so every second message repeats
+  the one before. `memUsage` is Docker's own text, `<used> / <limit>` in binary
+  units with four significant digits (`970MiB / 94.28GiB`; `-- / --` while a
+  container stops) [46]; without a memory limit Docker reports the host's memory
+  as the limit, which the page says ("host memory, no limit") when the limit is
+  within 2% of the server's memory.
+- *A defect worked around.* Unraid does not strip the terminal control codes
+  that `docker stats` prints before the first line of each refresh, so the
+  first container's `id` arrived as `<server id>:ESC[H<id>` or
+  `<server id>:ESC[J ESC[H<id>` (seen live; `docker-stats.service.ts` strips
+  only `ESC[...m` and `ESC[...K`). The hub removes such sequences and keeps the
+  last 64 hex digits; anything else is ignored.
+- *Permission.* The subscription requires `READ_ANY` on `DOCKER`
+  (`@UsePermissions` in `docker.resolver.ts`), and the Viewer role has `READ_ANY`
+  on every resource except `API_KEY` (`api/src/unraid-api/auth/casbin/policy.ts`),
+  so a Viewer key may subscribe. This was read from the source; it was not
+  tried with a Viewer key (the key available for testing was an Admin key, and
+  making a key is a change). See "To verify".
+
+How it is sampled. Each poll, once the container list is read, `Graph.sample`
+opens one WebSocket to `/graphql` with the same TLS mode as the queries (the
+CA store, or the pinned certificate; never "don't verify"), sends
+`connection_init`, waits up to 5 s for `connection_ack`, sends the subscription,
+and reads `next` messages until every running container has reported or 5 s have
+passed, then sends `complete` and closes (code 1000). It follows no redirects
+(the library's own redirect handling is switched off), uses no proxy from the
+environment and no compression, answers `ping` with `pong`, reads at most 5000
+messages of at most 16 KiB each, and gives the library a logger that never
+emits (websockets logs frames at debug level, and the first frame holds the
+key). A failed sample (no connection, refused key, no reports, a bad message)
+keeps the last data, which the pages show with its age and the error, and
+the rest of the poll goes on; a failed sample never stops the poll or opens a
+finding.
+
+Stored per container: `cpu` (Docker's figure for about one second, where 100 is
+one core and a multi-core container can pass 100), `mem_percent`, `mem_used` and
+`mem_limit` in bytes (parsed from `memUsage`), and `sampled_at`. Pages: the
+Containers page has sortable CPU and Memory columns (used, and the percent of its
+limit) and a note saying how old the reading is; the Overview has "Top
+containers", the five busiest by CPU and the five largest by memory among the
+running ones, each linking to its row. VMs have no statistics in the API and are
+not included.
+
+No findings come from these readings. A threshold such as "a container is using
+most of a core for an hour" needs history, not one sample a minute earlier; it
+comes with the history charts (phase 4, "History charts and drill-down").
+Until then the readings are shown, not judged.
+
+Cost, measured against the owner's server (93 containers, 69 running; one
+Python process on the same machine, the median of 8 samples after a warm-up):
+about 22 ms of CPU per sample (TLS handshake, the exchange, parsing and
+encoding what is stored), 1.1 s of wall time (the sample ends when the last of
+the 69 has reported), a peak of about 0.6 MB of Python heap (measured with
+`tracemalloc`) and under 0.25 MB of growth in resident memory, with 9.4 KB
+stored per sample. At one sample a minute that is under 0.05% of one core.
+Importing the WebSocket library adds about 3.9 MB to the process once. The cost
+on the Unraid side (`docker stats` started and stopped each sample, for about a
+second) was not measured: the `docker stats` process was not visible from where
+the measurement ran.
+
+The library is `websockets` (BSD-3-Clause), pinned to 17.4 [47]. It is the
+widely used asyncio WebSocket client, has no dependencies of its own (a C speed-up
+is optional and ships as wheels for CPython 3.13 on x86-64 and arm64 Linux, so
+the hub image needs no compiler), supports Python 3.11 to 3.15 as the hub does,
+and takes an `ssl.SSLContext`, which is how the pinned certificate is applied.
+`httpx-ws` (0.10.0) was the other candidate: it would sit on httpx's transport,
+but it adds `wsproto` and `anyio` to the install, and its handling of redirects
+and proxies was not examined; `aiohttp` would add a second full HTTP client. One behaviour of `websockets` is turned off
+on purpose: its `connect` follows HTTP redirects with no option to refuse them,
+so the hub subclasses `connect` and overrides `process_redirect` to return the
+redirect as an error (the same rule as for queries). Both are documented in the
+library's reference [47].
 
 **Docker folders.** `unraid_folders` is the Docker tab's folder tree. The
 Containers page groups the containers by folder in the owner's order, with a
@@ -1016,7 +1137,7 @@ links to `/Tools/Update`) [43]. Boot device backup: Main, Boot Device (called
 Flash before 7.3.0), Boot Device Backup [41].
 
 **Pages.** `/h/<id>/` Overview ("At a glance": version, uptime, array state,
-capacity, CPU, memory, UPS, unread notifications), Array & disks, Containers,
+capacity, CPU, memory, UPS, unread notifications, and "Top containers"), Array & disks, Containers,
 VMs and Notifications. Cells carry `data-label`, rows have anchors
 (`disk-disk1`, `ctr-<name>`, `vm-<name>`, `notif-<id>`) that findings link to,
 and each section's panel names the GraphQL query, its curl form and the Unraid
@@ -1191,6 +1312,13 @@ shows what was using it at that moment.
 Each drill-down row links to its row on Services. The samples get their own
 retention setting.
 
+For a system read from Unraid, per-container CPU and memory already arrive each
+poll (`unraid_stats`, see "Container CPU and memory" under Unraid), but only the
+latest sample is kept and nothing is judged. The history and the thresholds
+(for example, a container above most of a core for an hour, or close to its
+memory limit) belong here, not in the Unraid rules, because one sample a minute
+cannot tell a spike from a steady load.
+
 The collector must stay light:
 
 - Budget: under 1% of one CPU core on average and about 60 MB of memory on a
@@ -1234,6 +1362,7 @@ The collector must stay light:
 - Unraid: the "how to use the API" page lists only the roles admin, connect and guest, while the schema and the CLI example (`--roles ADMIN,VIEWER`) have `VIEWER`; the Viewer role comes from the schema [33] and [32], and a Viewer key was not available to test.
 - Unraid: whether the API gives a threshold for a disk with its own temperature setting, and the SSD thresholds (the schema has no field).
 - Unraid: the notification, folder and release queries ran against the real server with an Admin key, read-only; a Viewer key reading `Notifications.list` and `Docker.organizer` was not tried. The release page was fetched without parameters and with `branch=stable`; its reply shape is what the fixture copies. Unverified: the exact label of the notification bell's "Archive all" (taken from the brief; the webgui source has no such string in the files searched), whether an acknowledged SMART attribute (the Dashboard's orange icon) still sends a notification when it changes again (the SMART docs say so), and that a history entry's `date` is the time the check ended (observed: it matches the finish notice within seconds).
+- Unraid: the container statistics subscription ran against the real server with an Admin key, read-only (the handshake, the stream, the id format and its control-code prefix, `memUsage`). Not tried with a Viewer key: the source gives a Viewer `READ_ANY` on `DOCKER`, which the subscription needs, but no Viewer key was available. Run it once with a real Viewer key before relying on it. The cost on the Unraid side (`docker stats` started and stopped each sample) was not measured, and the figure for "no memory limit" assumes Docker reports the host's memory as the limit (seen here: 94.28 GiB on a server with that much RAM).
 
 ## Sources
 
@@ -1280,3 +1409,8 @@ The collector must stay light:
 41. Unraid docs, secure your boot drive (Boot Device Backup): https://docs.unraid.net/unraid-os/system-administration/secure-your-server/secure-your-boot-drive/ ; array health (Check, "Write corrections to parity", first 100 error addresses, 4 KiB blocks, Settings → Scheduler → Parity Check): see [37]
 42. Unraid webgui, `emhttp/plugins/dynamix/scripts/monitor` (the notification titles and subjects), `plugins/dynamix.docker.manager/DockerContainers.page` (Check for Updates, Update All, Container Size buttons), `DockerSettings.page` (Docker vDisk size), `scripts/dockerupdate` (Docker update notice), `ParityCheck.page` (Settings → Scheduler → Parity Check): https://github.com/unraid/webgui ; Parity Check Tuning plugin, `parity.check.tuning.php` (its notices): https://github.com/itimpi/parity.check.tuning ; Fix Common Problems, `scripts/scan.php` and `FixProblems.page` (menu Utilities; "Investigate at Settings / User Utilities / Fix Common Problems"): https://github.com/Squidly271/fix.common.problems
 43. Unraid API repository, `plugin/source/dynamix.unraid.net/usr/local/emhttp/plugins/dynamix.plugin.manager/include/UnraidCheck.php` (`BASE_RELEASES_URL`, the request parameters), `.../scripts/unraidcheck`, `.../Update.page` (title "Update OS"), and `api/src/unraid-api/graph/resolvers/notifications/notifications.service.ts` (`getWarningsAndAlerts` and `loadNotificationsFromPaths`): https://github.com/unraid/api ; the release page: https://releases.unraid.net/os
+44. Unraid API source for the statistics subscription: `api/src/unraid-api/graph/resolvers/docker/docker.resolver.ts` (`dockerContainerStats`, `@UsePermissions` `READ_ANY` on `DOCKER`, `SubscriptionTrackerService` start and stop), `docker-stats.service.ts` (`docker stats --no-trunc` with a `--format` of the ID, CPUPerc, MemUsage, MemPerc, NetIO and BlockIO fields, one `pubsub.publish` per output line), `api/src/unraid-api/graph/graph.module.ts` and `request-protection.ts` (`graphql-ws`, path `/graphql`), `auth/authentication.guard.ts`, `auth/header.strategy.ts`, `shared/internal-graphql-client.factory.ts` (`connectionParams` with `x-api-key`), `auth/casbin/policy.ts` (Viewer: `READ_ANY` on every resource but `API_KEY`): https://github.com/unraid/api (read at commit 023a3ca, November 2026)
+45. GraphQL over WebSocket protocol (sub-protocol `graphql-transport-ws`; `ConnectionInit`, `ConnectionAck`, `Ping`, `Pong`, `Subscribe`, `Next`, `Error`, `Complete`; close codes 4400, 4401, 4403, 4408, 4409, 4429): https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md
+46. Docker CLI, `cli/command/container/formatter_stats.go` (`MemUsage`: `units.BytesSize(used) + " / " + units.BytesSize(limit)`, `"-- / --"` when invalid) and docker/go-units `size.go` (`BytesSize` is `%.4g` with `B, KiB, MiB, GiB, TiB, PiB, EiB, ZiB, YiB`): https://github.com/docker/cli and https://github.com/docker/go-units
+47. websockets 17.4 (BSD-3-Clause; asyncio client `websockets.asyncio.client.connect`: `ssl`, `subprotocols`, `proxy`, `compression`, `max_size`, `open_timeout`, `close_timeout`, `logger`, and `process_redirect`, which follows redirects by default): https://websockets.readthedocs.io/ and the package source, https://github.com/python-websockets/websockets ; the file listing for 17.4, uploaded 2026-10-30, with wheels for CPython 3.13 on manylinux x86-64 and aarch64: https://pypi.org/project/websockets/17.4/ ; httpx-ws 0.10.0 (requires anyio, httpcore, httpx and wsproto): https://pypi.org/project/httpx-ws/
+48. Unraid webgui, `emhttp/plugins/dynamix.docker.manager/DockerContainers.page` (the "CPU & Memory load" column, Advanced View): https://github.com/unraid/webgui

@@ -3,7 +3,7 @@
 {% if v %}
 <section class="card" id="containers" aria-labelledby="ctr-title" data-section{% if not v.rows %} data-empty{% endif %}>
   <div class="card-header">
-    <h2 class="card-title" id="ctr-title">Containers</h2>{{ src("src-docker", v.src.docker) }}
+    <h2 class="card-title" id="ctr-title">Containers</h2>{{ src("src-docker", v.src.docker) }}{{ src("src-stats", v.src.stats) }}
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.rows|length }} total{% if v.groups|length > 1 or v.groups[0].title %} · {{ v.groups|length }} groups{% endif %}</div>
   </div>
   {% if v.state.state != 'ok' and not v.rows %}
@@ -13,15 +13,17 @@
   {% else %}
   <div class="table-responsive">
     <table class="table table-vcenter card-table" data-table="containers">
-      <thead><tr><th data-sort="text">Name</th><th data-sort="text">Image</th><th data-sort="text">State</th><th data-sort="num">Update</th><th data-sort="text">Auto-start</th><th data-sort="text">Published</th></tr></thead>
+      <thead><tr><th data-sort="text">Name</th><th data-sort="text">Image</th><th data-sort="text">State</th><th data-sort="num">CPU</th><th data-sort="num">Memory</th><th data-sort="num">Update</th><th data-sort="text">Auto-start</th><th data-sort="text">Published</th></tr></thead>
       {% for g in v.groups %}
       <tbody{% if g.title %} id="{{ g.anchor }}" class="ds-group" data-group{% endif %}>
-        {% if g.title %}<tr class="ds-group-head"><th scope="colgroup" colspan="6">{{ g.title }} <span class="badge bg-secondary-lt ms-1">{{ g.count }}</span></th></tr>{% endif %}
+        {% if g.title %}<tr class="ds-group-head"><th scope="colgroup" colspan="8">{{ g.title }} <span class="badge bg-secondary-lt ms-1">{{ g.count }}</span></th></tr>{% endif %}
         {% for c in g.rows %}
         <tr id="{{ c.anchor }}" data-row>
           <td data-label="Name"><strong>{{ c.name }}</strong>{{ src("src-c-" ~ c.anchor, c.src) }}{% if c.orphaned %}<div class="text-secondary small">no template</div>{% endif %}</td>
           <td class="font-monospace" data-label="Image">{{ c.image }}</td>
           <td data-label="State"><span class="badge {{ c.state_badge }}">{{ c.state }}</span><div class="text-secondary small">{{ c.status }}</div></td>
+          <td data-v="{{ c.cpu_v }}" data-label="CPU">{{ c.cpu }}</td>
+          <td data-v="{{ c.mem_v }}" data-label="Memory">{{ c.mem }}{% if c.mem_detail %}<div class="text-secondary small">{{ c.mem_detail }}</div>{% endif %}</td>
           <td data-v="{{ c.update_v }}" data-label="Update"><span class="badge {{ c.update_badge }}">{{ c.update_text }}</span></td>
           <td data-label="Auto-start">{{ c.auto }}</td>
           <td class="font-monospace" data-label="Published">{% for p in c.ports %}<div>{{ p.text }}</div>{% else %}<span class="text-secondary">—</span>{% endfor %}</td>
@@ -32,6 +34,7 @@
     </table>
   </div>
   {% if v.folders_state.state in ('error', 'unavailable') %}<div class="card-body text-secondary small">Docker folders could not be read ({{ v.folders_state.reason }}). The grouping above is from the last good read, or the list is flat.</div>{% endif %}
+  <div class="card-body text-secondary small" id="ctr-stats-note">{% if v.stats.ago %}CPU and memory were sampled {{ v.stats.ago }}{% if v.stats.error %}; the latest sample failed ({{ v.stats.error }}), so these are the last good readings{% endif %}. CPU is Docker's reading over about one second, where 100% is one core.{% elif v.stats.error %}CPU and memory could not be read: {{ v.stats.error }}{% else %}CPU and memory have not been sampled yet.{% endif %}</div>
   <div class="card-body text-secondary small">DaemonSight only reads. Update, start or stop a container in the Unraid web UI, on the Docker tab.</div>
   {% endif %}
   <div class="card-body text-secondary ds-nomatch">No containers match the filter.</div>

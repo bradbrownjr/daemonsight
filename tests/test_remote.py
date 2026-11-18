@@ -478,7 +478,7 @@ def test_a_poll_stores_every_source_and_opens_findings(conn, cfg, fake):
     add(conn, cfg)
     assert poll_at(conn, cfg, fake, NOW) == 1
     snaps = db.get_snapshots(conn, "tower")
-    assert set(snaps) == set(unraid.SOURCES) and all(s.ok for s in snaps.values())
+    assert set(snaps) == set(unraid.SOURCES) | {unraid.STATS} and all(s.ok for s in snaps.values())
     r = store.get(conn, "tower")
     assert r["last_ok"] == NOW and r["last_error"] is None and r["fails"] == 0
     assert conn.execute("SELECT last_seen, version FROM hosts WHERE id='tower'").fetchone()["version"] == "Unraid 7.3.2"

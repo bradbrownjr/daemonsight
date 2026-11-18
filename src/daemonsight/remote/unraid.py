@@ -19,6 +19,10 @@ stored notifications): `disks` runs smartctl on each disk (2.4 s) and
 of alerts and of warnings took 2.1 s together), so those two are read
 every five minutes. Everything else is under 0.7 s and is read every
 `interval` (60 s by default).
+
+The one thing that is not a query is the container CPU and memory (`unraid_stats`): Unraid has them only as a
+subscription. The hub samples it for a few seconds each `interval` through `Graph.sample`, the only place a
+subscription is sent (client.py); the protocol, the id format and the permission are in docs/DESIGN.md, Unraid.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from math import isfinite
 
-from .client import Graph, Net, RemoteError, scrub
+from .client import STATS_SUBSCRIPTION, Graph, Net, RemoteError, Sample, scrub
 
 # --- the queries ---------------------------------------------------------------
 # Query.me: UserAccount { name roles permissions { resource actions } }
@@ -52,8 +56,9 @@ Q_ARRAY = ("{ array { state capacity { kilobytes { free used total } disks { use
            "display { hot max warning critical } parityHistory { date duration speed status errors } } "
            f"fragment D on ArrayDisk {{ {_ARRAY_DISK} }}")
 
-# Query.docker: Docker { containers: [DockerContainer] }
-Q_DOCKER = ("{ docker { containers { names image state status autoStart isUpdateAvailable isOrphaned "
+# Query.docker: Docker { containers: [DockerContainer] }. `id` is a PrefixedID, "<server id>:<64 hex digits>"; the
+# statistics subscription reports containers by the same id (see parse_stats).
+Q_DOCKER = ("{ docker { containers { id names image state status autoStart isUpdateAvailable isOrphaned "
             "ports { ip privatePort publicPort type } } } }")
 
 # Query.docker.organizer: ResolvedOrganizerV1 { version views: [ResolvedOrganizerView { id name rootId flatEntries
@@ -90,6 +95,16 @@ Q_UPS = ("{ upsDevices { id name model status battery { chargeLevel estimatedRun
 # Query.disks: [Disk { smartStatus temperature interfaceType ... }] (runs smartctl)
 Q_DISKS = "{ disks { device type name vendor size interfaceType smartStatus temperature isSpinning } }"
 
+# Subscription.dockerContainerStats: DockerContainerStats! { id: PrefixedID!, cpuPercent: Float!, memUsage: String!,
+# memPercent: Float! } (also netIO and blockIO, which are not asked for). Unraid has container CPU and memory only as
+# this subscription: there is no query and no field on DockerContainer. It is `docker stats` run on the server
+# (api/src/unraid-api/graph/resolvers/docker/docker-stats.service.ts), one message per container about every half
+# second while someone is subscribed, and the stream stops when the last subscriber leaves. The hub subscribes for
+# a few seconds each poll (`Graph.sample` in client.py, the only place a subscription is sent).
+STATS = "unraid_stats"
+Q_STATS = STATS_SUBSCRIPTION
+STATS_TIER = "fast"
+
 # What "Test connection" counts.
 Q_PROBE = ("{ vars { name version } "
            "array { state parities { name } disks { name } caches { name } } docker { containers { names } } }")
@@ -109,10 +124,13 @@ SOURCES: dict[str, tuple[str, tuple[str, ...], str]] = {
 SLOW_SECONDS = 300
 # Sources whose failure is not a problem with the system: the Docker folders (an older Unraid has none).
 OPTIONAL = frozenset({"unraid_folders"})
+# The statistics are sampled with a subscription, not a query, so they are not in SOURCES; the poller handles them
+# beside it. A failed sample is not a problem with the system (the other sources say that), so it is optional too.
+OPTIONAL = OPTIONAL | {STATS}
 ALL_QUERIES = [Q_ME, Q_PROBE] + [q for q, _r, _t in SOURCES.values()]
 
 # What each stored source was read with, as shown in its panel.
-QUERY_OF = {src: q for src, (q, _r, _t) in SOURCES.items()}
+QUERY_OF = {src: q for src, (q, _r, _t) in SOURCES.items()} | {STATS: Q_STATS}
 
 
 # --- the key may only read ------------------------------------------------------
@@ -258,6 +276,7 @@ def parse_docker(d: dict) -> dict:
             continue
         names = c.get("names") or []
         out.append({
+            "id": container_id(c.get("id")),
             "name": text(names[0] if names else "", 80).lstrip("/"), "image": text(c.get("image"), 200),
             "state": _upper(c.get("state")), "status": text(c.get("status"), 80),
             "auto_start": bool(c.get("autoStart")),
@@ -268,6 +287,55 @@ def parse_docker(d: dict) -> dict:
         })
     out.sort(key=lambda c: c["name"].lower())
     return {"containers": out}
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_DOCKER_ID = re.compile(r"([0-9a-f]{64})$")
+
+
+def container_id(v) -> str | None:
+    """The 64 hex digits of a Docker container id from Unraid's PrefixedID ("<server id>:<id>"), or None."""
+    m = _DOCKER_ID.search(_ANSI.sub("", str(v or "")))
+    return m.group(1) if m else None
+
+
+_SIZE_UNITS = {"B": 1, "KIB": 1 << 10, "MIB": 1 << 20, "GIB": 1 << 30, "TIB": 1 << 40, "PIB": 1 << 50,
+               "KB": 10 ** 3, "MB": 10 ** 6, "GB": 10 ** 9, "TB": 10 ** 12}
+_SIZE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]+)\s*$")
+
+
+def _size(v: str) -> int | None:
+    m = _SIZE.match(v)
+    mult = _SIZE_UNITS.get(m.group(2).upper()) if m else None
+    return round(float(m.group(1)) * mult) if m and mult else None
+
+
+def parse_mem_usage(v) -> tuple[int | None, int | None]:
+    """(used, limit) in bytes from `memUsage`, Docker's own "970MiB / 94.28GiB" (docker/cli
+    cli/command/container/formatter_stats.go: `units.BytesSize(used) + " / " + units.BytesSize(limit)`, binary units
+    with four significant digits; "-- / --" while a container is stopping). With no memory limit set, Docker reports
+    the host's memory as the limit."""
+    parts = str(v if v is not None else "").split("/")
+    if len(parts) != 2:
+        return None, None
+    return _size(parts[0]), _size(parts[1])
+
+
+def parse_stats(sample: Sample, names: dict[str, str], now: float) -> dict:
+    """What a sample stores, by container name: {"containers": {name: {cpu, mem_percent, mem_used, mem_limit,
+    sampled_at}}, "sampled_at", "reported", "seconds"}. `names` maps a Docker id to the name from the docker
+    source, so a report for a container the list does not have is dropped. cpuPercent is Docker's figure for the
+    last second and can be above 100 (one core is 100)."""
+    out: dict[str, dict] = {}
+    for cid, r in sample.items.items():
+        name = names.get(cid)
+        cpu, mem_pct = num(r.get("cpu")), num(r.get("mem_percent"))
+        if not name or cpu is None or mem_pct is None or cpu < 0 or mem_pct < 0:
+            continue
+        used, limit = parse_mem_usage(r.get("mem_usage"))
+        out[name] = {"cpu": round(float(cpu), 2), "mem_percent": round(float(mem_pct), 2), "mem_used": used,
+                     "mem_limit": limit, "sampled_at": now}
+    return {"containers": out, "sampled_at": now, "reported": len(out), "seconds": sample.seconds}
 
 
 FOLDERS_MAX = 200

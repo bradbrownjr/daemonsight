@@ -3,6 +3,7 @@
   "docker": {
    "containers": [
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:5eb7e725e6bac43f2a906437aa7be080081de786a7d12f7b9649be47b69d6ca0",
      "names": [
       "/app-1"
      ],
@@ -22,6 +23,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:80d6ae0197c2a3be4ec46d171996105891dedf626ea3040f2dd2bf00e63c436e",
      "names": [
       "/app-2"
      ],
@@ -41,6 +43,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:fb360aa6c10bdacc64dc45f60dd5e639aa9f4fa51d6e6fffaf1ffdc254dfd5e3",
      "names": [
       "/app-3"
      ],
@@ -72,6 +75,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:5a333e95bb0d7f29e932fcc0fe5295a0ac2b34f1de90a7306f4f1b5f35eb5d43",
      "names": [
       "/app-4"
      ],
@@ -91,6 +95,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:83e55fecbd62d4b29b85424aeff93c50d6e51c524a36cb21b7de428f78b36bd3",
      "names": [
       "/app-5"
      ],
@@ -116,6 +121,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:a0dfadeb8f6b7f37e3f517f6e6c66da28eb890f41e61f8c249c74e86ca2080e5",
      "names": [
       "/app-6"
      ],
@@ -135,6 +141,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:ed9b47b0544cb11380b4158cc90ac2073847e2343fabffffd7e0203d24f1ca33",
      "names": [
       "/app-7"
      ],
@@ -160,6 +167,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:90655d3abf99ecd18f73c01db97fd6e0f311c56429e4266185ee3a6974632205",
      "names": [
       "/app-8"
      ],
@@ -179,6 +187,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:1a1f247c2c39fb51d2ce4f95765a09ee38286271a8725a499825802b1ba2968f",
      "names": [
       "/app-9"
      ],
@@ -198,6 +207,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:2355497977cdac52878d2477bcc6a1f521d66adae9ea377a849ac25177a77795",
      "names": [
       "/app-10"
      ],
@@ -217,6 +227,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:1b9f3a3b613fbfbc08fd76e7f8dc7e44e83a11d00c3a0b75a5224b1ae3b39bcd",
      "names": [
       "/app-11"
      ],
@@ -248,6 +259,7 @@
      ]
     },
     {
+     "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:c0615b97d43192cd2e91126369e85fe96b4c0da8e9b03c86236acaf27101320f",
      "names": [
       "/app-12"
      ],

@@ -40,8 +40,10 @@ the row they are about, and a port's panel shows the process behind it.
   UPS. Each finding from the hub's own rules has a "What to do" list of plain
   steps. Notices that DaemonSight already checks live (disk usage,
   temperature, parity checks) are not repeated as findings but stay listed on
-  the Notifications page. Certificates are verified, or you pin one after
-  confirming its fingerprint. See [SECURITY.md](SECURITY.md).
+  the Notifications page. Each container shows its CPU and memory, sampled for
+  a few seconds every minute, and the Overview lists the five busiest by CPU
+  and by memory. Certificates are verified, or you pin one after confirming
+  its fingerprint. See [SECURITY.md](SECURITY.md).
 - **Automatic updates.** The Packages page shows whether unattended-upgrades
   (apt) or dnf5-automatic (Fedora) will install security updates, and a
   low finding says how to turn it on.

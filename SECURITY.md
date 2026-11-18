@@ -180,12 +180,31 @@ and a cloud provider's firewall are planned and will follow the same rules.
   A hub that is compromised leaks the keys it holds, which is why they must
   be Viewer keys.
 - **Read requests only, enforced on both sides.** Unraid refuses a write from a
-  Viewer key. The hub's client has one method, which sends `{"query": ...}`
-  and refuses any document that isn't a query (it must begin with `{` or
+  Viewer key. The hub's client sends `{"query": ...}` through one method and
+  refuses any document that isn't a query (it must begin with `{` or
   `query` and must not contain `mutation` or `subscription`) before anything
   is sent. A test asserts that no request body contains "mutation". Redirects
   are not followed, so the key can't be sent somewhere else, and a reply
   larger than 8 MiB is refused.
+- **One subscription, and why it is read-only.** Unraid offers container CPU
+  and memory only as a subscription, so the hub has one other method that opens
+  a WebSocket to `/graphql` and sends exactly this document and no other:
+  `subscription { dockerContainerStats { id cpuPercent memUsage memPercent } }`.
+  The document is compared as a whole string, so any other subscription, any
+  text added to it and any mutation is refused before the hub connects. It
+  asks the server to report figures that Docker already prints (`docker stats`);
+  it changes nothing, and it needs only the read permission on Docker, which the
+  Viewer role has (the server's own Viewer policy, read from its source; not yet
+  tried with a Viewer key). It is sampled for a few seconds each poll, with
+  at most 5 seconds of collection, 5000 messages of 16 KiB each, and then the
+  hub completes the subscription and closes the socket. The WebSocket uses
+  the same certificate check as queries (the CA store, or the one pinned
+  certificate, so a changed certificate is refused before the key is sent), the
+  key goes in the first message after the TLS handshake and in no URL or header,
+  redirects are not followed, no proxy from the environment is used, and the
+  WebSocket library's logging, which would print that message at debug
+  level, is switched off. Tests cover each of these. The library is
+  `websockets`, pinned in `requirements.txt`.
 - **TLS.** Certificates are verified by default. Unraid's own certificate is
   self-signed unless you installed a real one, so you may pin it: Test
   connection fetches the certificate, shows its SHA-256 fingerprint and the
