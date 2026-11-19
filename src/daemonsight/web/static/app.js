@@ -291,23 +291,40 @@
     var few = secs.length < 2;
     var key = JSON.stringify(secs);
     each(live, function (el) {
-      el.hidden = few;
+      var inline = el.classList.contains("ds-sec-inline");
+      var tgl = inline ? document.querySelector('[aria-controls="' + el.id + '"]') : null;
+      // A phone list is also closed while its toggle says so; the toggle and the chevron go with "few".
+      el.hidden = few || (inline && !!tgl && tgl.getAttribute("aria-expanded") !== "true");
       if (few) { if (el.matches("[popover]") && el.hidePopover) { try { el.hidePopover(); } catch (err) { /* closed */ } } return; }
       if (el.getAttribute("data-ds-built") === key) return;
       el.setAttribute("data-ds-built", key);
-      var inline = el.classList.contains("ds-sec-inline");
-      if (el.classList.contains("ds-sec-btn")) return;
+      if (el.classList.contains("ds-sec-btn") || el.classList.contains("ds-sec-tgl")) return;
       var html = secs.map(function (s) {
         var a = '<a class="' + (inline ? "" : "ds-acct-item ") + 'ds-sec-item" href="' + esc(path) + "#" + esc(s.id) + '">' + esc(s.label) + "</a>";
         return inline ? "<li>" + a + "</li>" : a;
       }).join("");
-      if (inline) { var ul = el.querySelector("ul"); if (ul) ul.innerHTML = html; } else el.innerHTML = html;
+      el.innerHTML = html;
     });
     var li = document.querySelector(".ds-tab > .nav-link.active");
     if (li) li.parentNode.classList.toggle("ds-has-sec", !few);
   }
 
+  // Phone menu: a toggle beside each page opens and closes that page's section list (the disclosure pattern:
+  // aria-expanded on the button, the list hidden while closed).
+  function initSectionToggles() {
+    document.addEventListener("click", function (e) {
+      var tgl = e.target.closest(".ds-sec-tgl");
+      if (!tgl) return;
+      var list = document.getElementById(tgl.getAttribute("aria-controls"));
+      if (!list) return;
+      var open = tgl.getAttribute("aria-expanded") !== "true";
+      tgl.setAttribute("aria-expanded", open ? "true" : "false");
+      list.hidden = !open;
+    });
+  }
+
   function initSectionMenus() {
+    initSectionToggles();
     updateLiveMenus();
     document.body.addEventListener("htmx:afterSwap", updateLiveMenus);
     each(document.querySelectorAll(".ds-sec-pop"), function (pop) {

@@ -462,55 +462,7 @@ filter that hides it and flashes it once; the flash is off under
 
 ### Layout and wording rules
 
-These apply to every page. Check each layout change in a browser at desktop
-(1400 px) and phone (390 px) widths before it ships.
-
-- **Symmetry all the way down.** A page picks its columns once and keeps them
-  to the bottom: every card in a column is the same width, and column edges
-  line up from the first card to the last. A page may have one column or a main
-  column with a side column (a host's Overview), but a card is never narrowed
-  in one place to make room for something beside it. A guide that would sit
-  beside one card goes inside it, folded (`details`).
-- **Short up front.** A card opens with one sentence at most. Longer text
-  (terms, caveats, how something is worked out) goes behind an (i) button in the
-  card title that opens a popover, or in a small note at the foot of the page.
-  On the Settings page that is a group's `note`, `note_title` and `note_links`
-  in `settings.GROUPS`; on data pages it is the source panel (`src_button`,
-  `src_panel`).
-- **Alerts are for now.** A coloured alert box is for something that just
-  happened or needs action now (a save, an error). Standing information never
-  goes in one.
-- **Long pages are reached through each tab's section menu.** A nav tab whose
-  page has two or more sections has a small chevron button that opens a menu of
-  them (a native popover, `ds-sec-pop`); the tab name still goes to the page.
-  The active page's menu lists the cards on it (`app.js` builds it from the page, so it includes cards only some systems have); other tabs list the sections every system has, per host kind, in `web/sections.py`
-  (`SECTIONS`), passed to `base.html` as `page_sections`. Only cards every
-  render of the page has are in that registry, and `tests/test_sections.py` (with the
-  Unraid and OPNsense checks in their own test files) proves each anchor exists.
-  A link to a section of the current page scrolls there and flashes it, and
-  shows a card that "Hide empty sections" or the filter has hidden. On a phone
-  there are no chevrons: the active tab's sections are listed under it.
-- **Dependent options sit under their control.** An option that only matters
-  for one value of another setting (the Shodan key under Source) is indented
-  under it (`.ds-subpanel`) and shown only while that value is chosen
-  (`data-ds-when="<select id>=<value>"`, read by `app.js`). Without JavaScript
-  it stays visible. It belongs to the same form and the same Save button; any
-  other action on it posts that form elsewhere with `formaction`, never a
-  nested form.
-- **Steps fold.** A finding's "What to do" steps are folded behind their
-  label, with a solid arrow after it that turns down when open
-  (`howto_block` in `_macros.html`), so a list of findings stays short.
-  Printing opens them all, and they fold again afterwards (`app.js`).
-- **Field help.** One or two short sentences under the control; the default and
-  allowed range go on the line below.
-- **Menus.** Toggles and choices come first. Then a line, then things you go to
-  or do, as menu items with an icon, full width and a hover background, so they
-  never look like labels. The account menu is Theme, Hide empty sections, a
-  line, Settings, Log out.
-- **Navigation.** The header's sections are tabs. "Add a system" is a +, and a
-  vertical line separates hub-wide items from the host's own sections.
-- **Secrets.** Never shown back. A badge says whether one is saved ("A key is
-  saved").
+The layout and wording rules live in [UI.md](UI.md).
 
 ### Status labels
 
@@ -1460,7 +1412,7 @@ never guessed.
 page are not there either; they come with the code that reads them. Open
 follow-ups: a FortiGate source on the same `roles.py`; hub-side DHCP
 reservation checks; the Overview's two-column layout is shared with the other
-host kinds and was not reworked here (see "Layout and wording rules").
+host kinds and was not reworked here (see UI.md).
 
 **Read-only in the hub.** `remote/client.py` has `Rest`: it has no method that
 sends anything but GET (`get` asks httpx for a GET with no body and no

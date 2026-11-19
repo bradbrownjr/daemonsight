@@ -63,8 +63,8 @@ def test_a_page_with_one_section_has_no_menu(seeded):
     c = login(client(seeded))
     html = c.get("/").text
     assert 'id="ds-sec-overview"' in html
-    # Phone: the active tab's sections are listed under it, and only that tab's.
-    assert html.count('class="ds-sec-inline"') == 1
+    # Phone: the Overview page's own list is there (it is the current page).
+    assert 'id="ds-secl-overview"' in html
 
 
 def test_active_tab_has_live_menu_and_other_tabs_follow_the_registry(seeded):
@@ -73,12 +73,41 @@ def test_active_tab_has_live_menu_and_other_tabs_follow_the_registry(seeded):
     assert len(sections.SECTIONS[""].get("routes", [])) < 2
     r = c.get("/routes")
     assert 'id="ds-sec-routes"' in r.text and 'data-ds-sections="live"' in r.text
-    assert 'class="ds-sec-inline" data-ds-sections="live"' in r.text
+    assert re.search(r'<ul class="ds-sec-inline[^"]*" id="ds-secl-routes" data-ds-sections="live"', r.text)
     assert 'id="ds-sec-exposure"' in r.text and 'data-ds-sections="live"' not in r.text.split('id="ds-sec-exposure"')[1].split("</div>")[0]
     # Registry items stay inside the active tab's menu as the no-JavaScript fallback.
     r = c.get("/exposure")
     pop = r.text.split('id="ds-sec-exposure"')[1].split("</div>")[0]
     assert 'data-ds-sections="live"' in pop and 'href="/exposure#listeners"' in pop
-    assert r.text.count('data-ds-sections="live"') == 3        # chevron, popover, phone list
+    assert r.text.count('data-ds-sections="live"') == 4        # chevron, popover, phone toggle, phone list
     # A non-active tab with fewer than 2 registry sections has no chevron.
     assert 'id="ds-sec-routes"' not in r.text
+
+
+def test_phone_menu_is_one_disclosure_per_page_with_sections(seeded):
+    """Each page with sections has a toggle (aria-expanded, aria-controls) and a list with that id. The current
+    page's list starts open and the others closed (hidden); without JavaScript app.css shows them all."""
+    c = login(client(seeded))
+    html = c.get("/exposure").text
+    toggles = re.findall(r'<button type="button" class="ds-sec-tgl"[^>]*>', html)
+    assert len(toggles) >= 2
+    keys = set()
+    for t in toggles:
+        ctl = re.search(r'aria-controls="([^"]+)"', t).group(1)
+        exp = re.search(r'aria-expanded="([^"]+)"', t).group(1)
+        assert ctl.startswith("ds-secl-") and html.count(f'id="{ctl}"') == 1, ctl
+        ul = re.search(r'<ul class="ds-sec-inline[^"]*" id="' + ctl + r'"([^>]*)>', html).group(1)
+        key = ctl[len("ds-secl-"):]
+        keys.add(key)
+        if key == "exposure":
+            assert exp == "true" and " hidden" not in ul
+        else:
+            assert exp == "false" and " hidden" in ul, key
+        assert 'aria-label="Sections of ' in t
+    assert "exposure" in keys and "routes" not in keys     # routes has under 2 registry sections here
+    # The current page's list holds a link to each registry section; the others hold theirs too (the registry).
+    ul = html.split('id="ds-secl-exposure"')[1].split("</ul>")[0]
+    for anchor, _ in sections.SECTIONS[""]["exposure"]:
+        assert f"#{anchor}" in ul
+    css = open("src/daemonsight/web/static/app.css").read()
+    assert "html:not(.ds-js) .ds-sec-inline[hidden] { display: block; }" in css
