@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Docker storage · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · Docker reader: images, volumes and build cache</div>
+  <h1 class="page-title">Docker storage</h1>
+</div>
+{% include "partials/unraid_docker.html" %}
+{% endblock %}

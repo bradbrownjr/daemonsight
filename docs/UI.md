@@ -37,8 +37,9 @@ These apply to every page. Owner rules, kept as written.
 - **Dependent options sit under their control.** An option that only matters
   for one value of another setting (the Shodan key under Source) is indented
   under it (`.ds-subpanel`) and shown only while that value is chosen
-  (`data-ds-when="<select id>=<value>"`, read by `app.js`). Without JavaScript
-  it stays visible. It belongs to the same form and the same Save button; any
+  (`data-ds-when="<select id>=<value>"`, read by `app.js`; a checkbox has the
+  value `on` while ticked: the Docker reader under "Read images and volumes").
+  Without JavaScript it stays visible. It belongs to the same form and the same Save button; any
   other action on it posts that form elsewhere with `formaction`, never a
   nested form.
 - **Steps fold.** A finding's "What to do" steps are folded behind their

@@ -89,6 +89,12 @@ def cmd_web(args, cfg) -> int:
     return 0
 
 
+def cmd_docker_reader(args, cfg) -> int:
+    """Serve the Docker reader (docs/DESIGN.md, Docker reader). Needs the Docker socket and a token file."""
+    from . import docker_reader
+    return docker_reader.serve(args.socket, args.token_file, args.listen, args.port)
+
+
 def cmd_backup(args, cfg) -> int:
     from . import backup
     try:
@@ -268,6 +274,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("collector", help="run the collector (root)")
     sub.add_parser("web", help="run the web UI")
+    rd = sub.add_parser("docker-reader", help="serve a summary of Docker's images, volumes and build cache to the hub")
+    rd.add_argument("--token-file", required=True, help="file holding the bearer token the hub sends (mode 0600)")
+    rd.add_argument("--socket", default="/var/run/docker.sock", help="Docker's unix socket")
+    rd.add_argument("--listen", default="0.0.0.0", help="address to listen on (inside the container)")
+    rd.add_argument("--port", type=int, default=8467)
     sub.add_parser("set-password", help="set the web login password")
     sub.add_parser("init", help="create the session secret and database")
     once = sub.add_parser("collect-once", help="run sources once and print JSON")
@@ -305,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         "collector": cmd_collector, "web": cmd_web, "set-password": cmd_set_password,
         "init": cmd_init, "collect-once": cmd_collect_once,
         "set-upload-token": cmd_set_upload_token, "hub": cmd_hub,
-        "backup": cmd_backup, "restore": cmd_restore,
+        "docker-reader": cmd_docker_reader, "backup": cmd_backup, "restore": cmd_restore,
     }[args.command]
     return handler(args, cfg)
 

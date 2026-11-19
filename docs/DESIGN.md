@@ -133,6 +133,10 @@ DaemonSight knows when it first appeared and when it cleared.
 | `outside.stale` | No good answer for an address for three refreshes (at least 72 hours). The other `outside.*` findings keep following the last good answer | Low |
 | `outside.key` | Only with the Shodan API source: Shodan refused the key (HTTP 401 or 403), has no query credits, or the source is the Shodan API but no key is saved. One per host, key `shodan`, raised at the first failed pass instead of after 72 hours. The detail says nothing is falling back to InternetDB | Medium |
 | `unraid.ups` | The UPS is on battery (Medium; High at 30% charge or below, or when it reports low battery), charge under 50% (Medium), or its battery needs replacing (Low) | Medium, High or Low |
+| `docker.superseded_images` | Only with a Docker reader (see "Docker reader"). Images with no tag that no container uses, each with a newer image of the same repository in use: "N old image versions left by updates, X GB". Fix: `docker image prune`. The basis is the set of image ids (no sizes or dates), so an accept holds until a different image shows up | Low |
+| `docker.unused_images` | Tagged images no container, running or stopped, uses ("N images no container uses, X GB"), without the superseded ones. Fix: one `docker image rm` line per image (the short id, or the tags when the image has several; at most about 1,700 characters, then a comment line). The basis is the set of image ids | Info |
+| `docker.unused_volumes` | Volumes no container mounts. The "What to do" steps open with a data-loss warning (a volume can hold the only copy of a database). No `fix`: one `docker volume rm` per volume is in each row's source panel, and a prune-all command is never offered. The basis is the set of volume names | Info |
+| `docker.build_cache` | Docker's build cache is over 5 GB (decimal, as Docker prints sizes). Fix: `docker builder prune`. The basis is constant, so the size can drift | Info |
 
 Hub rules for remote systems (`remote.*`, `unraid.*`) and the outside view (`outside.*`) are computed by the hub
 and kept by its reconcile, like `host.*` and `cve.*`; a collector's upload
@@ -1717,6 +1721,153 @@ a real Unraid 7.3.2 server, read-only):
 The parity age limit (100 days) follows Unraid's advice to check "on a
 monthly or quarterly basis" [37]; 90% and 95% for usage are DaemonSight's
 own choice.
+
+### Docker reader
+
+Unraid's GraphQL API lists containers but not Docker's images, volumes or build cache. On the server this was built for,
+45 of 136 images were unused (40.6 GB), 646 of 667 volumes were unused (32.6 GB) and the build cache was 16.4 GB. The hub
+gets those figures from a second process, `daemonsight docker-reader`, run from the same image as its own container.
+Nothing here deletes anything; the findings give the command and the person runs it.
+
+Data flow:
+
+```
+ Docker daemon          Docker reader container                hub container
+ ┌────────────┐  unix   ┌───────────────────────┐  HTTP, bearer ┌───────────────────────┐
+ │ Engine API │ socket  │ docker_reader.py      │  token, over  │ remote/poll.py        │
+ │ (root)     │◄────────┤ GET only, 6 fixed     │  the network  │  every 10 min at most │
+ │            │  GET    │ targets, no inspect   │  `daemonsight`│ GET /v1/summary       │
+ └────────────┘         │ serves /v1/summary    │◄──────────────┤ snapshot              │
+                        │ and /v1/health only   │   JSON        │ unraid_docker_storage │
+                        │ publishes no port     │               │  ─► docker.* findings │
+                        └───────────────────────┘               └───────────────────────┘
+```
+
+**The reader is not a proxy.** It serves two routes, `GET /v1/summary` and `GET /v1/health`, both behind a bearer token.
+No path, query or body of the caller's is passed to Docker. The summary is computed in the reader from the reads below and
+cut to the fields listed here, so the hub cannot ask Docker anything else. FastAPI's docs and OpenAPI routes are off, and
+there is no request log.
+
+**What the reader asks Docker.** `docker_reader.Docker.get` sends GET, over the unix socket, to a fixed list, compared as a
+whole string (a test tries about 25 near misses). `/_ping` and `/version` are unversioned; every other path carries the
+version prefix, the lower of the daemon's `ApiVersion` and 1.54, the newest version whose reference was read. All
+citations are the Engine API reference, https://docs.docker.com/reference/api/engine/version/v1.54/ (its swagger file is
+https://docs.docker.com/reference/api/engine/version/v1.54.yaml).
+
+| Target | Operation (swagger id) | Used for |
+|--------|------------------------|----------|
+| `GET /_ping` | Ping (SystemPing) | `/v1/health`: Docker answers `OK` |
+| `GET /version` | Get version (SystemVersion) | `ApiVersion`, `MinAPIVersion`, `Version` |
+| `GET /containers/json?all=1` | List containers (ContainerList); `all`: "Return all containers. By default, only running containers are shown" | `Names`, `Image`, `ImageID`, `State`, and the names of `volume` mounts from `Mounts` |
+| `GET /images/json?all=0&digests=1` | List Images (ImageList); `all`: "Only images from a final layer (no children) are shown by default"; `digests`: "Show digest information as a `RepoDigests` field" | `Id`, `RepoTags`, `RepoDigests`, `Created`, `Size`, `Labels` |
+| `GET /images/{id}/json` | Inspect an image (ImageInspect), for an image no container uses, and only with a `sha256:` id of 64 hex digits | `Metadata.LastTagTime`, `Config.Labels` |
+| `GET /volumes` | List volumes (VolumeList) | `Name`, `Driver`, `CreatedAt`, `Labels` |
+| `GET /system/df?verbose=1` | Get data usage information (SystemDataUsage); `verbose`: "Show detailed information on space usage" | volume `UsageData` (`Size`, `RefCount`); build cache `TotalCount` and `TotalSize` (from API 1.52; before it `Volumes` and `BuildCache` arrays, which are read too) |
+
+Why `all=0` and not `all=1`: with `all=0` the list already has dangling images (untagged leaves, the ones `docker image
+prune` removes). `all=1` adds the intermediate layers of builds, which nobody can remove on their own and which would show
+up as unused images. `digests=1` is needed because an untagged image keeps its `repo@sha256:` names only in `RepoDigests`,
+and the hint for a superseded image reads the repository from there.
+
+Never called: `/containers/{id}/json` (inspect), because it returns each container's `Config.Env`, where passwords live.
+A fake engine in the tests puts `Env`, `Cmd` and a secret label where the real Docker has them and a test checks none of it
+comes out of the reader. The image inspect reply has `Config.Env`, `Cmd` and `Entrypoint` too; they are dropped as the reply
+arrives and never stored, logged or sent.
+
+`/system/df` is very slow on a loaded server (a read of `docker system df -v` on the first server did not finish in 15
+minutes), so it never runs inside a request. A background task in the reader runs it, then waits 30 minutes from the end of
+the read before the next. The summary is answered at once from what is cached and carries `df_at` (when the sizes were read;
+null until the first read ends), `df_running` and `df_error`. A volume's reference count comes from the containers' mounts
+until df is read, so unused volumes are known straight away and only their sizes wait. A failed df read keeps the last good one.
+
+**Fields kept.** Anything else Docker returns is dropped in the reader, and the hub trims the reply again.
+
+- Images: `id`, `tags`, `digests`, `created`, `size`, `last_tag` (from `Metadata.LastTagTime`; Docker uses
+  `0001-01-01T00:00:00Z` for "never", seen live on pulled images, so that is null), `labels` (only keys starting
+  `org.opencontainers.image.` or `net.unraid.`, values cut to 200 characters; an image with no labels has null, seen live) and
+  `in_use`. `last_tag` is read only for unused images.
+- Containers: `name`, `image`, `image_id`, `state`.
+- Volumes: `name`, `created`, `driver`, `labels` (only `com.docker.compose.`), `anonymous` (the label
+  `com.docker.volume.anonymous`, which Docker sets on an anonymous volume, seen live, or a 64-hex name), `size`, `refs`.
+- Build cache: `count` and `size`. Also `images_reclaimable` when df has it, the Docker `version` and `api`.
+
+**Auth.** A bearer token, required on both routes, compared in constant time (`hmac.compare_digest` over the SHA-256 of each
+side, so the length is not leaked either). A wrong or missing token costs a quarter second and gets a 401; the request never
+reaches Docker. The token comes from a file (`--token-file`): the reader refuses to start unless it is a regular file, not
+a symlink, with no access for group or others (0600), and at least 32 printable characters. It is never an environment
+variable, an argument, a log line or a page. The hub keeps its copy in `<data>/remotes/<id>.reader-token` (0600, in the
+0700 folder, written atomically, backed up with the keys, deleted with the system).
+
+**Network.** The reader publishes no port. It and the hub are on a user-defined bridge network, created once with
+`docker network create daemonsight`. On a user-defined bridge, "containers can resolve each other by name or alias" and the
+network "supports port publishing", so the hub keeps its published port while it reaches the reader as
+`http://daemonsight-docker-reader:8467` (https://docs.docker.com/engine/network/drivers/bridge/). The link is plain http,
+so the token travels in clear on that network; only the two containers are on it. The hub's client (`Net.reader`) follows
+no redirects and ignores proxy settings from the environment.
+
+**Hub side.**
+
+- The Unraid system's Add and Edit form has an optional "Read images and volumes" checkbox. Ticked, it shows (indented under
+  it, `data-ds-when`, the same form and Save) the reader's address and token, and a Test reader button that calls
+  `/v1/health` and shows the Docker version and API version. The saved token is never shown back: a badge says one is saved.
+  Unticking and saving deletes the token file and the stored data. Schema 9 adds `remotes.reader_url`.
+- The poll (`remote/poll.py`, `read_docker_storage`) reads `/v1/summary` on the system's interval but at most every 10
+  minutes, and stores it as the snapshot `unraid_docker_storage` (volumes cut to the unused ones plus counts). A failed read
+  keeps the last data and shows its error on the page; it never fails the poll, as with the container statistics.
+- `remote/docker_storage.py` has the hints and the findings (rules `docker.*`, listed under "Findings").
+- The page is its own tab, Docker storage (`/docker`): it would double the length of the Containers page, which already has
+  every container, and it has three cards of its own (Unused images, Unused volumes, Build cache), registered in
+  `web/sections.py`. Each card has a source (i) panel with the reader endpoint, the Docker calls behind it and the matching
+  `docker` command. Every row has a status word (the existing Unexpected, Accepted, Changed labels: a row takes its finding's
+  status) and its own panel with the command to look at it and to remove it, and the panel's Accept form accepts the
+  finding. Images are listed up to 150 and volumes up to 100, largest first; the findings count all of them.
+
+**Where an image came from.** Docker does not record who pulled an image or why, so the hint is a guess, shown as text. In
+order, the first match wins, and every row also shows when the image arrived: `LastTagTime`, else `Created` (the build date,
+which can be long before the pull), labelled "tagged" or "built".
+
+1. Superseded: the image has no tag and an image from the same repository that a container uses is newer. The repository is
+   the name in `RepoDigests` (an untagged image keeps those), or the same `org.opencontainers.image.source` label. "old
+   version of X left by an update; safe to remove".
+2. Removed app: the hub once saw an Unraid-managed container (`isOrphaned` false, which the schema says is "no template
+   found") run this repository and none uses it now. "app X was removed from Unraid; its template may still be there". The
+   Unraid API lists a template only through a container that has it (`DockerContainer.templatePath`; there is no list of
+   templates in `api/generated-schema.graphql`) and the reader cannot see `/boot` where `dockerMan/templates-user` lives, so a
+   template whose container is gone cannot be read. The hub remembers the apps it has seen (`apps_seen`, up to 300) and calls
+   an image "removed" only for those, so this hint appears only for apps removed after the hub began watching. It does not
+   check that the template is still there; the text says "may".
+3. Source label: "from" the `org.opencontainers.image.source` value, as given.
+4. Bare base image (debian, ubuntu, fedora, alpine, python, node and a few more) with no container and no remembered app:
+   "base image, probably pulled for a build or a test".
+5. "no hint".
+
+Volumes: in use or not (a container, running or not, mounts it), anonymous or named, and the compose project label when
+present. An unused anonymous volume's hint is "left by a container that was removed"; a named one from a compose project
+says so.
+
+Sizes: Docker's `Size` for an image counts every layer, including ones shared with other images, so the total of unused
+images is more than removing them would free (`ImagesDiskUsage.Reclaimable` is the better figure and is kept when df has
+it). The page says so.
+
+**Not built: VM statistics.** Unraid's API gives a VM's name and state only. CPU and memory for VMs could come from libvirt's
+read-only connection, `virsh -r domstats`. That is unverified: the command, its fields and whether a container can reach the
+libvirt socket were not checked, so it is not built and is not a promise.
+
+**Verified on the real server** (read-only commands over ssh, shapes and counts only): `docker version` gave Engine API 1.54.
+`docker image ls --no-trunc --format json` has `ID`, `Repository`, `Tag`, `Digest`, `Size`, `CreatedAt`, `Containers`; it listed
+109 images, none untagged, 17 with no container. `docker image inspect --format` gave `Metadata.LastTagTime` as the zero time
+(`0001-01-01T00:00:00Z`) on pulled images and `Config.Labels` as null on an image with none. `docker volume ls --format json`
+listed 667 volumes (653 with a 64-hex name), each with `Name`, `Driver`, `Labels` (an anonymous volume has
+`com.docker.volume.anonymous=`) and `Size` "N/A". `docker system df -v --format json` took 16 minutes 43 seconds on this loaded
+server (an earlier try was cut off at 15 minutes), which is why the reader runs it in the background. It listed 142 images (34
+untagged, which `docker image ls` does not show: they are the intermediate layers that `all=0` leaves out, so the unused count on
+the page is lower than a count of every image with no container), 667 volumes (646 with no link, 20 with one, one with three)
+and 236 build cache records, none in use. That is the CLI's own formatting of the data, not the Engine API's JSON.
+
+Not verified: the exact requests on the wire against this daemon, and the JSON shape of `/system/df?verbose=1` from API 1.52 on,
+which is read from the reference and tested against a fake engine only; what group Unraid's `/var/run/docker.sock` has;
+that `--group-add` with a name that does not exist stops the container from starting (it is meant to); and whether this
+Unraid version's hub template offers "Additional Networks".
 
 ### Provider firewalls
 

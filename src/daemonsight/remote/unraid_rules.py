@@ -52,7 +52,7 @@ from __future__ import annotations
 import time
 
 from ..findings import Finding, anchor
-from . import release, unraid_notify
+from . import docker_storage, release, unraid_notify
 
 DISK_FULL_MEDIUM, DISK_FULL_HIGH = 90.0, 95.0
 HDD_TEMP_DEFAULT = (45, 55)
@@ -413,7 +413,7 @@ def os_update_rule(system: dict | None, rel: dict | None) -> list[Finding]:
 
 def evaluate(data: dict[str, dict | None], now: float) -> list[Finding]:
     """`data` maps short source names (system, array, disks, docker, vms,
-    notifications, ups) to their latest stored data, or None."""
+    notifications, ups, docker_storage) to their latest stored data, or None."""
     a = data.get("array")
     out: list[Finding] = []
     if a:
@@ -424,4 +424,5 @@ def evaluate(data: dict[str, dict | None], now: float) -> list[Finding]:
     out += notification_rules(data.get("notifications"))
     out += ups_rules(data.get("ups"))
     out += os_update_rule(data.get("system"), data.get("release"))
+    out += docker_storage.evaluate(data.get("docker_storage"), data.get("docker"))
     return out

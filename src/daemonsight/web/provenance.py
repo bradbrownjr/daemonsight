@@ -448,7 +448,7 @@ def forward(f: dict) -> dict:
 
 PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/services": "Services",
              "/fail2ban": "fail2ban", "/packages": "Packages", "/vulnerabilities": "Vulnerabilities",
-             "/disks": "Array & disks", "/containers": "Containers", "/vms": "VMs", "/notifications": "Notifications",
+             "/disks": "Array & disks", "/containers": "Containers", "/docker": "Docker storage", "/vms": "VMs", "/notifications": "Notifications",
              "/firewall": "Firewall", "/vpn": "VPN", "/network": "Gateways & interfaces"}
 
 RULE_SOURCE = {"unraid": "unraid", "opnsense": "opnsense", "remote": "remote", "svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
@@ -545,6 +545,71 @@ def unraid_disk(d: dict, model: str | None = None) -> dict:
 def unraid_container(c: dict) -> dict:
     return {"title": f"Container {c['name']}", "read": "GraphQL: docker { containers { ... isUpdateAvailable } }",
             "entries": [plain("Unraid web UI", "Docker tab"), cmd("On the server", f"docker inspect {q(c['name'])}")]}
+
+
+# --- Docker storage (read from the Docker reader) ---------------------------------------------------------------
+
+DOCKER_PAGE = {
+    "images": ("Unused images", "Images no container uses, from the reader's list of Docker's images, with each one's "
+                                "container use worked out by DaemonSight"),
+    "volumes": ("Unused volumes", "Volumes no container references, with their size and reference count from Docker's data usage"),
+    "cache": ("Build cache", "The count and size of Docker's build cache, from Docker's data usage"),
+}
+DOCKER_CLI = {
+    "images": ("docker image ls --no-trunc", "Images"),
+    "volumes": ("docker volume ls", "Volumes"),
+    "cache": ("docker system df -v", "Build cache"),
+}
+ARRIVED_NOTE = ("Docker does not record who pulled an image or why. \"Arrived\" is the time Docker last tagged the image on "
+                "this server (Metadata.LastTagTime) or, when that is empty, the date the image was built, which can be "
+                "long before it was pulled. The hint is DaemonSight's guess from what it can see")
+
+
+def docker_section(kind: str, reader_url: str | None) -> dict:
+    """The panel of one Docker storage card: the reader's endpoint, the Docker calls behind it and the matching CLI."""
+    title, what = DOCKER_PAGE[kind]
+    cli, ui = DOCKER_CLI[kind]
+    entries = [plain("Reader endpoint", f"GET {reader_url or 'http://<reader>:8467'}/v1/summary, with the reader's bearer token"),
+               plain("Docker calls", "GET /containers/json?all=1, /images/json?all=0&digests=1, /images/<id>/json "
+                                               "(unused images only), /volumes and /system/df?verbose=1 (at most every 30 minutes), "
+                                               "all on the Docker socket, read-only"),
+               plain("How often", "The hub reads the reader every 10 minutes at most"),
+               cmd("On the server", cli)]
+    if kind == "images":
+        entries.append(plain("Arrived", ARRIVED_NOTE))
+        entries.append(cmd("Untagged only", "docker image ls --filter dangling=true --no-trunc"))
+    if kind == "volumes":
+        entries.append(plain("Data loss", "A volume can hold the only copy of a database. Check before removing one"))
+    if reader_url:
+        entries.append(text("Same read, $TOKEN",
+                            f"curl -s -H \"Authorization: Bearer $TOKEN\" {q(reader_url + '/v1/summary')}"))
+    return {"title": title, "read": f"The Docker reader on this server (a second DaemonSight container, GET only): {what}",
+            "entries": entries}
+
+
+def docker_image(i: dict) -> dict:
+    ref = " ".join(q(t) for t in i["tags"]) if len(i["tags"]) > 1 else q(i["short"])
+    entries = [plain("Hint", i["hint"]["text"]),
+               plain("Arrived", ARRIVED_NOTE),
+               cmd("Inspect it", f"docker image inspect --format '{{{{json .Metadata}}}}' {q(i['short'])}"),
+               cmd("Remove it", f"docker image rm {ref}"),
+               plain("Note", "DaemonSight never removes anything. Run the command yourself once you are sure")]
+    if i["labels"].get("org.opencontainers.image.source"):
+        entries.insert(1, plain("Source label", i["labels"]["org.opencontainers.image.source"]))
+    return {"title": f"Image {i['name']}", "read": "The Docker reader: the image's tags, digests, size, LastTagTime and "
+                                                    "labels (only org.opencontainers.image.* and net.unraid.*)",
+            "entries": entries}
+
+
+def docker_volume(v: dict) -> dict:
+    return {"title": f"Volume {v['name'][:24]}" + ("..." if len(v["name"]) > 24 else ""),
+            "read": "The Docker reader: the volume's name, driver, creation time, compose labels, size and reference "
+                    "count (from Docker's data usage)",
+            "entries": [plain("Hint", v["hint"]),
+                        plain("Data loss", "This volume can hold the only copy of a database. Removing it cannot be undone"),
+                        cmd("Look inside it", f"docker run --rm -v {q(v['name'])}:/v:ro alpine ls -la /v"),
+                        cmd("Remove it", f"docker volume rm {q(v['name'])}"),
+                        plain("Note", "DaemonSight never removes anything. Run the command yourself once you are sure")]}
 
 
 def unraid_remote(row) -> dict:

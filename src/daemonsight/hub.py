@@ -29,8 +29,8 @@ log = logging.getLogger("daemonsight.hub")
 # upload never closes them: host.* (silence, clock), cve.* (CVE matching),
 # remote.* (a system the hub reads over its API is unreachable), unraid.*
 # and opnsense.* (what the hub reads from an Unraid server or an OPNsense
-# firewall) and outside.* (what Shodan's InternetDB says the internet sees).
-HUB_RULES = ("host.", "cve.", "remote.", "unraid.", "opnsense.", "outside.")
+# firewall), docker.* (an Unraid server's Docker reader) and outside.* (what Shodan's InternetDB says the internet sees).
+HUB_RULES = ("host.", "cve.", "remote.", "unraid.", "opnsense.", "outside.", "docker.")
 # The package list is not a snapshot source: see InventoryIn.
 INVENTORY = "inventory"
 SOURCES = ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall", "packages")

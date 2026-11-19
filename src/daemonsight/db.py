@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from .findings import fingerprint
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Events that belong to no host (a setting changed on the hub) use this as their
 # host. No host id can be empty (hub.HOST_RE), so a row never shows up under a host.
@@ -158,7 +158,8 @@ CREATE TABLE IF NOT EXISTS remotes (
     last_poll  REAL,                             -- last attempt
     last_ok    REAL,                             -- last attempt that worked
     last_error TEXT,
-    fails      INTEGER NOT NULL DEFAULT 0        -- polls in a row that failed
+    fails      INTEGER NOT NULL DEFAULT 0,       -- polls in a row that failed
+    reader_url TEXT                              -- an Unraid server's Docker reader (its token is a file); NULL: none
 );
 """
 
@@ -227,6 +228,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         for col in ("fix", "basis", "howto"):
             if col not in have:
                 conn.execute(f"ALTER TABLE findings ADD COLUMN {col} TEXT")
+        # Version 8 remotes have no reader_url (the Docker reader, schema 9).
+        if "reader_url" not in {r[1] for r in conn.execute("PRAGMA table_info(remotes)")}:
+            conn.execute("ALTER TABLE remotes ADD COLUMN reader_url TEXT")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
@@ -278,7 +282,7 @@ def add_event(conn, host: str, ts: float, kind: str, title: str, *, severity: st
 
 def reconcile_findings(conn, host: str, ts: float, current: list,
                        keep_prefix: str | tuple[str, ...] | None = None,
-                       only_prefix: str | None = None) -> list[tuple[str, object]]:
+                       only_prefix: str | tuple[str, ...] | None = None) -> list[tuple[str, object]]:
     """Make the open findings match `current` (a list of findings.Finding).
     Rules starting with `keep_prefix` are left alone (the hub's own rules).
     With `only_prefix`, only the open findings of rules starting with it are

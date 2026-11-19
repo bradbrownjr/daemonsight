@@ -44,6 +44,15 @@ the row they are about, and a port's panel shows the process behind it.
   a few seconds every minute, and the Overview lists the five busiest by CPU
   and by memory. Certificates are verified, or you pin one after confirming
   its fingerprint. See [SECURITY.md](SECURITY.md).
+- **Docker images and volumes on Unraid.** Unraid's API doesn't list them, so an
+  optional second container, the Docker reader, reads them from Docker and answers
+  the hub. The Docker storage page lists the images and volumes no container uses,
+  the build cache, and a guess at where each image came from (an old version left
+  by an update, an app that was removed, its source label, a base image), with the
+  `docker` command for each. Findings: old image versions, unused images, unused
+  volumes (with a data-loss warning) and a build cache over 5 GB. DaemonSight never
+  deletes anything. The reader holds the Docker socket, which is root on the
+  server: read [SECURITY.md](SECURITY.md) first.
 - **OPNsense, read over its API.** The hub polls an OPNsense firewall with a
   dedicated user's API key and secret, no agent on the firewall. Its pages
   list the pass rules on internet-facing interfaces, port forwards, Caddy

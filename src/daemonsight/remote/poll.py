@@ -40,14 +40,14 @@ import time
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import opnsense, release, roles, store, unraid
+from . import docker_storage, opnsense, release, roles, store, unraid
 from .client import Graph, Net, RemoteError, Rest
 
 log = logging.getLogger("daemonsight.remote")
 UNREACHABLE_AFTER_INTERVALS = 3
 UNREACHABLE_MIN_SECONDS = 180
 MAX_PARALLEL = 4
-RULE_PREFIX = {"unraid": "unraid.", "opnsense": "opnsense."}
+RULE_PREFIX = {"unraid": ("unraid.", "docker."), "opnsense": "opnsense."}
 
 
 HOWTO_UNREACHABLE_OPNSENSE = "\n".join((
@@ -80,6 +80,8 @@ def _rule_inputs(conn, host: str) -> dict[str, dict | None]:
         s = snaps.get(src)
         out[src.removeprefix("unraid_")] = s.data if s and s.data and s.data.get("available") is not False else None
     out["release"] = release.stored(conn)
+    s = snaps.get(docker_storage.SNAPSHOT)
+    out["docker_storage"] = s.data if s and s.data else None
     return out
 
 
@@ -132,7 +134,7 @@ def _record_success(conn, row, now: float, system: dict | None) -> None:
 def reconcile(conn, host: str, kind: str, now: float) -> None:
     """Make the open findings of this kind of system match what its stored readings say now, with events."""
     current = opnsense_rules_evaluate(conn, host, now) if kind == "opnsense" else unraid_rules_evaluate(conn, host, now)
-    for change, f in db.reconcile_findings(conn, host, now, current, only_prefix=RULE_PREFIX.get(kind, "unraid.")):
+    for change, f in db.reconcile_findings(conn, host, now, current, only_prefix=RULE_PREFIX.get(kind, ("unraid.", "docker."))):
         if change == "opened":
             db.add_event(conn, host, now, "finding_opened", f.title, severity=f.severity, detail=f.detail, link=f.link)
         else:
@@ -178,6 +180,34 @@ async def _sample_stats(graph: Graph, docker: dict | None, key: str, now: float)
         return False, unraid.error_text(exc, key), None
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         return False, f"Unexpected reply: {type(exc).__name__}", None
+
+
+async def read_docker_storage(conn, cfg: Config, row, net: Net, now: float,
+                              results: dict, snaps: dict) -> None:
+    """The Docker reader's summary, when this system has one and the last read is older than READ_EVERY. Like the
+    container statistics it is optional: a failed read keeps the last data and shows its error on the Docker storage
+    page, and never fails the poll."""
+    url = row["reader_url"] if "reader_url" in row.keys() else None
+    if not url:
+        return
+    prev = snaps.get(docker_storage.SNAPSHOT)
+    if prev is not None and now - prev.taken_at < max(docker_storage.READ_EVERY, row["interval"]) - 1:
+        return
+    token = store.read_reader_token(cfg.data_dir, row["id"])
+    if token is None:
+        results[docker_storage.SNAPSHOT] = (False, "The reader's token file is missing or unreadable. Edit the system "
+                                                   "and enter the token again.", None)
+        return
+    try:
+        raw = await docker_storage.fetch(net, url, token)
+        old = prev.data if prev and prev.data else None
+        docker = (results.get("unraid_docker") or (False, None, None))[2] or \
+            ((snaps.get("unraid_docker").data) if snaps.get("unraid_docker") else None)
+        results[docker_storage.SNAPSHOT] = (True, None, docker_storage.parse_summary(raw, old, docker, now))
+    except RemoteError as exc:
+        results[docker_storage.SNAPSHOT] = (False, docker_storage.error_text(exc, token), None)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        results[docker_storage.SNAPSHOT] = (False, f"Unexpected reply: {type(exc).__name__}", None)
 
 
 async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -> None:
@@ -233,6 +263,7 @@ async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -
                 stats_task = asyncio.create_task(_sample_stats(graph, old.data if old and old.data else None, key, now))
             if stats_task is not None:
                 results[unraid.STATS] = await stats_task
+            await read_docker_storage(conn, cfg, row, net, now, results, snaps)
         finally:
             if stats_task is not None and not stats_task.done():
                 stats_task.cancel()

@@ -49,6 +49,7 @@ from websockets.asyncio.client import connect as _ws_connect
 from .. import __version__
 
 USER_AGENT = f"DaemonSight/{__version__}"
+READER_TIMEOUT = httpx.Timeout(90.0, connect=5.0)    # the reader inspects every unused image on its first answer
 MAX_RESPONSE = 8 << 20          # bytes of JSON accepted per query
 TIMEOUT = httpx.Timeout(20.0, connect=5.0)
 _WRITE_WORDS = re.compile(r"\b(mutation|subscription)\b", re.I)
@@ -207,6 +208,13 @@ class Net:
         return _NoRedirectConnect(url, ssl=ctx, subprotocols=[WS_SUBPROTOCOL], proxy=None, compression=None,
                                   max_size=WS_MAX_MESSAGE, max_queue=64, open_timeout=TIMEOUT.connect,
                                   close_timeout=2, ping_interval=None, user_agent_header=USER_AGENT, logger=_WS_LOG)
+
+    def reader(self) -> httpx.AsyncClient:
+        """A client for the Docker reader (remote/docker_storage.py): plain http or https by container name, no
+        redirects, and no proxy from the environment (the bearer token would go through it)."""
+        if self.transport is not None:
+            return httpx.AsyncClient(transport=self.transport, timeout=READER_TIMEOUT, follow_redirects=False)
+        return httpx.AsyncClient(timeout=READER_TIMEOUT, follow_redirects=False, trust_env=False)
 
     def public(self) -> httpx.AsyncClient:
         """A client for a public page (no key, normal CA check, no redirects)."""

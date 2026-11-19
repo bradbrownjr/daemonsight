@@ -312,6 +312,60 @@ follow the same rules.
   ACME e-mail, WireGuard's includes public keys (cut to 8 characters), and
   Tailscale's lists peer names (only a count is kept).
 
+## The Docker reader
+
+The Docker reader (`daemonsight docker-reader`) lets the hub see an Unraid server's Docker images, volumes and build cache,
+which Unraid's API does not list. It is the most privileged piece of DaemonSight. It runs as its own container and mounts
+`/var/run/docker.sock`, and **access to the Docker socket is root-equivalent on the host**: anything that can send requests
+to it can start a privileged container that mounts the host's disks. Install it only if the images and volumes list is worth
+that. The rest of this section says what limits it and what does not.
+
+**What limits it.**
+
+- **It is not a proxy.** It has two routes, `GET /v1/summary` and `GET /v1/health`. It never forwards a path, query or body
+  to Docker. The summary is computed inside the reader and cut to named fields, so the hub (or anyone holding the token)
+  can't ask Docker anything else. There are no docs or OpenAPI routes and no request log.
+- **GET, from a fixed list.** The reader's Docker client has one method, which sends GET over the unix socket and refuses
+  any target that is not in a fixed list compared as a whole string: `/_ping`, `/version`, `/containers/json?all=1`,
+  `/images/json?all=0&digests=1`, `/images/sha256:<64 hex>/json`, `/volumes` and `/system/df?verbose=1`. Tests send about 25
+  near misses and check that each is refused before anything is sent, and that the fake engine received only GETs from the list.
+- **No inspect of containers.** `/containers/{id}/json` is never called, because it returns each container's environment,
+  where passwords are. The image inspect reply has `Env`, `Cmd` and `Entrypoint`; they are dropped as it arrives. A test puts
+  a secret in each place Docker would and checks it is absent from the output. Image labels are kept only for
+  `org.opencontainers.image.*` and `net.unraid.*` (cut to 200 characters), volume labels only for `com.docker.compose.*`.
+- **A token, required, in constant time.** Both routes need `Authorization: Bearer <token>`, compared with
+  `hmac.compare_digest` over the SHA-256 of each side. A wrong guess waits a quarter second and gets a 401, and a refused
+  request never reaches Docker. The token is read from a file (`--token-file`) that must be a regular file with mode 0600,
+  not a symlink, at least 32 characters. It is never an environment variable or a command-line argument, and it is in no
+  log line, error, page or event (tests check each). The hub keeps its copy in `<data>/remotes/<id>.reader-token` (0600 in
+  a 0700 folder; backed up with the keys, so the backup is as private as the token), never shows it back and deletes it
+  with the system or when reading is switched off.
+- **No published port.** The reader listens only on a user-defined Docker network shared with the hub
+  (`docker network create daemonsight`) and the hub reaches it by container name. Nothing on the LAN can connect to it. The
+  link is plain http, so the token is not encrypted on that network: only the two containers should be on it, and the hub
+  runs with all capabilities dropped, so it can't sniff or spoof. Do not attach other containers to it.
+- **A read-only container.** The template runs it with `--read-only` and a small `noexec` tmpfs, `--cap-drop ALL`,
+  `no-new-privileges`, `--pids-limit 64`, `--memory 256m` and no healthcheck process. It writes nothing.
+- **Not root.** It runs as uid 10001 with the socket's group added (`--group-add`, the group id from
+  `ls -ln /var/run/docker.sock`), so a bug in it does not start as root inside the container. If the socket's group is root's
+  (0), the reader runs with root's group; that does not make it root, but it is wider than a `docker` group.
+- **The socket is mounted `:ro`, and that does not make the API read-only.** The `ro` flag only stops the container from
+  replacing or deleting the socket file. A write to a unix socket is still a write, and Docker accepts POST requests over it.
+  The reader is read-only because its own code sends only GET to a fixed list, not because of the mount. This is the weak
+  point, and the reason the code is small and tested.
+- **Untrusted replies.** The hub treats the reader's reply like any server's: re-checked for shape, cut to size (8 MiB at most)
+  and shown escaped. Redirects are not followed and the hub ignores proxy settings from the environment for this call, so the
+  token goes only to the address you entered.
+
+**What remains.** A bug in the reader that lets someone make it send a request of their choosing to the Docker socket
+(through a flaw in the allow-list, the web framework or the HTTP client) is root on the host. So is anything that gets code
+running in the reader's container and can reach the socket: the read-only filesystem and dropped capabilities make that
+harder, but the socket needs none of them. A stolen token alone cannot do that, since the reader never forwards a request;
+it lets the holder read the summary (image, container and volume names, which is information about what runs on the server).
+The token is stored on the hub and in its backups, and a hub that is compromised leaks it. Keep the reader's image
+up to date with the hub's (they are the same image), keep the network to the two containers, and remove the reader when you
+no longer use the page.
+
 ## The hub
 
 One install, the hub, shows every host. Collectors push to it over HTTPS,

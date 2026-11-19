@@ -69,6 +69,28 @@
       <div class="form-hint">{% if kind == 'opnsense' %}Rules, port forwards, Caddy sites and firmware are read every five minutes whatever this says.{% else %}SMART status and notifications are read every five minutes whatever this says.{% endif %}</div>
       <div class="form-hint">30 to 3600.</div>
     </div>
+    {% if kind == 'unraid' %}
+    <div class="mb-3" id="docker-reader-option">
+      <label class="form-check"><input class="form-check-input" type="checkbox" id="reader-on" name="reader_on" value="1"{% if f.reader_on %} checked{% endif %}><span class="form-check-label">Read images and volumes</span></label>
+      <div class="form-hint">Unraid's API does not list Docker images, volumes or build cache. A second DaemonSight container on that server, the Docker reader, does.</div>
+      <div class="ds-subpanel mt-2" id="docker-reader" data-ds-when="reader-on=on">
+        <div class="mb-3">
+          <label class="form-label" for="reader_url">Reader address</label>
+          <input type="text" class="form-control" id="reader_url" name="reader_url" value="{{ f.reader_url }}" maxlength="300" placeholder="http://daemonsight-docker-reader:8467" inputmode="url" spellcheck="false">
+          <div class="form-hint">The reader's container name and port on the Docker network it shares with the hub.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="reader_token">Reader token</label>
+          <input type="password" class="form-control" id="reader_token" name="reader_token" autocomplete="new-password" maxlength="200" spellcheck="false">
+          <div class="form-hint">{% if f.reader_token_saved %}<span class="badge bg-green-lt">A token is saved</span> Leave empty to keep it.{% else %}The text in the reader's token file.{% endif %}{% if f.pending_reader %}<br>Held in memory for ten minutes, so Save needs no retyping.{% endif %}</div>
+        </div>
+        <input type="hidden" name="pending_reader" value="{{ f.pending_reader }}">
+        <div class="form-hint mb-2"><a href="https://github.com/bradbrownjr/daemonsight/blob/main/docs/INSTALL.md#add-the-docker-reader-to-an-unraid-server" target="_blank" rel="noopener noreferrer">How to set up the reader</a></div>
+        <button type="submit" class="btn btn-sm" name="action" value="test-reader" formaction="{{ '/remotes/' ~ existing.id ~ '/edit' if existing else '/remotes/new' }}#docker-reader">Test reader</button>
+        {% if reader_result and reader_result.ok %}<div class="alert alert-success mt-3 mb-0" role="status" id="reader-result">Connected to the reader. Docker {{ reader_result.docker or '?' }}, API {{ reader_result.api or '?' }}.</div>{% endif %}
+      </div>
+    </div>
+    {% endif %}
     {% if existing %}
     <div class="mb-3">
       <label class="form-check"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if f.enabled %} checked{% endif %}><span class="form-check-label">Read this system</span></label>

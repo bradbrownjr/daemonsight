@@ -9,12 +9,13 @@ import time
 
 from .. import db, findings as rules
 from ..config import Config
-from ..remote import release, store, unraid, unraid_notify, unraid_rules
+from ..remote import docker_storage, release, store, unraid, unraid_notify, unraid_rules
 from . import provenance as prov
 from . import views
-from .views import _sortval, fmt_ago, fmt_bytes, fmt_duration, level_class, pct_class
+from .views import _sortval, fmt_ago, fmt_bytes, fmt_duration, level_class, pct_class, status_of
+from ..remote.docker_storage import fmt_size
 
-PAGES = ("overview", "disks", "containers", "vms", "notifications")
+PAGES = ("overview", "disks", "containers", "docker", "vms", "notifications")
 
 STATE_BADGE = {"STARTED": "bg-green-lt", "RECON_DISK": "bg-yellow-lt"}
 DISK_OK = "DISK_OK"
@@ -152,6 +153,13 @@ def overview(conn, cfg: Config) -> dict:
         upd = sum(1 for c in cs if c.get("update"))
         glance.append({"title": "Containers", "value": f"{running} of {len(cs)} running", "alert": None,
                        "note": f"{upd} with an update" if upd else None, "link": "/containers"})
+    ds = docker_storage.analyze(_data(snaps, docker_storage.SNAPSHOT), dk)
+    if ds:
+        n_img, n_vol = len(ds["unused_images"]), len(ds["unused_volumes"])
+        glance.append({"title": "Docker storage", "alert": None, "link": "/docker",
+                       "value": f"{n_img} unused image{'s' if n_img != 1 else ''}, {n_vol} unused volume{'s' if n_vol != 1 else ''}",
+                       "note": f"{fmt_size(sum(i['size'] or 0 for i in ds['unused_images']))} of images, "
+                               f"{fmt_size(sum(v['size'] or 0 for v in ds['unused_volumes']))} of volumes"})
     if vm:
         vs = vm["vms"]
         glance.append({"title": "VMs", "value": f"{sum(1 for v in vs if v['state'] == 'RUNNING')} of {len(vs)} running",
@@ -293,6 +301,80 @@ def containers(conn, cfg: Config) -> dict:
                     "stats": prov.unraid_section("unraid_stats", url, interval)}}
 
 
+IMAGES_SHOWN, VOLUMES_SHOWN = 150, 100
+
+
+def _docker_findings(conn, host: str) -> dict[str, dict]:
+    active, held = views.findings_lists(conn, host)
+    return {f["rule"]: f for f in active + held if f["rule"].startswith("docker.")}
+
+
+def _arrived(ts, how) -> dict:
+    return {"text": time.strftime("%Y-%m-%d", time.gmtime(ts)) if ts else "unknown", "how": how if ts else "",
+            "v": _sortval(ts)}
+
+
+def docker(conn, cfg: Config) -> dict:
+    """The Docker storage page: unused images and volumes, and the build cache, from the Docker reader."""
+    host = cfg.host_id
+    snaps = db.get_snapshots(conn, host)
+    remote = _remote(conn, host)
+    reader_url = remote["reader_url"] if remote else None
+    data = _data(snaps, docker_storage.SNAPSHOT)
+    a = docker_storage.analyze(data, _data(snaps, "unraid_docker"))
+    state = views._source_state(snaps, docker_storage.SNAPSHOT)
+    found = _docker_findings(conn, host)
+    now = time.time()
+    snap = snaps.get(docker_storage.SNAPSHOT)
+
+    def status(rule: str):
+        f = found.get(rule)
+        return (views.status_of(False, f) if f else None), f
+
+    images = []
+    if a:
+        for i in a["unused_images"][:IMAGES_SHOWN]:
+            st, f = status("docker.superseded_images" if i["superseded"] else "docker.unused_images")
+            images.append({"anchor": rules.anchor("img", i["short"]), "name": i["name"], "short": i["short"], "size": fmt_size(i["size"]),
+                           "size_v": _sortval(i["size"]), "arrived": _arrived(i["arrived"], i["arrived_how"]),
+                           "hint": i["hint"]["text"], "hint_key": i["hint"]["key"], "status": st,
+                           "src": {**prov.docker_image(i), "finding": f, "anchor": rules.anchor("img", i["short"])}})
+    volumes = []
+    if a:
+        st, f = status("docker.unused_volumes")
+        for v in a["unused_volumes"][:VOLUMES_SHOWN]:
+            volumes.append({"anchor": rules.anchor("vol", v["name"][:24]), "name": v["name"],
+                            "label": v["name"][:12] + "\u2026" if v["anonymous"] and len(v["name"]) > 16 else v["name"],
+                            "kind": "anonymous" if v["anonymous"] else "named", "project": v["project"],
+                            "size": fmt_size(v["size"]), "size_v": _sortval(v["size"]), "hint": v["hint"], "status": st,
+                            "src": {**prov.docker_volume(v), "finding": f, "anchor": rules.anchor("vol", v["name"][:24])}})
+    cache = None
+    if a and a["build_cache"]:
+        st, f = status("docker.build_cache")
+        bc = a["build_cache"]
+        cache = {"size": fmt_size(bc.get("size")), "count": bc.get("count"), "status": st,
+                 "src": {**prov.docker_section("cache", reader_url), "finding": f, "anchor": "cache"}}
+    sup_n = len(a["superseded"]) if a else 0
+    return {
+        "host": views._host(cfg, snaps), "configured": bool(reader_url), "state": state, "edit": f"/remotes/{host}/edit#docker-reader",
+        "ago": fmt_ago(snap.taken_at, now) if snap and snap.data else None,
+        "docker": (a or {}).get("docker") or {}, "df_error": (a or {}).get("df_error"), "df_running": bool((a or {}).get("df_running")),
+        "df_ago": fmt_ago(a["df_at"], now) if a and a.get("df_at") else None,
+        "summary": None if not a else {
+            "images_total": a["images_total"], "images_in_use": a["images_in_use"], "images_unused": len(a["unused_images"]),
+            "images_unused_size": fmt_size(sum(i["size"] or 0 for i in a["unused_images"])),
+            "images_reclaimable": fmt_size(a["images_reclaimable"]) if a["images_reclaimable"] is not None else None,
+            "volumes_total": a["volumes_total"], "volumes_in_use": a["volumes_in_use"], "volumes_unused": len(a["unused_volumes"]),
+            "volumes_unused_size": fmt_size(sum(v["size"] or 0 for v in a["unused_volumes"])),
+            "volumes_unknown": a["volumes_unknown"], "superseded": sup_n},
+        "images": images, "images_more": max(0, len(a["unused_images"]) - IMAGES_SHOWN) if a else 0,
+        "volumes": volumes, "volumes_more": max(0, len(a["unused_volumes"]) - VOLUMES_SHOWN) if a else 0,
+        "cache": cache,
+        "src": {"images": prov.docker_section("images", reader_url), "volumes": prov.docker_section("volumes", reader_url),
+                "cache": cache["src"] if cache else prov.docker_section("cache", reader_url)},
+    }
+
+
 def _groups(rows: list[dict], folders: dict | None) -> list[dict]:
     """The container rows grouped by the folders on Unraid's Docker tab, in the owner's order, then "Ungrouped".
     Every row appears exactly once. Without folder data (an older Unraid, or the read failed) there is one group
@@ -351,4 +433,5 @@ def notifications(conn, cfg: Config) -> dict:
             "src": {"notifications": prov.unraid_section("unraid_notifications", url, interval)}}
 
 
-PAGE_FUNCS = {"overview": overview, "disks": disks, "containers": containers, "vms": vms, "notifications": notifications}
+PAGE_FUNCS = {"overview": overview, "disks": disks, "containers": containers, "docker": docker, "vms": vms,
+              "notifications": notifications}

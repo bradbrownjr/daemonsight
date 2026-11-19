@@ -691,6 +691,80 @@ one; the saved one is never shown) or turns reading off. Remove asks you to type
 the name, deletes the key file and the server's history. Revoke the key in
 Unraid as well.
 
+### Add the Docker reader to an Unraid server
+
+Unraid's API lists containers but not Docker's images, volumes or build cache. To see which images and volumes nothing uses,
+and where they probably came from, run the Docker reader on the server: a second container from the same image that
+answers the hub and nothing else. It holds the Docker socket, which is root on the server, so read "The Docker reader" in
+[SECURITY.md](../SECURITY.md) first. It is optional; the hub works without it.
+
+The steps below are run by you, on the Unraid server and on the hub. DaemonSight does not change containers or networks.
+
+1. **Make a network the two containers share.** On the server's terminal, once:
+
+   ```
+   docker network create daemonsight
+   ```
+
+   Then open Settings → Docker and set "Preserve user defined networks" to Yes. Unraid's help text says that by default
+   networks made outside its GUI are removed from Docker
+   (webgui `emhttp/languages/en_US/helptext.txt`, `docker_user_defined_network_help`), so without this the network goes
+   away when Docker restarts and the hub can no longer find the reader.
+
+2. **Make the token file.** The hub sends this token with every request; the reader refuses anything else. On the server:
+
+   ```
+   mkdir -p /mnt/user/appdata/daemonsight-docker-reader
+   openssl rand -hex 32 > /mnt/user/appdata/daemonsight-docker-reader/token
+   chown 10001:10001 /mnt/user/appdata/daemonsight-docker-reader/token
+   chmod 600 /mnt/user/appdata/daemonsight-docker-reader/token
+   cat /mnt/user/appdata/daemonsight-docker-reader/token
+   ```
+
+   The reader runs as uid 10001 and refuses to start unless the file is a regular file that only its owner can read
+   (mode 0600). Copy the printed token for step 5.
+
+3. **Find the Docker socket's group.** The reader runs as a user that is not root, so it needs the socket's group:
+
+   ```
+   ls -ln /var/run/docker.sock
+   ```
+
+   The fourth column is the group id. If it is `0` (root), the group is root's: say so to yourself before going on, because
+   the reader then runs with root's group. (What Unraid shows here was not checked.)
+
+4. **Add the reader's template.** Copy `deploy/unraid/daemonsight-docker-reader.xml` from this repository to
+   `/boot/config/plugins/dockerMan/templates-user/` on the server (Unraid reads user templates from that folder: webgui
+   `DockerClient.php`, `templates-user`). On the Docker tab, Add Container, pick `daemonsight-docker-reader` from the
+   template list, and before you press Apply:
+
+   - In Extra Parameters, replace `REPLACE_WITH_SOCKET_GID` with the group id from step 3. Until you do, the container will
+     not start, on purpose.
+   - Check that Network Type is "Custom : daemonsight" (Unraid lists a network made with `docker network create` that way:
+     webgui `CreateDocker.php`).
+   - Check the two paths: the Docker socket and the token file from step 2.
+
+   There is no port to publish. Apply, and look at the container's log: a wrong token file mode or a missing socket is
+   named there. The log never holds the token.
+
+5. **Move the hub to the same network.** Edit the hub's container (Docker tab, `daemonsight`, Edit) and set Network Type to
+   "Custom : daemonsight". The published port keeps working on a user-defined bridge: Docker's bridge driver "supports port
+   publishing" (https://docs.docker.com/engine/network/drivers/bridge/), so the dashboard stays at the same address. Newer
+   Unraid versions also have "Additional Networks" under Network Type, which attaches the hub to `daemonsight` and leaves it
+   where it is (webgui `CreateDocker.php`; whether your version has it was not checked). Apply.
+
+6. **Attach the reader to the Unraid system.** On the hub, open Hosts, Edit the Unraid server, tick "Read images and volumes"
+   and enter `http://daemonsight-docker-reader:8467` and the token from step 2. Press Test reader: it shows the Docker
+   version and API version. Save.
+
+7. **Wait for the first read.** The hub reads the reader every 10 minutes at most. Docker works out volume sizes slowly (more
+   than 15 minutes on a busy server), so the page first shows the unused volumes with unknown sizes and fills them in later.
+   Then open the Docker storage tab.
+
+To change the token, write a new one to the file (step 2), restart the reader, and type it in the hub's Edit form. To stop
+reading, untick the box and Save (this deletes the hub's copy of the token), then remove the reader's container and
+`docker network rm daemonsight` if nothing else uses it.
+
 ### Add an OPNsense firewall
 
 The hub reads the firewall's REST API with an API key and secret. No agent runs

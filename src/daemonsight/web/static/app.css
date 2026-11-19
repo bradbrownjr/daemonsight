@@ -384,3 +384,13 @@ textarea.ds-set-input { max-width: 28rem; }
 @media (prefers-reduced-motion: reduce) { .ds-howto-sum::after { transition: none; } }
 @media print { .ds-howto-sum::after { display: none; } }
 @media (pointer: coarse) { .ds-howto-sum { min-height: 2.75rem; padding-right: .75rem; } }
+
+/* Docker storage: the images and volumes tables share one set of column edges (symmetry, docs/UI.md). */
+@media (min-width: 768px) {
+  .ds-dk { table-layout: fixed; }
+  .ds-dk th:nth-child(1) { width: 28%; }
+  .ds-dk th:nth-child(2) { width: 10%; }
+  .ds-dk th:nth-child(3) { width: 12%; }
+  .ds-dk th:nth-child(5) { width: 14%; }
+  .ds-dk td { overflow-wrap: anywhere; }
+}

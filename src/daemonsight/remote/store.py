@@ -5,6 +5,9 @@ written atomically. It is never in the database, never in a page, a log or an
 event, and never shown again once saved; saving a new one replaces the file.
 Removing a system deletes the file. An OPNsense credential is a key and a
 secret: the same file, two lines (key, then secret).
+
+The Docker reader's token (an Unraid system can have one, see remote/docker_storage.py) is kept the same way, in
+`<data_dir>/remotes/<id>.reader-token`: 0600, never in the database, a page, a log or an event, never shown again.
 """
 
 from __future__ import annotations
@@ -82,7 +85,7 @@ GUIDES = {
 }
 KEY_RE = re.compile(r"^[\x21-\x7e]{8,200}$")      # printable ASCII, no spaces
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")   # the same rule as hub.HOST_RE
-KEY_FILE_RE = re.compile(r"^remotes/([A-Za-z0-9][A-Za-z0-9._-]{0,62})\.key$")
+KEY_FILE_RE = re.compile(r"^remotes/([A-Za-z0-9][A-Za-z0-9._-]{0,62})\.(key|reader-token)$")
 MIN_INTERVAL, MAX_INTERVAL, DEFAULT_INTERVAL = 30, 3600, 60
 
 
@@ -96,6 +99,59 @@ def key_path(data_dir: str | os.PathLike, remote_id: str) -> Path:
     if not ID_RE.match(remote_id):
         raise ValueError(f"not a valid system name: {remote_id!r}")
     return key_dir(data_dir) / f"{remote_id}.key"
+
+
+def reader_token_path(data_dir: str | os.PathLike, remote_id: str) -> Path:
+    if not ID_RE.match(remote_id):
+        raise ValueError(f"not a valid system name: {remote_id!r}")
+    return key_dir(data_dir) / f"{remote_id}.reader-token"
+
+
+def clean_reader_token(raw: str | None) -> str:
+    token = (raw or "").strip()
+    if not re.fullmatch(r"[\x21-\x7e]{32,200}", token):
+        raise ValueError("The reader token must be 32 to 200 printable characters with no spaces (make one with "
+                         "openssl rand -hex 32).")
+    return token
+
+
+def _write_secret(path: Path, body: str) -> None:
+    folder = path.parent
+    folder.mkdir(parents=True, exist_ok=True)
+    os.chmod(folder, 0o700)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(body)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def write_reader_token(data_dir, remote_id: str, token: str) -> Path:
+    path = reader_token_path(data_dir, remote_id)
+    _write_secret(path, clean_reader_token(token) + "\n")
+    return path
+
+
+def read_reader_token(data_dir, remote_id: str) -> str | None:
+    try:
+        token = reader_token_path(data_dir, remote_id).read_text().strip()
+    except (OSError, ValueError):
+        return None
+    return token if re.fullmatch(r"[\x21-\x7e]{32,200}", token) else None
+
+
+def delete_reader_token(data_dir, remote_id: str) -> bool:
+    try:
+        reader_token_path(data_dir, remote_id).unlink()
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def clean_key(raw: str | None) -> str:
@@ -167,12 +223,21 @@ def delete_key(data_dir, remote_id: str) -> bool:
         return False
 
 
+def member_path(data_dir, member: str) -> Path | None:
+    """Where a backup archive's `remotes/<id>.key` or `remotes/<id>.reader-token` goes back to, or None."""
+    m = KEY_FILE_RE.match(member)
+    if not m:
+        return None
+    return key_path(data_dir, m.group(1)) if m.group(2) == "key" else reader_token_path(data_dir, m.group(1))
+
+
 def key_files(data_dir) -> dict[str, Path]:
     """Every saved key as the name a backup archive stores it under."""
     out = {}
-    for p in sorted(key_dir(data_dir).glob("*.key")):
-        if p.is_file() and ID_RE.match(p.name[:-4]):
-            out[f"remotes/{p.name}"] = p
+    for suffix in (".key", ".reader-token"):
+        for p in sorted(key_dir(data_dir).glob("*" + suffix)):
+            if p.is_file() and ID_RE.match(p.name[:-len(suffix)]):
+                out[f"remotes/{p.name}"] = p
     return out
 
 
@@ -203,7 +268,8 @@ def valid_interval(value) -> int:
 
 def add(conn, data_dir, remote_id: str, kind: str, url: str, key: str, *, tls: str = "verify",
         pin: str | None = None, cert: str | None = None, interval: int = DEFAULT_INTERVAL,
-        now: float | None = None, secret: str | None = None) -> None:
+        now: float | None = None, secret: str | None = None, reader_url: str | None = None,
+        reader_token: str | None = None) -> None:
     """Create the system: a hosts row marked with its kind (no upload token
     exists for it and `hub update` skips it), the remotes row and the key file."""
     if kind not in KINDS:
@@ -218,31 +284,52 @@ def add(conn, data_dir, remote_id: str, kind: str, url: str, key: str, *, tls: s
         raise ValueError(f"{remote_id} already exists. Pick another name.")
     if (kind in TWO_PART) != (secret is not None):
         raise ValueError("This kind of system needs a key and a secret." if kind in TWO_PART else "This kind of system has a key only.")
+    if bool(reader_url) != bool(reader_token):
+        raise ValueError("The Docker reader needs an address and a token.")
     write_key(data_dir, remote_id, key, secret)
+    if reader_token:
+        write_reader_token(data_dir, remote_id, reader_token)
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
             # The sentinel can never equal a SHA-256 hex digest, so no token matches this host.
             conn.execute("INSERT INTO hosts (id, token_hash, created_at, kind) VALUES (?, ?, ?, ?)",
                          (remote_id, f"remote:{remote_id}", now, kind))
-            conn.execute("INSERT INTO remotes (id, kind, url, enabled, tls, tls_pin, tls_cert, interval, created_at) "
-                         "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)", (remote_id, kind, url, tls, pin, cert, interval, now))
+            conn.execute("INSERT INTO remotes (id, kind, url, enabled, tls, tls_pin, tls_cert, interval, created_at, reader_url) "
+                         "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)", (remote_id, kind, url, tls, pin, cert, interval, now,
+                                                                    reader_url or None))
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
             raise
     except Exception:
         delete_key(data_dir, remote_id)
+        delete_reader_token(data_dir, remote_id)
         raise
 
 
 def update(conn, data_dir, remote_id: str, *, url: str, tls: str, pin: str | None, cert: str | None,
-           interval: int, enabled: bool, key: str | None = None, secret: str | None = None) -> None:
+           interval: int, enabled: bool, key: str | None = None, secret: str | None = None,
+           reader: tuple[str | None, str | None] | None = None) -> None:
+    """`reader` is None to leave the Docker reader as it is, else (url, token): url None turns it off (and deletes the
+    token file); a url with a token None keeps the saved token."""
     if tls not in ("verify", "pin") or (tls == "pin" and not (pin and cert)):
         raise ValueError("TLS mode needs a confirmed certificate.")
     interval = valid_interval(interval)
     if key:
         write_key(data_dir, remote_id, key, secret)
+    if reader is not None:
+        r_url, r_token = reader
+        if r_url is None:
+            delete_reader_token(data_dir, remote_id)
+            conn.execute("UPDATE remotes SET reader_url=NULL WHERE id=?", (remote_id,))
+            conn.execute("DELETE FROM snapshots WHERE host=? AND source='unraid_docker_storage'", (remote_id,))
+        else:
+            if r_token:
+                write_reader_token(data_dir, remote_id, r_token)
+            elif read_reader_token(data_dir, remote_id) is None:
+                raise ValueError("The Docker reader needs a token.")
+            conn.execute("UPDATE remotes SET reader_url=? WHERE id=?", (r_url, remote_id))
     conn.execute("UPDATE remotes SET url=?, tls=?, tls_pin=?, tls_cert=?, interval=?, enabled=?, "
                  "last_poll=NULL, fails=0 WHERE id=?",
                  (url, tls, pin if tls == "pin" else None, cert if tls == "pin" else None, interval,
@@ -274,6 +361,7 @@ def remove(conn, data_dir, remote_id: str, purge: bool = True) -> bool:
         raise
     if data_dir:
         delete_key(data_dir, remote_id)
+        delete_reader_token(data_dir, remote_id)
     from . import roles
     roles.delete_overrides(conn, remote_id)
     return True

@@ -1,0 +1,97 @@
+{% from "_macros.html" import src, src_button, src_panel, status_cell with context %}
+<div id="live" hx-get="{{ base }}/partials/docker" hx-trigger="every 300s" hx-swap="outerHTML">
+{% if v %}
+{% set s = v.summary %}
+{% macro unset() %}Docker storage is not set up for this system. <a href="{{ v.edit }}">Edit it</a> and tick "Read images and volumes".{% endmacro %}
+{% macro problem() %}{% if v.state.state == 'error' %}<div class="text-red small mt-1">The last read failed: {{ v.state.reason }}{% if v.ago %} These are the figures from the last good read, {{ v.ago }}.{% endif %}</div>{% endif %}{% endmacro %}
+
+<section class="card mb-4" id="images" aria-labelledby="img-title" data-section{% if not v.images %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="img-title">Unused images</h2>{{ src("src-images", v.src.images) }}
+    {% if s %}<div class="card-actions text-secondary"><span class="ds-shown"></span>{{ s.images_unused }} of {{ s.images_total }}</div>{% endif %}
+  </div>
+  {% if not v.configured %}
+  <div class="card-body text-secondary">{{ unset() }}</div>
+  {% elif not s %}
+  <div class="card-body text-secondary">{% if v.state.state == 'error' %}<span class="text-red">The reader could not be read: {{ v.state.reason }}</span>{% else %}No data yet. The first read happens within a few seconds of saving.{% endif %}</div>
+  {% else %}
+  <div class="card-body">No container uses {{ s.images_unused }} of {{ s.images_total }} images, {{ s.images_unused_size }} in all{% if s.superseded %}; {{ s.superseded }} {{ 'is an old version' if s.superseded == 1 else 'are old versions' }} left by updates{% endif %}.{{ problem() }}</div>
+  {% if v.images %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table ds-dk" data-table="docker-images">
+      <thead><tr><th data-sort="text">Image</th><th data-sort="num">Size</th><th data-sort="num">Arrived</th><th data-sort="text">Where it probably came from</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for i in v.images %}
+        <tr id="{{ i.anchor }}" data-row>
+          <td class="font-monospace" data-label="Image"><strong>{{ i.name }}</strong>{{ src("src-i-" ~ i.anchor, i.src) }}<div class="text-secondary small">{{ i.short }}</div></td>
+          <td data-v="{{ i.size_v }}" data-label="Size">{{ i.size }}</td>
+          <td data-v="{{ i.arrived.v }}" data-label="Arrived">{{ i.arrived.text }}{% if i.arrived.how %}<div class="text-secondary small">{{ i.arrived.how }}</div>{% endif %}</td>
+          <td data-label="Hint">{{ i.hint }}</td>
+          <td data-label="Status" data-v="{{ i.status.label if i.status else '' }}">{{ status_cell(i.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if v.images_more %}<div class="card-body text-secondary small">{{ v.images_more }} more not shown, the smallest. The findings count them.</div>{% endif %}
+  {% else %}
+  <div class="card-body text-secondary">No unused images.</div>
+  {% endif %}
+  <div class="card-body text-secondary small">DaemonSight only reads. Docker does not record who pulled an image, so the hint is a guess. Remove images on the server, with the command in each row's source panel.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No images match the filter.</div>
+</section>
+
+<section class="card mb-4" id="volumes" aria-labelledby="vol-title" data-section{% if not v.volumes %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="vol-title">Unused volumes</h2>{{ src("src-volumes", v.src.volumes) }}
+    {% if s %}<div class="card-actions text-secondary"><span class="ds-shown"></span>{{ s.volumes_unused }} of {{ s.volumes_total }}</div>{% endif %}
+  </div>
+  {% if not v.configured %}
+  <div class="card-body text-secondary">{{ unset() }}</div>
+  {% elif not s %}
+  <div class="card-body text-secondary">No data yet.</div>
+  {% else %}
+  <div class="card-body">No container uses {{ s.volumes_unused }} of {{ s.volumes_total }} volumes, {{ s.volumes_unused_size }} in all. A volume can hold the only copy of a database: check before removing one.{% if s.volumes_unknown %} Docker gave no reference count for {{ s.volumes_unknown }}.{% endif %}<div class="text-secondary small mt-1">{% if v.df_ago %}Sizes were read {{ v.df_ago }}.{% else %}Sizes are not known yet.{% endif %}{% if v.df_running %} Docker is working them out now; on a busy server that can take many minutes.{% endif %} They are read again every 30 minutes.{% if v.df_error %} <span class="text-red">The latest read failed: {{ v.df_error }}</span>{% endif %}</div></div>
+  {% if v.volumes %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table ds-dk" data-table="docker-volumes">
+      <thead><tr><th data-sort="text">Volume</th><th data-sort="num">Size</th><th data-sort="text">Kind</th><th data-sort="text">Where it probably came from</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for x in v.volumes %}
+        <tr id="{{ x.anchor }}" data-row>
+          <td class="font-monospace" data-label="Volume"><strong>{{ x.label }}</strong>{{ src("src-v-" ~ x.anchor, x.src) }}</td>
+          <td data-v="{{ x.size_v }}" data-label="Size">{{ x.size }}</td>
+          <td data-label="Kind">{{ x.kind }}{% if x.project %}<div class="text-secondary small">{{ x.project }}</div>{% endif %}</td>
+          <td data-label="Hint">{{ x.hint }}</td>
+          <td data-label="Status" data-v="{{ x.status.label if x.status else '' }}">{{ status_cell(x.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if v.volumes_more %}<div class="card-body text-secondary small">The {{ v.volumes|length }} largest are listed; {{ v.volumes_more }} more are not shown. The finding counts them all.</div>{% endif %}
+  {% else %}
+  <div class="card-body text-secondary">No unused volumes.</div>
+  {% endif %}
+  <div class="card-body text-secondary small">DaemonSight only reads. Never clear volumes with a prune command: it removes the ones you want too. Remove one at a time, with the command in its source panel.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No volumes match the filter.</div>
+</section>
+
+<section class="card" id="cache" aria-labelledby="cache-title" data-section{% if not v.cache %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="cache-title">Build cache</h2>{{ src("src-cache", v.src.cache) }}
+  </div>
+  {% if not v.configured %}
+  <div class="card-body text-secondary">{{ unset() }}</div>
+  {% elif not v.cache %}
+  <div class="card-body text-secondary">{{ 'No data yet.' if not s else 'Docker gave no build cache figures.' }}</div>
+  {% else %}
+  <div class="card-body d-flex flex-wrap gap-2 align-items-center"><strong>{{ v.cache.size }}</strong> in {{ v.cache.count if v.cache.count is not none else '?' }} records{% if v.cache.status %} {{ status_cell(v.cache.status) }}{% endif %}</div>
+  <div class="card-body text-secondary small">It is only a speed-up for later builds. It is a finding above 5 GB; docker builder prune clears it.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No build cache.</div>
+</section>
+{% endif %}
+</div>

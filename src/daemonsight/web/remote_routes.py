@@ -20,7 +20,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from .. import db, hub
 from ..config import Config
 from . import views
-from ..remote import opnsense, poll, roles, store, unraid
+from ..remote import docker_storage, opnsense, poll, roles, store, unraid
 from ..remote.client import (Net, RemoteError, clean_fingerprint, fingerprint, fmt_fingerprint, normalize_url)
 
 log = logging.getLogger("daemonsight.remote")
@@ -78,6 +78,7 @@ def opnsense_rules_roles(data: dict) -> dict[str, str]:
 
 def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login, flash, net: Net) -> None:
     pending = Pending()
+    pending_reader = Pending()          # the Docker reader's token, typed and not yet saved (memory only)
 
     def post_guard(request: Request) -> None:
         require_login(request)
@@ -103,13 +104,19 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                 "tls": existing["tls"] if existing else "verify",
                 "pin_confirm": fmt_fingerprint(existing["tls_pin"]) if existing and existing["tls_pin"] else "",
                 "interval": existing["interval"] if existing else store.DEFAULT_INTERVAL,
-                "enabled": bool(existing["enabled"]) if existing else True, "pending": ""}
+                "enabled": bool(existing["enabled"]) if existing else True, "pending": "",
+                "reader_on": bool(existing["reader_url"]) if existing else False,
+                "reader_url": (existing["reader_url"] or "") if existing else "", "pending_reader": "",
+                "reader_token_saved": bool(existing and store.read_reader_token(cfg.data_dir, existing["id"]))}
 
     async def work(request: Request, form: dict, existing, action: str):
         """Check the form, look at the server, and (on Save) store it. Returns
         (context for the page, redirect or None)."""
-        ctx = {"f": form, "existing": existing, "problems": [], "result": None, "cert": None, "KINDS": store.KINDS, "GUIDES": store.GUIDES}
+        ctx = {"f": form, "existing": existing, "problems": [], "result": None, "cert": None, "KINDS": store.KINDS, "GUIDES": store.GUIDES,
+               "reader_result": None}
         problems = ctx["problems"]
+        typed_reader_token = form.pop("reader_token", "")
+        form["reader_token_saved"] = bool(existing and store.read_reader_token(cfg.data_dir, existing["id"]))
         # --- the fields
         kind = existing["kind"] if existing is not None else form["kind"]
         if kind not in store.KINDS:
@@ -117,6 +124,37 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
             return ctx, None
         two = kind in store.TWO_PART
         form["kind"] = kind
+        # --- the Docker reader (Unraid only): an address and a token, a dependent option of the same form
+        reader_url, reader_token, reader_new = None, None, False
+        if kind == "unraid" and form["reader_on"]:
+            try:
+                reader_url = docker_storage.normalize_url(form["reader_url"])
+                form["reader_url"] = reader_url
+            except ValueError as exc:
+                problems.append(f"Docker reader address: {exc}")
+            if typed_reader_token.strip():
+                try:
+                    reader_token, reader_new = store.clean_reader_token(typed_reader_token), True
+                except ValueError as exc:
+                    problems.append(f"Docker reader token: {exc}")
+            elif (held := pending_reader.get(form["pending_reader"])) is not None:
+                reader_token, reader_new = held, True
+            elif existing is not None:
+                reader_token = store.read_reader_token(cfg.data_dir, existing["id"])
+            if reader_token is None and not any(p.startswith("Docker reader token") for p in problems):
+                problems.append("Docker reader token: enter the token from the reader's token file.")
+            if reader_token is not None and reader_new:
+                form["pending_reader"] = pending_reader.put(reader_token, form["pending_reader"] or None)
+        if action == "test-reader":
+            if kind != "unraid" or not form["reader_on"]:
+                problems.append("Tick Read images and volumes first.")
+            elif reader_url is not None and reader_token is not None:
+                try:
+                    r = await docker_storage.probe(net, reader_url, reader_token)
+                    ctx["reader_result"] = {"ok": True, "docker": r.docker, "api": r.api}
+                except RemoteError as exc:
+                    problems.append("Docker reader: " + docker_storage.error_text(exc, reader_token))
+            return ctx, None
         if existing is None:
             if not hub.HOST_RE.match(form["name"]):
                 problems.append("Name: use letters, digits, '.', '_' and '-', starting with a letter or digit (63 at most).")
@@ -214,12 +252,16 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
         try:
             if existing is None:
                 store.add(conn, cfg.data_dir, form["name"], kind, url, key, tls=tls, pin=fp, cert=pem,
-                          interval=interval, secret=secret)
+                          interval=interval, secret=secret, reader_url=reader_url,
+                          reader_token=reader_token if reader_url else None)
                 log.info("System %s (%s) added from %s", form["name"], kind, client(request))
                 flash(request, f"Added {form['name']}. The first read happens within a few seconds.")
             else:
+                reader_arg = None if (reader_url is None and not existing["reader_url"]) else \
+                    (reader_url, reader_token if reader_new else None)
                 store.update(conn, cfg.data_dir, existing["id"], url=url, tls=tls, pin=fp, cert=pem, interval=interval,
-                             enabled=form["enabled"], key=key if key_new else None, secret=secret if key_new else None)
+                             enabled=form["enabled"], key=key if key_new else None, secret=secret if key_new else None,
+                             reader=reader_arg)
                 if not form["enabled"]:
                     poll._set_unreachable(conn, store.get(conn, existing["id"]), time.time(), None)
                 log.info("System %s updated from %s", existing["id"], client(request))
@@ -228,13 +270,17 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
             problems.append(str(exc))
             return ctx, None
         pending.drop(form["pending"])
+        pending_reader.drop(form["pending_reader"])
         return ctx, RedirectResponse("/", status_code=303)
 
-    def read_form(kind, name, url, key, tls, pin_confirm, trust, interval, pending_token, enabled, secret="") -> dict:
+    def read_form(kind, name, url, key, tls, pin_confirm, trust, interval, pending_token, enabled, secret="",
+                  reader_on="", reader_url="", reader_token="", pending_reader_token="") -> dict:
         # "trust" is the button next to a fingerprint: it confirms exactly the fingerprint that was shown.
         return {"kind": kind[:20], "name": name.strip()[:80], "url": url.strip()[:300], "key": key[:300], "secret": secret[:300],
                 "tls": tls[:10], "pin_confirm": (trust or pin_confirm)[:120], "interval": interval[:8],
-                "pending": pending_token[:60], "enabled": enabled != ""}
+                "pending": pending_token[:60], "enabled": enabled != "", "reader_on": reader_on != "",
+                "reader_url": reader_url.strip()[:300], "reader_token": reader_token[:300],
+                "pending_reader": pending_reader_token[:60]}
 
     @app.get("/remotes/new")
     async def new_form(request: Request, kind: str = "unraid"):
@@ -242,20 +288,23 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
         f = blank()
         f["kind"] = kind if kind in store.KINDS else "unraid"
         return page(request, {"f": f, "existing": None, "problems": [], "result": None, "cert": None,
-                              "KINDS": store.KINDS, "GUIDES": store.GUIDES})
+                              "KINDS": store.KINDS, "GUIDES": store.GUIDES, "reader_result": None})
 
     @app.post("/remotes/new")
     async def new_post(request: Request, kind: str = Form("unraid"), name: str = Form(""), url: str = Form(""),
                        key: str = Form(""), secret: str = Form(""), tls: str = Form("verify"), pin_confirm: str = Form(""),
                        trust: str = Form(""), interval: str = Form("60"),
-                       pending_token: str = Form("", alias="pending"), action: str = Form("test")):
+                       pending_token: str = Form("", alias="pending"), action: str = Form("test"),
+                       reader_on: str = Form(""), reader_url: str = Form(""), reader_token: str = Form(""),
+                       pending_reader_token: str = Form("", alias="pending_reader")):
         try:
             post_guard(request)
         except HTTPException as exc:
             if exc.status_code == 403:
                 return PlainTextResponse(exc.detail, status_code=403)
             raise
-        form = read_form(kind, name, url, key, tls, pin_confirm, trust, interval, pending_token, "on", secret)
+        form = read_form(kind, name, url, key, tls, pin_confirm, trust, interval, pending_token, "on", secret,
+                         reader_on, reader_url, reader_token, pending_reader_token)
         ctx, redirect = await work(request, form, None, action)
         return redirect or page(request, ctx, 400 if ctx["problems"] else 200)
 
@@ -270,13 +319,15 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
         require_login(request)
         row = existing_or_404(remote_id)
         return page(request, {"f": blank(row), "existing": row, "problems": [], "result": None, "cert": None,
-                              "KINDS": store.KINDS, "GUIDES": store.GUIDES})
+                              "KINDS": store.KINDS, "GUIDES": store.GUIDES, "reader_result": None})
 
     @app.post("/remotes/{remote_id}/edit")
     async def edit_post(request: Request, remote_id: str, url: str = Form(""), key: str = Form(""),
                         secret: str = Form(""), tls: str = Form("verify"), pin_confirm: str = Form(""), trust: str = Form(""),
                         interval: str = Form("60"), pending_token: str = Form("", alias="pending"),
-                        enabled: str = Form(""), action: str = Form("test")):
+                        enabled: str = Form(""), action: str = Form("test"), reader_on: str = Form(""),
+                        reader_url: str = Form(""), reader_token: str = Form(""),
+                        pending_reader_token: str = Form("", alias="pending_reader")):
         try:
             post_guard(request)
         except HTTPException as exc:
@@ -284,7 +335,8 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                 return PlainTextResponse(exc.detail, status_code=403)
             raise
         row = existing_or_404(remote_id)
-        form = read_form(row["kind"], row["id"], url, key, tls, pin_confirm, trust, interval, pending_token, enabled, secret)
+        form = read_form(row["kind"], row["id"], url, key, tls, pin_confirm, trust, interval, pending_token, enabled, secret,
+                         reader_on, reader_url, reader_token, pending_reader_token)
         ctx, redirect = await work(request, form, row, action)
         return redirect or page(request, ctx, 400 if ctx["problems"] else 200)
 

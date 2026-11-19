@@ -5,7 +5,7 @@ A backup is one .tar.gz, readable by its owner only, holding:
                  backup API, so the collector or hub can keep writing)
   config.toml    the config file the install runs with
   password, secret, hub.token   when they exist and can be read
-  remotes/<name>.key   the API key of each system the hub reads (a hub only)
+  remotes/<name>.key   the API key of each system the hub reads (a hub only); <name>.reader-token the Docker reader's token
   shodan.key   the Shodan API key for the outside view, when one is saved (a hub only)
   manifest.json  version, schema, host and what's inside
 
@@ -225,8 +225,8 @@ def restore(cfg: Config, archive: Path, config_file: Path, db_only: bool = False
             staged.unlink(missing_ok=True)
         if not db_only:
             wanted = {**_files(cfg, config_file),
-                      **{n: remote_store.key_path(cfg.data_dir, m.group(1)) for n in members
-                         if (m := remote_store.KEY_FILE_RE.match(n))}}
+                      **{n: path for n in members
+                         if (path := remote_store.member_path(cfg.data_dir, n)) is not None}}
             for name, path in wanted.items():
                 if name in members:
                     data = tar.extractfile(members[name]).read()

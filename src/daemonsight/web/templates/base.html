@@ -96,7 +96,7 @@
       {% endif %}
       {% if not hub or base %}
       {% if host and host.kind == 'unraid' %}
-      {% set sections = [('overview', '/', 'Overview'), ('disks', '/disks', 'Array & disks'), ('containers', '/containers', 'Containers'), ('vms', '/vms', 'VMs'), ('notifications', '/notifications', 'Notifications'), ('report', '/report', 'Report')] %}
+      {% set sections = [('overview', '/', 'Overview'), ('disks', '/disks', 'Array & disks'), ('containers', '/containers', 'Containers'), ('docker', '/docker', 'Docker storage'), ('vms', '/vms', 'VMs'), ('notifications', '/notifications', 'Notifications'), ('report', '/report', 'Report')] %}
       {% elif host and host.kind == 'opnsense' %}
       {% set sections = [('overview', '/', 'Overview'), ('firewall', '/firewall', 'Firewall'), ('vpn', '/vpn', 'VPN'), ('network', '/network', 'Gateways & interfaces'), ('report', '/report', 'Report')] %}
       {% else %}

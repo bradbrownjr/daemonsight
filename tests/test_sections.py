@@ -9,7 +9,7 @@ from .test_hub import hub_cfg, token  # noqa: F401 (fixtures)
 from .test_web import client, login, seeded  # noqa: F401 (fixture)
 
 PAGE_KEYS = {"": {"overview", "exposure", "routes", "services", "packages", "vulnerabilities", "fail2ban", "report"},
-             "unraid": {"overview", "disks", "containers", "vms", "notifications", "report"},
+             "unraid": {"overview", "disks", "containers", "docker", "vms", "notifications", "report"},
              "opnsense": {"overview", "firewall", "vpn", "network", "report"},
              "hub": {"hosts"}}
 

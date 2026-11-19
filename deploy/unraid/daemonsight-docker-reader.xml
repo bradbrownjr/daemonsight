@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>daemonsight-docker-reader</Name>
+  <Repository>ghcr.io/bradbrownjr/daemonsight:edge</Repository>
+  <Registry>https://github.com/bradbrownjr/daemonsight/pkgs/container/daemonsight</Registry>
+  <Network>daemonsight</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/bradbrownjr/daemonsight/issues</Support>
+  <Project>https://github.com/bradbrownjr/daemonsight</Project>
+  <Overview>The DaemonSight Docker reader. Unraid's API lists containers but not Docker images, volumes or build cache; this container reads them from Docker and answers the DaemonSight hub, and nothing else. It is the most privileged piece of DaemonSight: it holds the Docker socket, which is root on the server. Read docs/SECURITY.md, "The Docker reader", before installing it. It publishes no port: create the network once (docker network create daemonsight), put the hub's container on it too (Network Type: Custom: daemonsight), and enter http://daemonsight-docker-reader:8467 and the token in the hub's Edit page for this server. Before the first start, make the token file (see docs/INSTALL.md, Add an Unraid server's Docker reader) and replace REPLACE_WITH_SOCKET_GID in Extra Parameters with the group id of /var/run/docker.sock (ls -ln /var/run/docker.sock); the container will not start until you do.</Overview>
+  <Category>Network:Management Security:</Category>
+  <WebUI/>
+  <TemplateURL>https://raw.githubusercontent.com/bradbrownjr/daemonsight/main/deploy/unraid/daemonsight-docker-reader.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/bradbrownjr/daemonsight/main/assets/logo-256.png</Icon>
+  <ExtraParams>--read-only --tmpfs /tmp:rw,noexec,nosuid,size=8m --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m --no-healthcheck --user 10001:10001 --group-add REPLACE_WITH_SOCKET_GID</ExtraParams>
+  <PostArgs>docker-reader --token-file /run/secrets/reader-token</PostArgs>
+  <CPUset/>
+  <Config Name="Docker socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="ro" Description="Docker's socket. Read-only here does not make the Docker API read-only: the reader only sends GET requests because its own code only can." Type="Path" Display="always" Required="true" Mask="false">/var/run/docker.sock</Config>
+  <Config Name="Token file" Target="/run/secrets/reader-token" Default="/mnt/user/appdata/daemonsight-docker-reader/token" Mode="ro" Description="A file holding the bearer token the hub sends, owned by uid 10001 with mode 0600 (chown 10001:10001, chmod 600). Make one with: openssl rand -hex 32" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/daemonsight-docker-reader/token</Config>
+</Container>
