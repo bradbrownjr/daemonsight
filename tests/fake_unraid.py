@@ -192,8 +192,23 @@ def make_cert(directory: Path, cn: str = "tower.test", expired: bool = False) ->
         pytest.skip("openssl is not installed")
     directory.mkdir(parents=True, exist_ok=True)
     crt, key = directory / f"{cn}.crt", directory / f"{cn}.key"
-    subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-                    "-keyout", str(key), "-out", str(crt), "-subj", f"/O=Test/CN={cn}",
-                    *(["-not_before", "20200101000000Z", "-not_after", "20200102000000Z"] if expired else ["-days", "2"])],
+    if not expired:
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                        "-keyout", str(key), "-out", str(crt), "-days", "2", "-subj", f"/O=Test/CN={cn}"],
+                       check=True, capture_output=True)
+        return crt.read_text(), crt, key
+    # Past dates: `openssl req -not_before` needs OpenSSL 3.4+, and CI's runner has 3.0, so a self-signing CA
+    # run sets them instead (-selfsign, -startdate, -enddate are in OpenSSL 3.0's openssl-ca(1)).
+    csr, ca = directory / f"{cn}.csr", directory / f"{cn}-ca"
+    ca.mkdir(exist_ok=True)
+    (ca / "index.txt").write_text("")
+    (ca / "serial").write_text("01\n")
+    conf = ca / "ca.cnf"
+    conf.write_text(f"[ca]\ndefault_ca = d\n[d]\ndatabase = {ca}/index.txt\nnew_certs_dir = {ca}\nserial = {ca}/serial\n"
+                    "default_md = sha256\npolicy = p\n[p]\ncommonName = supplied\n")
+    subprocess.run(["openssl", "req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                    "-keyout", str(key), "-out", str(csr), "-subj", f"/O=Test/CN={cn}"], check=True, capture_output=True)
+    subprocess.run(["openssl", "ca", "-batch", "-selfsign", "-notext", "-config", str(conf), "-keyfile", str(key),
+                    "-in", str(csr), "-out", str(crt), "-startdate", "20200101000000Z", "-enddate", "20200102000000Z"],
                    check=True, capture_output=True)
     return crt.read_text(), crt, key
