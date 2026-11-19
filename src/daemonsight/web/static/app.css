@@ -337,6 +337,7 @@ textarea.ds-set-input { max-width: 28rem; }
 .ds-tab > .nav-link.active ~ .ds-sec-btn { color: var(--tblr-nav-pills-link-active-color, #fff); }
 .ds-sec-btn:hover, .ds-sec-btn:focus-visible { opacity: 1; background: rgba(128, 128, 128, .25); }
 .ds-sec-btn:focus-visible, .ds-sec-pop a:focus-visible, .ds-sec-inline a:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; }
+.ds-sec-btn[hidden], .ds-sec-inline[hidden] { display: none !important; }
 .ds-no-popover .ds-sec-btn, .ds-sec-pop:not(:popover-open) { display: none; }
 .ds-no-popover .ds-tab.ds-has-sec > .nav-link { padding-right: var(--tblr-nav-link-padding-x, .75rem); }
 .ds-sec-pop { position: fixed; inset: auto; top: 3.75rem; left: 1rem; margin: 0; padding: .5rem; gap: .15rem;
@@ -352,3 +353,15 @@ textarea.ds-set-input { max-width: 28rem; }
   .ds-sec-item { display: block; padding: .3rem .5rem; color: var(--tblr-body-color); text-decoration: none; border-radius: var(--tblr-border-radius); }
   .ds-sec-item:hover { background: var(--tblr-bg-surface-secondary, rgba(128, 128, 128, .12)); }
 }
+
+/* A finding's "What to do" is folded; the label opens it, with a solid arrow after it that turns down when open. */
+.ds-howto-sum { display: inline-flex; align-items: center; gap: .4em; cursor: pointer; list-style: none; margin: 0; }
+.ds-howto-sum::-webkit-details-marker { display: none; }
+.ds-howto-sum::after { content: ""; border-left: .45em solid currentColor; border-top: .32em solid transparent;
+  border-bottom: .32em solid transparent; transition: transform .15s ease; }
+.ds-howto[open] > .ds-howto-sum::after { transform: rotate(90deg); }
+.ds-howto-sum:hover { color: var(--tblr-body-color); }
+.ds-howto-sum:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; border-radius: 2px; }
+@media (prefers-reduced-motion: reduce) { .ds-howto-sum::after { transition: none; } }
+@media print { .ds-howto-sum::after { display: none; } }
+@media (pointer: coarse) { .ds-howto-sum { min-height: 2.5rem; padding-right: .75rem; } }

@@ -85,9 +85,10 @@
 <div class="ds-fix"><pre class="ds-fix-code"><code class="ds-copy-text">{{ text }}</code></pre><button type="button" class="btn btn-sm ds-copy">Copy</button></div>
 {%- endmacro %}
 
-{# The plain-language steps of a finding (hub rules only), numbered. #}
+{# The plain-language steps of a finding (hub rules only), numbered. Folded: the label with a solid arrow after
+   it opens them, so a list of findings stays short. Printing opens them all (app.js). #}
 {% macro howto_block(steps) -%}
-{% if steps %}<div class="ds-howto mt-1"><div class="subheader">What to do</div><ol class="ps-4 mb-1">{% for s in steps %}<li>{{ s }}</li>{% endfor %}</ol></div>{% endif %}
+{% if steps %}<details class="ds-howto mt-1"><summary class="subheader ds-howto-sum">What to do</summary><ol class="ps-4 mb-1 mt-1">{% for s in steps %}<li>{{ s }}</li>{% endfor %}</ol></details>{% endif %}
 {%- endmacro %}
 
 {# Accept a finding with a note. A plain form: it works without scripts. Only

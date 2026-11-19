@@ -262,7 +262,54 @@
   // Section menus beside the nav tabs: put the panel under its tab and focus the first item. Escape and a
   // click outside close a popover natively. A link to a section of the page you are on scrolls there
   // itself, so it works when the address already has that hash too.
+  // The active tab's menu (data-ds-sections="live") lists the cards on this page, in page order, so cards that
+  // only some systems have are in it. Fewer than two cards: no chevron and no phone list. The registry items the
+  // server rendered stay as they are without JavaScript.
+  function cardLabel(title) {
+    var t = "";
+    each(title.childNodes, function (n) { if (n.nodeType === 3) t += n.nodeValue; });
+    if (!t.trim()) { var c = title.cloneNode(true); each(c.querySelectorAll("button"), function (b) { b.remove(); }); t = c.textContent; }
+    return t.replace(/\s+/g, " ").trim();
+  }
+  function liveSections() {
+    var out = [];
+    each(document.querySelectorAll("main section[id]"), function (sec) {
+      var title = sec.querySelector(".card-title");
+      if (!sec.classList.contains("card") || !title) return;
+      var label = cardLabel(title);
+      if (label) out.push({ id: sec.id, label: label });
+    });
+    return out;
+  }
+  function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML.replace(/"/g, "&quot;"); }
+  function updateLiveMenus() {
+    var live = document.querySelectorAll('[data-ds-sections="live"]');
+    if (!live.length) return;
+    var secs = liveSections();
+    var tab = document.querySelector(".ds-tab > .nav-link.active");
+    var path = tab ? new URL(tab.href, window.location.href).pathname : window.location.pathname;
+    var few = secs.length < 2;
+    var key = JSON.stringify(secs);
+    each(live, function (el) {
+      el.hidden = few;
+      if (few) { if (el.matches("[popover]") && el.hidePopover) { try { el.hidePopover(); } catch (err) { /* closed */ } } return; }
+      if (el.getAttribute("data-ds-built") === key) return;
+      el.setAttribute("data-ds-built", key);
+      var inline = el.classList.contains("ds-sec-inline");
+      if (el.classList.contains("ds-sec-btn")) return;
+      var html = secs.map(function (s) {
+        var a = '<a class="' + (inline ? "" : "ds-acct-item ") + 'ds-sec-item" href="' + esc(path) + "#" + esc(s.id) + '">' + esc(s.label) + "</a>";
+        return inline ? "<li>" + a + "</li>" : a;
+      }).join("");
+      if (inline) { var ul = el.querySelector("ul"); if (ul) ul.innerHTML = html; } else el.innerHTML = html;
+    });
+    var li = document.querySelector(".ds-tab > .nav-link.active");
+    if (li) li.parentNode.classList.toggle("ds-has-sec", !few);
+  }
+
   function initSectionMenus() {
+    updateLiveMenus();
+    document.body.addEventListener("htmx:afterSwap", updateLiveMenus);
     each(document.querySelectorAll(".ds-sec-pop"), function (pop) {
       pop.addEventListener("toggle", function (e) {
         if (e.newState !== "open") return;
@@ -325,6 +372,18 @@
       sync();
     });
   }
+
+  // "What to do" steps are folded (details.ds-howto). Printing (the Report is made to be printed) opens the
+  // folded ones and closes them again afterwards, so the paper has every step.
+  var printOpened = [];
+  window.addEventListener("beforeprint", function () {
+    printOpened = [];
+    document.querySelectorAll("details.ds-howto:not([open])").forEach(function (d) { d.open = true; printOpened.push(d); });
+  });
+  window.addEventListener("afterprint", function () {
+    printOpened.forEach(function (d) { d.open = false; });
+    printOpened = [];
+  });
 
   document.addEventListener("DOMContentLoaded", function () {
     bindDependents();

@@ -65,3 +65,20 @@ def test_a_page_with_one_section_has_no_menu(seeded):
     assert 'id="ds-sec-overview"' in html
     # Phone: the active tab's sections are listed under it, and only that tab's.
     assert html.count('class="ds-sec-inline"') == 1
+
+
+def test_active_tab_has_live_menu_and_other_tabs_follow_the_registry(seeded):
+    c = login(client(seeded))
+    # Routes has fewer than 2 registry sections: still a live menu on its own page, none on the other tabs.
+    assert len(sections.SECTIONS[""].get("routes", [])) < 2
+    r = c.get("/routes")
+    assert 'id="ds-sec-routes"' in r.text and 'data-ds-sections="live"' in r.text
+    assert 'class="ds-sec-inline" data-ds-sections="live"' in r.text
+    assert 'id="ds-sec-exposure"' in r.text and 'data-ds-sections="live"' not in r.text.split('id="ds-sec-exposure"')[1].split("</div>")[0]
+    # Registry items stay inside the active tab's menu as the no-JavaScript fallback.
+    r = c.get("/exposure")
+    pop = r.text.split('id="ds-sec-exposure"')[1].split("</div>")[0]
+    assert 'data-ds-sections="live"' in pop and 'href="/exposure#listeners"' in pop
+    assert r.text.count('data-ds-sections="live"') == 3        # chevron, popover, phone list
+    # A non-active tab with fewer than 2 registry sections has no chevron.
+    assert 'id="ds-sec-routes"' not in r.text

@@ -483,9 +483,9 @@ These apply to every page. Check each layout change in a browser at desktop
 - **Long pages are reached through each tab's section menu.** A nav tab whose
   page has two or more sections has a small chevron button that opens a menu of
   them (a native popover, `ds-sec-pop`); the tab name still goes to the page.
-  The sections of each page, per host kind, are listed in `web/sections.py`
+  The active page's menu lists the cards on it (`app.js` builds it from the page, so it includes cards only some systems have); other tabs list the sections every system has, per host kind, in `web/sections.py`
   (`SECTIONS`), passed to `base.html` as `page_sections`. Only cards every
-  render of the page has are listed, and `tests/test_sections.py` (with the
+  render of the page has are in that registry, and `tests/test_sections.py` (with the
   Unraid and OPNsense checks in their own test files) proves each anchor exists.
   A link to a section of the current page scrolls there and flashes it, and
   shows a card that "Hide empty sections" or the filter has hidden. On a phone
@@ -497,6 +497,10 @@ These apply to every page. Check each layout change in a browser at desktop
   it stays visible. It belongs to the same form and the same Save button; any
   other action on it posts that form elsewhere with `formaction`, never a
   nested form.
+- **Steps fold.** A finding's "What to do" steps are folded behind their
+  label, with a solid arrow after it that turns down when open
+  (`howto_block` in `_macros.html`), so a list of findings stays short.
+  Printing opens them all, and they fold again afterwards (`app.js`).
 - **Field help.** One or two short sentences under the control; the default and
   allowed range go on the line below.
 - **Menus.** Toggles and choices come first. Then a line, then things you go to
