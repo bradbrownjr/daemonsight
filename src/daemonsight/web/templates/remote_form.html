@@ -9,7 +9,8 @@
 
 {% for p in problems %}<div class="alert alert-danger" role="alert">{{ p }}</div>{% endfor %}
 
-<form method="post" action="{{ '/remotes/' ~ existing.id ~ '/edit' if existing else '/remotes/new' }}" class="card mb-4" autocomplete="off">
+{# "#result": after Test or a refused Save the page opens at the outcome, not at the top of a long form. #}
+<form method="post" action="{{ '/remotes/' ~ existing.id ~ '/edit' if existing else '/remotes/new' }}#result" class="card mb-4" autocomplete="off">
   <div class="card-body">
     <div class="mb-3">
       <label class="form-label" for="kind">Kind</label>

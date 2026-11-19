@@ -705,18 +705,19 @@ https://docs.opnsense.org/manual/how-tos/user-local.html).
 1. In OPNsense, open System, Access, Users and add a user such as `daemonsight`.
    Leave it out of every group (admins in particular) and give it a password
    nobody will use.
-2. In that user's Effective Privileges, add only these:
-   - Lobby: Dashboard (CPU, memory, disk, temperature)
-   - Status: Interfaces
-   - System: Gateways
-   - VPN: WireGuard: Status
-   - Status: Services
-   - Firewall: Rules [new] (also lists the classic rules)
+2. In that user's Effective Privileges, add only these (A to Z, the order
+   OPNsense lists them in):
    - Firewall: NAT: Destination NAT
+   - Firewall: Rules [new] (also lists the classic rules)
+   - Lobby: Dashboard (CPU, memory, disk, temperature)
+   - Services: Caddy (only with the os-caddy plugin)
+   - Status: Interfaces
+   - Status: Services
    - System: Firmware (pending updates; it is the broadest, since it also covers
      installing updates, so leave it out if you'd rather the key could not)
-   - Services: Caddy (only with the os-caddy plugin)
+   - System: Gateways
    - Tailscale (only with the os-tailscale plugin)
+   - VPN: WireGuard: Status
 
    A privilege you leave out turns off only the page it feeds; the others work.
 3. Save, edit the user again and create an API key (the + in API keys). OPNsense

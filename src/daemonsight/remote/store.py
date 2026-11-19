@@ -20,8 +20,9 @@ TWO_PART = frozenset({"opnsense"})      # kinds whose credential is a key and a 
 
 # The privileges the OPNsense user needs, by their names in the firewall's own `ACL.xml` files (opnsense/core
 # `src/opnsense/mvc/app/models/OPNsense/*/ACL/ACL.xml`; the plugins' own for os-caddy and os-tailscale). Kept in step
-# with remote/opnsense.py SOURCES by a test.
-OPNSENSE_PRIVILEGE_USE = (
+# with remote/opnsense.py SOURCES by a test. Sorted A to Z, as OPNsense's own privilege list is, so each one is
+# found in the same order while ticking them.
+OPNSENSE_PRIVILEGE_USE = tuple(sorted((
     ("Lobby: Dashboard", "disk and memory use, temperature"),
     ("Status: Interfaces", "interfaces and their roles (WAN, LAN, VPN)"),
     ("System: Gateways", "gateway up/down, loss and latency"),
@@ -32,7 +33,7 @@ OPNSENSE_PRIVILEGE_USE = (
     ("System: Firmware", "pending updates and reboot needed (the broadest: it can also install and reboot)"),
     ("Services: Caddy", "Caddy sites (needs the os-caddy plugin)"),
     ("Tailscale", "Tailscale routes and exit node (needs the os-tailscale plugin)"),
-)
+), key=lambda p: p[0].casefold()))
 OPNSENSE_PRIVILEGES = tuple(name for name, _use in OPNSENSE_PRIVILEGE_USE)
 
 # Shown next to the Add a system form: how to make a key for each kind, with

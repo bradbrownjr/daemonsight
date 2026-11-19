@@ -1549,7 +1549,12 @@ that fingerprint; the hub then fetches again and refuses if it differs.
 Connections in `pin` mode use an `ssl.SSLContext` whose only trust anchor is the
 stored certificate (`load_verify_locations(cadata=...)`), `CERT_REQUIRED`, TLS
 1.2 or later, and `VERIFY_X509_PARTIAL_CHAIN` so a self-signed leaf counts as a
-trust anchor [35]. Host-name checking is off in that mode, since the pin, not
+trust anchor [35]. It also sets OpenSSL's `X509_V_FLAG_NO_CHECK_TIME` (0x200000
+in `include/openssl/x509_vfy.h`; Python's `ssl` has no name for it but passes
+`verify_flags` to OpenSSL unchanged), so an expired pinned certificate is still
+trusted: the pin names the certificate, and an appliance's self-signed one
+often expires unnoticed (found on an OPNsense firewall). The `verify` mode keeps
+the date check. Host-name checking is off in that mode, since the pin, not
 the name, says which server this is. The handshake proves the server holds
 the pinned certificate's private key, so there is no gap between "checked" and
 "used". A changed certificate fails the connection before any request, so the

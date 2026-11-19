@@ -182,8 +182,9 @@ class FakeUnraid:
         return [r["query"] for r in self.requests]
 
 
-def make_cert(directory: Path, cn: str = "tower.test") -> tuple[str, Path, Path]:
-    """A throwaway self-signed certificate with openssl: (PEM text, cert path, key path)."""
+def make_cert(directory: Path, cn: str = "tower.test", expired: bool = False) -> tuple[str, Path, Path]:
+    """A throwaway self-signed certificate with openssl: (PEM text, cert path, key path). `expired` dates it
+    2020-01-01 to 2020-01-02."""
     import shutil
     import subprocess
     if not shutil.which("openssl"):
@@ -192,6 +193,7 @@ def make_cert(directory: Path, cn: str = "tower.test") -> tuple[str, Path, Path]
     directory.mkdir(parents=True, exist_ok=True)
     crt, key = directory / f"{cn}.crt", directory / f"{cn}.key"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-                    "-keyout", str(key), "-out", str(crt), "-days", "2", "-subj", f"/O=Test/CN={cn}"],
+                    "-keyout", str(key), "-out", str(crt), "-subj", f"/O=Test/CN={cn}",
+                    *(["-not_before", "20200101000000Z", "-not_after", "20200102000000Z"] if expired else ["-days", "2"])],
                    check=True, capture_output=True)
     return crt.read_text(), crt, key

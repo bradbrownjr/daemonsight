@@ -255,7 +255,10 @@ follow the same rules.
   trusts that one certificate and no other, and a changed certificate stops
   the connection before any request, so the key goes nowhere new. There is no
   "don't verify" setting. A pinned certificate that Unraid renews has to be
-  pinned again.
+  pinned again. A pinned certificate's dates are not checked: the pin already
+  names the one certificate trusted, and appliances' self-signed certificates
+  often expire unnoticed (OPNsense's web GUI one does). Everything else is
+  still checked, including that the server holds the certificate's key.
 - **Add and edit pages** need the login and refuse cross-site requests
   (`Sec-Fetch-Site`). Removing a system asks you to type its name. A key
   waiting between Test connection and Save is held in the hub's memory for ten

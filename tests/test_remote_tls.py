@@ -16,10 +16,10 @@ from daemonsight.remote.client import Graph, Net, RemoteError, fingerprint, pinn
 from .fake_unraid import KEY, load, make_cert
 
 
-@pytest.fixture
-def tls_server(tmp_path):
-    """An HTTPS server with a self-signed certificate; `seen` lists the requests it got."""
-    pem, crt, key = make_cert(tmp_path / "server", "tower.test")
+@pytest.fixture(params=[False, True], ids=["current", "expired"])
+def tls_server(tmp_path, request):
+    """An HTTPS server with a self-signed certificate, current and expired; `seen` lists the requests it got."""
+    pem, crt, key = make_cert(tmp_path / "server", "tower.test", expired=request.param)
     seen = []
 
     class H(BaseHTTPRequestHandler):
@@ -99,3 +99,11 @@ def make_cert_pem():
     from pathlib import Path
     with tempfile.TemporaryDirectory() as d:
         return make_cert(Path(d), "x.test")[0]
+
+
+def test_a_pin_ignores_only_the_dates(tmp_path):
+    """An expired, pinned certificate is trusted (the pin names it); the date is the only check left out."""
+    ctx = pinned_context(make_cert(tmp_path, "x.test", expired=True)[0])
+    assert ctx.verify_flags & 0x200000 and ctx.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert not ssl.create_default_context().verify_flags & 0x200000     # the CA mode still checks dates

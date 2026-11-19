@@ -146,14 +146,23 @@ def clean_fingerprint(text: str | None) -> str | None:
     return h if re.fullmatch(r"[0-9a-f]{64}", h) else None
 
 
+# OpenSSL's X509_V_FLAG_NO_CHECK_TIME (include/openssl/x509_vfy.h: 0x200000; documented under
+# X509_VERIFY_PARAM_set_flags, https://docs.openssl.org/3.5/man3/X509_VERIFY_PARAM_set_flags/). Python's ssl module
+# has no name for it but passes verify_flags to OpenSSL as is (ssl.VERIFY_X509_PARTIAL_CHAIN is OpenSSL's 0x80000).
+_NO_CHECK_TIME = 0x200000
+
+
 def pinned_context(pem: str) -> ssl.SSLContext:
-    """A TLS context that trusts exactly the certificate `pem` (see the module doc)."""
+    """A TLS context that trusts exactly the certificate `pem` (see the module doc). The pin says which
+    certificate is trusted, so its dates are not checked: an appliance's self-signed certificate often expires
+    unnoticed (OPNsense's web GUI one does), and refusing it would only push people to turn checking off. Every
+    other check stays: the server must present this certificate and prove it holds its key."""
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_verify_locations(cadata=pem)
     ctx.verify_mode = ssl.CERT_REQUIRED
     ctx.check_hostname = False
-    ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN | _NO_CHECK_TIME
     return ctx
 
 

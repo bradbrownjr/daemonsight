@@ -149,9 +149,10 @@ def test_the_privilege_list_matches_the_sources():
     assert [n for n, _ in store.OPNSENSE_PRIVILEGE_USE] == list(store.OPNSENSE_PRIVILEGES)
     assert set(store.OPNSENSE_PRIVILEGES) == set(opnsense.ALL_PRIVILEGES)
     assert [n for n, _ in store.GUIDES["opnsense"]["privileges"]] == list(store.OPNSENSE_PRIVILEGES)
-    assert store.OPNSENSE_PRIVILEGES == ("Lobby: Dashboard", "Status: Interfaces", "System: Gateways", "VPN: WireGuard: Status",
-                                         "Status: Services", "Firewall: Rules [new]", "Firewall: NAT: Destination NAT",
-                                         "System: Firmware", "Services: Caddy", "Tailscale")
+    # A to Z, the order OPNsense lists them in, so they are ticked top to bottom.
+    assert store.OPNSENSE_PRIVILEGES == ("Firewall: NAT: Destination NAT", "Firewall: Rules [new]", "Lobby: Dashboard",
+                                         "Services: Caddy", "Status: Interfaces", "Status: Services", "System: Firmware",
+                                         "System: Gateways", "Tailscale", "VPN: WireGuard: Status")
     used = {p for s in opnsense.SOURCES.values() for p in s.paths}
     assert used == set(opnsense.PATHS)     # every endpoint belongs to a source
 
