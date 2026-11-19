@@ -2,18 +2,31 @@
 <div id="live" hx-get="{{ base }}/partials/exposure" hx-trigger="every 30s" hx-swap="outerHTML">
 {% if v %}
 {{ src_panel("src-firewall", v.src.firewall) }}
-<details class="ds-note alert {{ 'alert-warning' if v.public else 'alert-info' }} mb-4" id="note-exposure" open>
-  <summary class="ds-note-sum">{% if v.public %}Public address {{ v.public_ips|join(', ') }} · {{ v.expected|length }} expected port{{ 's' if v.expected|length != 1 }}{% else %}No public address · reachable from the LAN{% endif %}</summary>
-  <div class="ds-note-body">
-  {% if v.public %}
-  This host has a public address ({{ v.public_ips|join(', ') }}), so anything bound to all interfaces can be reached from the internet unless the firewall blocks it.
-  Expected public ports: {{ v.expected|join(', ') }}.
-  {% if v.upstream %}A provider firewall in front of it lets in {{ v.upstream|join(', ') }}.{% endif %}
-  {% else %}
-  This host has no public address of its own. Sockets bound to all interfaces are reachable from the LAN, and from the internet only through a port forward or a proxy such as Caddy.
-  {% endif %}
+{% set bad = v.listeners|selectattr('status')|map(attribute='status.key')|select('in', ['unexpected', 'changed'])|list %}
+<div class="ds-exposure-line d-flex flex-wrap align-items-center gap-2 mb-4 text-secondary" id="exposure-line">
+  <span>{% if v.public %}Public address {{ v.public_ips|join(', ') }} · {{ v.expected|length }} expected public port{{ 's' if v.expected|length != 1 }}{% if v.upstream %} · provider firewall lets in {{ v.upstream|length }}{% endif %}{% else %}No public address · reachable from the LAN{% endif %}</span>
+  <button type="button" class="ds-src-btn" popovertarget="note-exposure" title="What this means" aria-label="What this means: public address and expected ports"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M12 9h.01"/><path d="M11 12h1v4h1"/></svg></button>
+  {% if bad %}<a href="#listeners" class="badge bg-red-lt text-decoration-none">{{ bad|length }} {{ 'unexpected' if 'changed' not in bad else 'unexpected or changed' }}</a>{% endif %}
+</div>
+<div popover id="note-exposure" class="ds-pop card" aria-label="Public address and expected ports">
+  <div class="card-header">
+    <h3 class="card-title">Public address and expected ports</h3>
+    <div class="card-actions"><button type="button" class="btn-close" popovertarget="note-exposure" popovertargetaction="hide" aria-label="Close"></button></div>
   </div>
-</details>
+  <div class="card-body">
+    {% if v.public %}
+    <p>This host has a public address ({{ v.public_ips|join(', ') }}), so anything bound to all interfaces can be reached from the internet unless the firewall blocks it.</p>
+    <div class="subheader">Expected public ports ({{ v.expected|length }})</div>
+    <p>{{ v.expected|join(', ') if v.expected else 'None listed.' }}</p>
+    {% if v.upstream %}
+    <div class="subheader">Provider firewall lets in ({{ v.upstream|length }})</div>
+    <p class="mb-0">{{ v.upstream|join(', ') }}</p>
+    {% endif %}
+    {% else %}
+    <p class="mb-0">This host has no public address of its own. Sockets bound to all interfaces are reachable from the LAN, and from the internet only through a port forward or a proxy such as Caddy.</p>
+    {% endif %}
+  </div>
+</div>
 
 <section class="card mb-4" id="listeners" aria-labelledby="listen-title" data-section{% if not v.listeners %} data-empty{% endif %}>
   <div class="card-header">

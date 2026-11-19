@@ -194,11 +194,11 @@ def test_os_update_is_low_names_both_versions_and_says_what_to_do():
 def test_the_version_shows_on_the_overview_and_the_hosts_page(polled, hub_cfg):
     conn = conn_of(hub_cfg)
     html = polled.get("/h/tower/").text
-    assert "7.3.2" in html and "available" not in html.split("At a glance")[1].split("Last read")[0]
+    assert "7.3.2" in html and "available" not in html.split("id=\"glance-title\">At a glance")[1].split("Last read")[0]
     run(release.refresh(conn, FakeUnraid().net(), time.time()))
     poll_now(hub_cfg, FakeUnraid(), time.time() + 100)
     html = polled.get("/h/tower/").text
-    glance = html.split("At a glance")[1]
+    glance = html.split("id=\"glance-title\">At a glance")[1]
     assert "7.4.0 available" in glance and 'id="os"' in html
     assert "Unraid 7.4.0 is available (running 7.3.2)" in html and "Tools → Update OS" in html
     hosts = polled.get("/partials/hosts").text

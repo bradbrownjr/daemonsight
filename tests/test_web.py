@@ -152,12 +152,12 @@ def test_changing_password_ends_sessions(seeded):
     assert c.get("/").status_code == 200
 
 
-def test_phone_menu_button_and_collapsible_note(seeded):
+def test_phone_menu_button_and_exposure_line(seeded):
     c = login(client(seeded))
     html = c.get("/exposure").text
     assert 'id="ds-menu-btn"' in html and 'aria-label="Menu"' in html
     assert 'aria-expanded="false"' in html and 'aria-controls="ds-menu"' in html
     assert 'id="ds-menu"' in html
-    assert '<details class="ds-note' in html and "<summary" in html
-    # Rendered open, so it reads in full without scripts and on desktop.
-    assert 'id="note-exposure" open' in html
+    # The page's one line and its (i) popover; no warning box.
+    assert 'id="exposure-line"' in html and 'popovertarget="note-exposure"' in html
+    assert 'id="note-exposure"' in html and "ds-note" not in html and "alert-warning" not in html

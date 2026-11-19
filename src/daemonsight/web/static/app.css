@@ -75,16 +75,6 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
 }
 .ds-menu-btn { display: none; }
 .ds-menu-host { display: none; }
-/* Page notes: always open on desktop; a one-line summary on phones. */
-.ds-note-sum { display: none; list-style: none; cursor: pointer; }
-.ds-note-sum::-webkit-details-marker { display: none; }
-@media (max-width: 767.98px) {
-  .ds-note-sum { display: block; padding-right: 4.5rem; position: relative; }
-  .ds-note-sum::after { content: "More"; position: absolute; right: 0; top: 0; font-weight: 600; text-decoration: underline; }
-  .ds-note[open] > .ds-note-sum::after { content: "Less"; }
-  .ds-note[open] > .ds-note-sum { margin-bottom: .5rem; }
-  .ds-note-sum:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; }
-}
 /* Source panels (_macros.html). Native popovers; hidden where unsupported. */
 .ds-no-popover .ds-src-btn { display: none; }
 .ds-src-btn { all: unset; cursor: pointer; display: inline-flex; vertical-align: -3px; margin-left: .35rem;
@@ -333,3 +323,32 @@ textarea.ds-set-input { max-width: 28rem; }
 .ds-subpanel { border-left: 2px solid var(--tblr-border-color); padding: .25rem 0 .25rem .9rem; max-width: 36rem; }
 .ds-subpanel[hidden] { display: none; }
 .ds-key-input { max-width: 26rem; }
+
+/* The Exposure page's one-line summary (the (i) opens the full text). */
+.ds-exposure-line .ds-src-btn { margin-left: 0; }
+
+/* Jump menus: a small chevron at the right end of a nav tab opens that page's sections (base.html, app.js).
+   It sits inside the tab's pill, so the row keeps its height. */
+.ds-tab { position: relative; }
+.ds-tab.ds-has-sec > .nav-link { padding-right: 1.9rem; }
+.ds-sec-btn { all: unset; cursor: pointer; position: absolute; right: .4rem; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem;
+  border-radius: 50%; color: inherit; opacity: .65; }
+.ds-tab > .nav-link.active ~ .ds-sec-btn { color: var(--tblr-nav-pills-link-active-color, #fff); }
+.ds-sec-btn:hover, .ds-sec-btn:focus-visible { opacity: 1; background: rgba(128, 128, 128, .25); }
+.ds-sec-btn:focus-visible, .ds-sec-pop a:focus-visible, .ds-sec-inline a:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; }
+.ds-no-popover .ds-sec-btn, .ds-sec-pop:not(:popover-open) { display: none; }
+.ds-no-popover .ds-tab.ds-has-sec > .nav-link { padding-right: var(--tblr-nav-link-padding-x, .75rem); }
+.ds-sec-pop { position: fixed; inset: auto; top: 3.75rem; left: 1rem; margin: 0; padding: .5rem; gap: .15rem;
+  display: flex; flex-direction: column; width: min(18rem, calc(100vw - 32px)); max-height: 80vh; overflow: auto;
+  border: 1px solid var(--tblr-border-color); color: var(--tblr-body-color); text-transform: none; font-weight: normal;
+  letter-spacing: normal; text-align: left; box-shadow: var(--tblr-box-shadow-dropdown, 0 .5rem 1rem rgba(0, 0, 0, .25)); }
+.ds-sec-pop:not(:popover-open) { display: none; }
+.ds-sec-inline { display: none; }
+@media (max-width: 767.98px) {
+  .ds-sec-btn, .ds-sec-pop { display: none !important; }
+  .ds-tab.ds-has-sec > .nav-link { padding-right: var(--tblr-nav-link-padding-x, .75rem); }
+  .ds-sec-inline { display: block; flex: 0 0 100%; padding: 0 0 .25rem 1.25rem; border-left: 2px solid var(--tblr-border-color); margin-left: .75rem; }
+  .ds-sec-item { display: block; padding: .3rem .5rem; color: var(--tblr-body-color); text-decoration: none; border-radius: var(--tblr-border-radius); }
+  .ds-sec-item:hover { background: var(--tblr-bg-surface-secondary, rgba(128, 128, 128, .12)); }
+}

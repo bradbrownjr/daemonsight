@@ -24,7 +24,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .. import config as config_mod, db, full_version, hub, settings, shodan
 from ..config import Config
 from ..remote.client import Net
-from . import opnsense_views, report, unraid_views, views
+from . import opnsense_views, report, sections, unraid_views, views
 from .auth import PasswordStore, RateLimiter
 
 log = logging.getLogger("daemonsight.auth")
@@ -144,8 +144,10 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     def render(request: Request, name: str, ctx: dict, status: int = 200) -> HTMLResponse:
         notice = None if name.startswith("partials/") else request.session.pop("flash", None)
         # Accepting a finding writes to the database; only a hub's web process may.
+        host = (ctx.get("v") or {}).get("host")
         ctx = {"theme": theme(request), "theme_pref": theme_pref(request), "path": request.url.path, "base": "", "hub": cfg.hub.enabled,
-               "can_accept": cfg.hub.enabled, "flash": notice, **ctx}
+               "can_accept": cfg.hub.enabled, "flash": notice,
+               "page_sections": sections.for_host(host.get("kind") if hasattr(host, "get") else None), **ctx}
         return templates.TemplateResponse(request, name, ctx, status_code=status)
 
     @app.exception_handler(LoginRequired)

@@ -661,6 +661,13 @@ def _added(c, hub_cfg, fake, at=None):
 PAGES = ("/h/fw1/", "/h/fw1/firewall", "/h/fw1/vpn", "/h/fw1/network", "/h/fw1/report", "/h/fw1/report.md")
 
 
+def test_every_listed_section_is_in_its_page(c, hub_cfg, fake):
+    from .test_sections import check_registry
+    _added(c, hub_cfg, fake)
+    check_registry(c, "/h/fw1", "opnsense")
+    check_registry(c, "", "hub")
+
+
 def test_every_page_renders_with_its_tables_and_labels(c, hub_cfg, fake):
     _added(c, hub_cfg, fake)
     for path in PAGES:

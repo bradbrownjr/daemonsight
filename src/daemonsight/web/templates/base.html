@@ -15,6 +15,19 @@
 </head>
 <body>
 {% from "_macros.html" import logo %}
+{# Jump menu beside a nav tab (registry: web/sections.py). The chevron opens a native popover on desktop; on a phone
+   the chevron is hidden and the active tab's sections are listed under it (sec_inline). #}
+{% macro sec_btn(key, pre, href, label, secs) -%}
+{% if secs|length > 1 -%}
+<button type="button" class="ds-sec-btn" popovertarget="ds-sec-{{ key }}" title="Sections of {{ label }}" aria-label="Sections of {{ label }}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9l6 6l6 -6"/></svg></button>
+<div popover id="ds-sec-{{ key }}" class="ds-sec-pop card" role="group" aria-label="Sections of {{ label }}">
+  {% for anchor, text in secs %}<a class="ds-acct-item ds-sec-item" href="{{ pre }}{{ href }}#{{ anchor }}">{{ text }}</a>{% endfor %}
+</div>
+{%- endif %}
+{%- endmacro %}
+{% macro sec_inline(pre, href, label, secs) -%}
+<li class="ds-sec-inline"><ul class="list-unstyled m-0" aria-label="Sections of {{ label }}">{% for anchor, text in secs %}<li><a class="ds-sec-item" href="{{ pre }}{{ href }}#{{ anchor }}">{{ text }}</a></li>{% endfor %}</ul></li>
+{%- endmacro %}
 {% block body %}
 {% set host = v.host if v else None %}
 <header class="ds-header" id="ds-header">
@@ -67,7 +80,9 @@
   <nav aria-label="Sections" class="ds-collapsible" id="ds-menu">
     <ul class="nav nav-pills gap-1">
       {% if hub %}
-      <li class="nav-item"><a class="nav-link{{ ' active' if page == 'hosts' }}" {% if page == 'hosts' %}aria-current="page"{% endif %} href="/">Hosts</a></li>
+      {% set hsecs = page_sections.get('hosts', []) %}
+      <li class="nav-item ds-tab{{ ' ds-has-sec' if hsecs|length > 1 }}"><a class="nav-link{{ ' active' if page == 'hosts' }}" {% if page == 'hosts' %}aria-current="page"{% endif %} href="/">Hosts</a>{{ sec_btn('hosts', '', '/', 'Hosts', hsecs) }}</li>
+      {% if page == 'hosts' and hsecs|length > 1 %}{{ sec_inline('', '/', 'Hosts', hsecs) }}{% endif %}
       {# A + on wide screens; the phone menu has room for the words. #}
       <li class="nav-item"><a class="nav-link ds-nav-add{{ ' active' if page == 'remotes' }}" {% if page == 'remotes' %}aria-current="page"{% endif %} href="/remotes/new" title="Add a system" aria-label="Add a system"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg><span class="ds-nav-add-text">Add a system</span></a></li>
       {% if base %}<li class="ds-nav-sep" aria-hidden="true"></li>{% endif %}
@@ -82,7 +97,9 @@
       {% endif %}
       {% for key, href, label in sections %}
       {% if key != 'vulnerabilities' or hub %}
-      <li class="nav-item"><a class="nav-link{{ ' active' if page == key }}" {% if page == key %}aria-current="page"{% endif %} href="{{ base }}{{ href }}">{{ label }}</a></li>
+      {% set secs = page_sections.get(key, []) %}
+      <li class="nav-item ds-tab{{ ' ds-has-sec' if secs|length > 1 }}"><a class="nav-link{{ ' active' if page == key }}" {% if page == key %}aria-current="page"{% endif %} href="{{ base }}{{ href }}">{{ label }}</a>{{ sec_btn(key, base, href, label, secs) }}</li>
+      {% if page == key and secs|length > 1 %}{{ sec_inline(base, href, label, secs) }}{% endif %}
       {% endif %}
       {% endfor %}
       {% endif %}

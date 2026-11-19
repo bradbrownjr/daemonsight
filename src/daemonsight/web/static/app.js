@@ -218,16 +218,6 @@
 
   var phone = window.matchMedia("(max-width: 767.98px)");
 
-  // Page notes (details.ds-note) are rendered open. On a phone they start
-  // closed unless the reader opened them; on wider screens they stay open.
-  function applyNotes() {
-    var saved = store.get("notesOpen") || {};
-    each(document.querySelectorAll("details.ds-note"), function (d) {
-      var want = phone.matches ? saved[d.id] === true : true;
-      if (d.open !== want) d.open = want;
-    });
-  }
-
   // Phone menu: the nav and the account panel (Settings, Theme, Hide empty sections, Log out).
   function initMenu() {
     var header = document.getElementById("ds-header");
@@ -269,6 +259,35 @@
     });
   }
 
+  // Section menus beside the nav tabs: put the panel under its tab and focus the first item. Escape and a
+  // click outside close a popover natively. A link to a section of the page you are on scrolls there
+  // itself, so it works when the address already has that hash too.
+  function initSectionMenus() {
+    each(document.querySelectorAll(".ds-sec-pop"), function (pop) {
+      pop.addEventListener("toggle", function (e) {
+        if (e.newState !== "open") return;
+        var tab = pop.closest(".ds-tab");
+        var r = (tab || pop).getBoundingClientRect();
+        var w = pop.offsetWidth;
+        pop.style.top = Math.round(r.bottom + 4) + "px";
+        pop.style.left = Math.max(8, Math.min(Math.round(r.left), document.documentElement.clientWidth - w - 8)) + "px";
+        var first = pop.querySelector("a[href]");
+        if (first) first.focus();
+      });
+    });
+    document.addEventListener("click", function (e) {
+      var link = e.target.closest("a.ds-sec-item");
+      if (!link) return;
+      var pop = link.closest("[popover]");
+      if (pop && pop.hidePopover) { try { pop.hidePopover(); } catch (err) { /* already closed */ } }
+      var url = new URL(link.href, window.location.href);
+      if (url.pathname !== window.location.pathname || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      e.preventDefault();
+      if (window.location.hash !== url.hash) window.history.pushState(null, "", url.hash);
+      showTarget();
+    });
+  }
+
   document.documentElement.classList.add("ds-js");
   if (!Object.prototype.hasOwnProperty.call(HTMLElement.prototype, "popover")) {
     document.documentElement.classList.add("ds-no-popover");
@@ -283,6 +302,11 @@
     var el = id && document.getElementById(id);
     if (!el) return;
     if (el.classList.contains("ds-filtered") && filterInput) { filterInput.value = ""; applyFilter(); }
+    // A card that "Hide empty sections" or the filter has hidden: show it for this visit (the saved switch is unchanged).
+    if (!el.getClientRects().length) {
+      if (filterInput && filterInput.value) { filterInput.value = ""; applyFilter(); }
+      if (document.documentElement.classList.contains("ds-hide-empty")) setHideEmpty(false);
+    }
     el.scrollIntoView({ block: el.tagName === "TR" ? "center" : "start" });
     el.classList.remove("ds-flash");
     void el.offsetWidth; // restart the animation
@@ -349,18 +373,10 @@
       if (elt && /every/.test(elt.getAttribute("hx-trigger") || "") &&
           (popoverOpen() || document.querySelector("details.ds-accept[open]"))) e.preventDefault();
     });
-    document.body.addEventListener("htmx:afterSettle", function () { applyAll(); applyNotes(); });
+    document.body.addEventListener("htmx:afterSettle", function () { applyAll(); });
     initMenu();
     initAccount();
-    document.addEventListener("toggle", function (e) {
-      var d = e.target;
-      if (!d.classList || !d.classList.contains("ds-note") || !phone.matches) return;
-      var open = store.get("notesOpen") || {};
-      if (d.open) open[d.id] = true; else delete open[d.id];
-      store.set("notesOpen", open);
-    }, true);
-    phone.addEventListener("change", applyNotes);
-    applyNotes();
+    initSectionMenus();
     window.addEventListener("hashchange", showTarget);
     applyAll();
     showTarget();

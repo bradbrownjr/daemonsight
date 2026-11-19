@@ -141,7 +141,7 @@
   </div>
 
   <div class="ds-side-col">
-    <section class="card" aria-labelledby="glance-title">
+    <section class="card" id="glance" aria-labelledby="glance-title">
       <div class="card-header"><h2 class="card-title" id="glance-title">At a glance</h2></div>
       <div class="card-body">
         <div class="datagrid">
@@ -180,7 +180,7 @@
     </section>
     {% endif %}
 
-    <section class="card" aria-labelledby="events-title" data-section{% if not v.events %} data-empty{% endif %}>
+    <section class="card" id="events" aria-labelledby="events-title" data-section{% if not v.events %} data-empty{% endif %}>
       <div class="card-header"><h2 class="card-title" id="events-title">Recent changes</h2>{{ src("src-events", v.src.events) }}</div>
       {% if v.events %}
       <div class="list-group list-group-flush">

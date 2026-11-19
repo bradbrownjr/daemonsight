@@ -365,6 +365,11 @@ def test_overview(polled):
     assert re.search(r"Read (just now|\d+ s ago)", html) and "tower" in html
 
 
+def test_every_listed_section_is_in_its_page(polled):
+    from .test_sections import check_registry
+    check_registry(polled, "/h/tower", "unraid")
+
+
 def test_container_update_column_says_what_it_is(polled):
     html = polled.get("/h/tower/containers").text
     assert "built-in method" not in html and "object at 0x" not in html

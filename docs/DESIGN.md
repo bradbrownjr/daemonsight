@@ -480,6 +480,16 @@ These apply to every page. Check each layout change in a browser at desktop
 - **Alerts are for now.** A coloured alert box is for something that just
   happened or needs action now (a save, an error). Standing information never
   goes in one.
+- **Long pages are reached through each tab's section menu.** A nav tab whose
+  page has two or more sections has a small chevron button that opens a menu of
+  them (a native popover, `ds-sec-pop`); the tab name still goes to the page.
+  The sections of each page, per host kind, are listed in `web/sections.py`
+  (`SECTIONS`), passed to `base.html` as `page_sections`. Only cards every
+  render of the page has are listed, and `tests/test_sections.py` (with the
+  Unraid and OPNsense checks in their own test files) proves each anchor exists.
+  A link to a section of the current page scrolls there and flashes it, and
+  shows a card that "Hide empty sections" or the filter has hidden. On a phone
+  there are no chevrons: the active tab's sections are listed under it.
 - **Dependent options sit under their control.** An option that only matters
   for one value of another setting (the Shodan key under Source) is indented
   under it (`.ds-subpanel`) and shown only while that value is chosen
@@ -527,7 +537,12 @@ Hosts page count only Unexpected and Changed (`db.findings_state` "active").
   as the other saved settings, and applied again after each refresh.
   `views.findings_overview` builds the list; the Unraid Overview shares the
   template and calls it too. The report still uses `views.findings_lists`.
-- **Exposure page.** A Status column on each listener row and each port
+- **Exposure page.** Under the title, one neutral line says the public address,
+  the number of expected public ports and what the provider firewall lets in,
+  or that the host has no public address. Its (i) button opens the full
+  explanation and port lists. A red badge on the line, "N unexpected" (or
+  "unexpected or changed"), links to the listeners; it shows only when a
+  listener is Unexpected or Changed. A Status column on each listener row and each port
   forward row: Expected, Accepted, Changed, Unexpected, or a dash when the
   internet can't reach it (the host has no public address, the provider
   firewall's `upstream_allow` lets none of its ports in, the firewall forwards
@@ -560,10 +575,8 @@ The header shows the logo, host and a Menu button; the section links and the
 account panel's items (Settings, Theme, "Hide empty sections", Log out) open in
 a panel below it (script only; without it the header is unchanged). The same
 panel is drawn inline there, not as a nested popover, and the account button
-is hidden; a browser without popover support gets the same inline panel. The filter box stays visible. A
-page note such as the one on Exposure is a details element with a one-line
-summary; it starts closed on a phone, remembers if the reader opened it, and
-is always open on wider screens.
+is hidden; a browser without popover support gets the same inline panel. The filter box stays visible. The
+Exposure page's summary line and (i) popover work the same at every width.
 
 Source panels: every card and most rows have an (i) button. It opens a panel
 with two parts. "Read from" says how DaemonSight got the data (the D-Bus call,
