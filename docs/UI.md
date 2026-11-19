@@ -54,6 +54,9 @@ These apply to every page. Owner rules, kept as written.
   line, Settings, Log out.
 - **Navigation.** The header's sections are tabs. "Add a system" is a +, and a
   vertical line separates hub-wide items from the host's own sections.
+  The Hosts tab's menu is the hosts themselves (A to Z, each with a status dot,
+  the current host marked), a line, then "Recent hub changes". It is never
+  rebuilt from the page.
 - **Secrets.** Never shown back. A badge says whether one is saved ("A key is
   saved").
 

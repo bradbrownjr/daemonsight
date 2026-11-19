@@ -6,6 +6,7 @@ import re
 from daemonsight.web import sections
 
 from .test_hub import hub_cfg, token  # noqa: F401 (fixtures)
+from .test_remote import KEY
 from .test_web import client, login, seeded  # noqa: F401 (fixture)
 
 PAGE_KEYS = {"": {"overview", "exposure", "routes", "services", "packages", "vulnerabilities", "fail2ban", "report"},
@@ -40,7 +41,8 @@ def test_registry_shape():
     for kind, pages in sections.SECTIONS.items():
         for key, secs in pages.items():
             assert key in PAGE_KEYS[kind], (kind, key)
-            assert len(secs) >= 2, (kind, key)      # a page with fewer gets no menu, so it has no entry
+            # a page with fewer gets no menu, so it has no entry; Hosts' menu also lists the hosts, so its tail is one
+            assert len(secs) >= 2 or (kind, key) == ("hub", "hosts"), (kind, key)
             anchors = [a for a, _ in secs]
             assert len(set(anchors)) == len(anchors), (kind, key)
     assert sections.for_host(None)["exposure"] and sections.for_host("opnsense")["firewall"]
@@ -111,3 +113,66 @@ def test_phone_menu_is_one_disclosure_per_page_with_sections(seeded):
         assert f"#{anchor}" in ul
     css = open("src/daemonsight/web/static/app.css").read()
     assert "html:not(.ds-js) .ds-sec-inline[hidden] { display: block; }" in css
+
+
+# ---- The Hosts tab's menu: the hosts A to Z, a line, then Recent hub changes --------------------------------------
+
+def hosts_menu_hub(hub_cfg):
+    from daemonsight import db, hub
+    from daemonsight.remote import store
+    conn = db.connect_writer(hub_cfg.db_path)
+    for name in ("zeta", "Alpha", "beta"):
+        hub.add_host(conn, name)
+    conn.execute("UPDATE hosts SET last_seen = ? WHERE id IN ('zeta', 'Alpha')", (db.now(),))
+    store.add(conn, hub_cfg.data_dir, "unraid-box", "unraid", "https://10.0.0.2", KEY)
+    conn.close()
+    return login(client(hub_cfg))
+
+
+def hosts_popover(html):
+    return html.split('id="ds-sec-hosts"')[1].split("</div>")[0]
+
+
+def test_hosts_menu_lists_every_host_a_to_z_then_recent_changes(hub_cfg):
+    c = hosts_menu_hub(hub_cfg)
+    for html in (c.get("/").text, c.get("/settings").text):
+        pop = hosts_popover(html)
+        hrefs = re.findall(r'href="([^"]+)"', pop)
+        assert hrefs == ["/h/Alpha/", "/h/beta/", "/h/unraid-box/", "/h/zeta/", "/#hub-events"]
+        assert pop.count('class="ds-acct-sep"') == 1
+        assert pop.index('ds-acct-sep') > pop.index("/h/zeta/") and pop.index('ds-acct-sep') < pop.index("/#hub-events")
+        assert "Recent hub changes" in pop.split('ds-acct-sep')[1]
+        # status dot before each name: fresh collectors green, the silent one and the unread API system red
+        assert re.search(r'status-green[^>]*></span><span class="ds-sec-text">Alpha<', pop)
+        assert re.search(r'status-red[^>]*></span><span class="ds-sec-text">beta<', pop)
+        assert re.search(r'status-red[^>]*></span><span class="ds-sec-text">unraid-box<', pop)
+        # the phone list has the same items, with a matching separator item
+        ul = html.split('id="ds-secl-hosts"')[1].split("</ul>")[0]
+        assert re.findall(r'href="([^"]+)"', ul) == hrefs
+        assert ul.count('role="separator"') == 1
+
+
+def test_hosts_menu_marks_the_current_host(hub_cfg):
+    c = hosts_menu_hub(hub_cfg)
+    pop = hosts_popover(c.get("/h/beta/").text)
+    assert pop.count('aria-current="page"') == 1
+    assert re.search(r'href="/h/beta/" aria-current="page"', pop)
+    assert 'aria-current' not in hosts_popover(c.get("/").text)
+
+
+def test_hosts_menu_is_never_live(hub_cfg):
+    c = hosts_menu_hub(hub_cfg)
+    html = c.get("/").text           # on the Hosts page itself
+    assert 'data-ds-sections="live"' not in html.split('id="ds-sec-hosts"')[0].rsplit('<li class="nav-item ds-tab', 1)[1]
+    hosts_li = html.split('<li class="nav-item ds-tab', 1)[1].split("</li>")[0]
+    assert "data-ds-sections" not in hosts_li
+    # the phone list starts open only on the Hosts page
+    assert 'aria-expanded="true" aria-controls="ds-secl-hosts"' in html
+    assert 'aria-expanded="false" aria-controls="ds-secl-hosts"' in c.get("/settings").text
+
+
+def test_no_hosts_menu_outside_hub_mode(seeded):
+    c = login(client(seeded))
+    html = c.get("/").text
+    assert 'id="ds-sec-hosts"' not in html and "Recent hub changes" not in html
+    assert "ds-sec-dot" not in html

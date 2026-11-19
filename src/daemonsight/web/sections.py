@@ -4,7 +4,7 @@ SECTIONS maps a host kind to {page key: [(anchor id, label), ...]}. The page key
 base.html. Kind "" is a host the collector reports on; "hub" holds the Hosts page. An anchor is the id of an
 element that every render of that page has (a card that is empty still renders), so a menu item never links to
 nothing; tests/test_sections.py checks each one against the rendered pages. A page with fewer than two sections
-gets no menu.
+gets no menu (except Hosts, whose menu also lists the hosts).
 """
 
 SECTIONS: dict[str, dict[str, list[tuple[str, str]]]] = {
@@ -33,8 +33,10 @@ SECTIONS: dict[str, dict[str, list[tuple[str, str]]]] = {
         "network": [("gateways", "Gateways"), ("interfaces", "Interfaces and their roles"), ("services", "Services")],
         "report": [("steps", "Steps"), ("decide", "Decide"), ("all", "All findings"), ("accepted", "Accepted")],
     },
+    # Hosts' menu is the hosts themselves, then "Recent hub changes" (base.html builds it from menu_hosts); the
+    # registry holds the fixed tail only, as the fallback when no host list is passed.
     "hub": {
-        "hosts": [("hosts", "Hosts"), ("hub-events", "Recent hub changes")],
+        "hosts": [("hub-events", "Recent hub changes")],
     },
 }
 

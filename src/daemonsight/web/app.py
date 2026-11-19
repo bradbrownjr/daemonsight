@@ -145,8 +145,12 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
         notice = None if name.startswith("partials/") else request.session.pop("flash", None)
         # Accepting a finding writes to the database; only a hub's web process may.
         host = (ctx.get("v") or {}).get("host")
+        menu_hosts = None
+        if cfg.hub.enabled and not name.startswith("partials/") and name != "login.html":
+            with reader() as conn:
+                menu_hosts = views.hosts_menu(conn) if conn else []
         ctx = {"theme": theme(request), "theme_pref": theme_pref(request), "path": request.url.path, "base": "", "hub": cfg.hub.enabled,
-               "can_accept": cfg.hub.enabled, "flash": notice,
+               "can_accept": cfg.hub.enabled, "flash": notice, "menu_hosts": menu_hosts,
                "page_sections": sections.for_host(host.get("kind") if hasattr(host, "get") else None), **ctx}
         return templates.TemplateResponse(request, name, ctx, status_code=status)
 

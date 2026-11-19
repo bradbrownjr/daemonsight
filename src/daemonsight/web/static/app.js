@@ -334,6 +334,7 @@
         var r = (tab || pop).getBoundingClientRect();
         var w = pop.offsetWidth;
         pop.style.top = Math.round(r.bottom + 4) + "px";
+        pop.style.maxHeight = Math.max(160, window.innerHeight - Math.round(r.bottom + 4) - 12) + "px"; // long lists scroll
         pop.style.left = Math.max(8, Math.min(Math.round(r.left), document.documentElement.clientWidth - w - 8)) + "px";
         var first = pop.querySelector("a[href]");
         if (first) first.focus();
@@ -345,7 +346,7 @@
       var pop = link.closest("[popover]");
       if (pop && pop.hidePopover) { try { pop.hidePopover(); } catch (err) { /* already closed */ } }
       var url = new URL(link.href, window.location.href);
-      if (url.pathname !== window.location.pathname || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (url.pathname !== window.location.pathname || !url.hash || e.ctrlKey || e.metaKey || e.shiftKey) return;
       e.preventDefault();
       if (window.location.hash !== url.hash) window.history.pushState(null, "", url.hash);
       showTarget();

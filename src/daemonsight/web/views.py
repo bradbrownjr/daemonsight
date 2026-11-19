@@ -1139,6 +1139,23 @@ def hosts_list(conn, cfg: Config) -> dict:
             "events": events_list(conn, db.HUB_HOST)}
 
 
+def hosts_menu(conn) -> list[dict]:
+    """The hosts for the nav's Hosts menu, A to Z: a light read, none of hosts_list's findings or snapshots.
+    "fresh" follows the Hosts page's state: Reporting or Reachable."""
+    silent = {r["host"] for r in conn.execute(
+        "SELECT host FROM findings WHERE rule = 'host.silent' AND resolved_at IS NULL")}
+    remotes = {r["id"]: r for r in conn.execute("SELECT id, kind, enabled, fails, last_ok, last_error FROM remotes")}
+    out = []
+    for h in conn.execute("SELECT id, kind, last_seen FROM hosts"):
+        r = remotes.get(h["id"]) if h["kind"] else None
+        if r is not None:
+            fresh = bool(r["enabled"]) and not r["fails"] and (r["last_ok"] is not None or bool(r["last_error"]))
+        else:
+            fresh = h["last_seen"] is not None and h["id"] not in silent
+        out.append({"id": h["id"], "fresh": fresh})
+    return sorted(out, key=lambda x: (x["id"].casefold(), x["id"]))
+
+
 def _remote_row(conn, h, r, now: float, findings, findings_v) -> dict:
     """A Hosts page row for a system the hub reads over its API."""
     opn = r["kind"] == "opnsense"

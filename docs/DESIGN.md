@@ -529,6 +529,11 @@ natively and focus returns to the button; `app.js` (`initAccount`) places it
 under the button and moves focus to its first item. The filter box stays in the
 header. Every install, hub or single host, has the same menu.
 
+Section menus: a nav tab with two or more sections has a chevron menu (`web/sections.py`; the active tab's is rebuilt
+from the page by `app.js`). On a hub the Hosts tab's menu is the exception: `render()` passes `menu_hosts` (one light
+read, `views.hosts_menu`, hosts A to Z with a status dot), and `base.html` lists them, a line, then "Recent hub changes".
+It is never rebuilt by `app.js`; the current host is marked `aria-current`, and a long list scrolls in the popover.
+
 Phones: below 768 px each table row becomes a stacked card, one labelled line
 per cell, with the header row hidden from view but kept for screen readers.
 The header shows the logo, host and a Menu button; the section links and the

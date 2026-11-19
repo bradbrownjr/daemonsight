@@ -15,26 +15,32 @@
 </head>
 <body>
 {% from "_macros.html" import logo %}
-{# Jump menu beside a nav tab (registry: web/sections.py). The active tab's menu is marked data-ds-sections=live: it is
-   always rendered, and app.js rebuilds it from the cards on the page; the registry items are the fallback without JS. The chevron opens a native popover on desktop; on a phone
-   the chevron is hidden and a disclosure toggle opens the page's section list (sec_inline). #}
-{% macro sec_btn(key, pre, href, label, secs, live=false) -%}
-{% if live or secs|length > 1 -%}
+{# Jump menu beside a nav tab. items is a list of dicts: href (full), text, and optionally dot (green or red: a status
+   dot before the text), current (aria-current) or sep (a separator line, no link). The registry (web/sections.py)
+   gives a tab's items as anchors on its page; the Hosts tab's items are the hosts, a separator, then
+   "Recent hub changes". A tab marked live has its menu rebuilt by app.js from the cards on the page (data-ds-sections=live;
+   the registry items are the fallback without JS); Hosts is never live. The chevron opens a native popover on desktop;
+   on a phone the chevron is hidden and a disclosure toggle opens the list (sec_inline). #}
+{% macro item_inner(it) %}{% if it.dot %}<span class="status-dot {{ 'status-green' if it.dot == 'green' else 'status-red' }} ds-sec-dot" aria-hidden="true"></span>{% endif %}<span class="ds-sec-text">{{ it.text }}</span>{% endmacro %}
+{% macro sec_btn(key, label, items, live=false) -%}
+{% if live or items|length > 1 -%}
 <button type="button" class="ds-sec-btn"{% if live %} data-ds-sections="live"{% endif %} popovertarget="ds-sec-{{ key }}" title="Sections of {{ label }}" aria-label="Sections of {{ label }}"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9l6 6l6 -6"/></svg></button>
 <div popover id="ds-sec-{{ key }}" class="ds-sec-pop card"{% if live %} data-ds-sections="live"{% endif %} role="group" aria-label="Sections of {{ label }}">
-  {% for anchor, text in secs %}<a class="ds-acct-item ds-sec-item" href="{{ pre }}{{ href }}#{{ anchor }}">{{ text }}</a>{% endfor %}
+  {% for it in items %}{% if it.sep %}<hr class="ds-acct-sep">{% else %}<a class="ds-acct-item ds-sec-item" href="{{ it.href }}"{% if it.current %} aria-current="page"{% endif %}>{{ item_inner(it) }}</a>{% endif %}{% endfor %}
 </div>
 {%- endif %}
 {%- endmacro %}
-{% macro sec_inline(key, pre, href, label, secs, live=false, open=false) -%}
+{% macro sec_inline(key, label, items, live=false, open=false) -%}
 <button type="button" class="ds-sec-tgl"{% if live %} data-ds-sections="live"{% endif %} aria-expanded="{{ 'true' if open else 'false' }}" aria-controls="ds-secl-{{ key }}" title="Sections of {{ label }}" aria-label="Sections of {{ label }}"><span class="ds-sec-tgl-arrow" aria-hidden="true"></span></button>
-<ul class="ds-sec-inline list-unstyled m-0" id="ds-secl-{{ key }}"{% if live %} data-ds-sections="live"{% endif %}{% if not open %} hidden{% endif %} aria-label="Sections of {{ label }}">{% for anchor, text in secs %}<li><a class="ds-sec-item" href="{{ pre }}{{ href }}#{{ anchor }}">{{ text }}</a></li>{% endfor %}</ul>
+<ul class="ds-sec-inline list-unstyled m-0" id="ds-secl-{{ key }}"{% if live %} data-ds-sections="live"{% endif %}{% if not open %} hidden{% endif %} aria-label="Sections of {{ label }}">{% for it in items %}{% if it.sep %}<li class="ds-sec-sep" role="separator"></li>{% else %}<li><a class="ds-sec-item" href="{{ it.href }}"{% if it.current %} aria-current="page"{% endif %}>{{ item_inner(it) }}</a></li>{% endif %}{% endfor %}</ul>
 {%- endmacro %}
 {# One nav row: the page link, then (desktop) the chevron popover or (phone) a disclosure toggle and its list. The
-   current page's list starts open; the others start closed. Without JavaScript every list shows (app.css). #}
-{% macro nav_tab(key, pre, href, label, secs, active) -%}
-{% set has = secs|length > 1 or active -%}
-<li class="nav-item ds-tab{{ ' ds-has-sec' if has }}"><a class="nav-link{{ ' active' if active }}" {% if active %}aria-current="page"{% endif %} href="{{ pre }}{{ href }}">{{ label }}</a>{{ sec_btn(key, pre, href, label, secs, active) }}{% if has %}{{ sec_inline(key, pre, href, label, secs, active, active) }}{% endif %}</li>
+   current page's list starts open; the others start closed. Without JavaScript every list shows (app.css).
+   live: app.js rebuilds the menu from the page (the active tab, except Hosts). #}
+{% macro nav_tab(key, pre, href, label, items, active, live=None) -%}
+{% set live = active if live is none else live -%}
+{% set has = items|length > 1 or live -%}
+<li class="nav-item ds-tab{{ ' ds-has-sec' if has }}"><a class="nav-link{{ ' active' if active }}" {% if active %}aria-current="page"{% endif %} href="{{ pre }}{{ href }}">{{ label }}</a>{{ sec_btn(key, label, items, live) }}{% if has %}{{ sec_inline(key, label, items, live, active) }}{% endif %}</li>
 {%- endmacro %}
 {% block body %}
 {% set host = v.host if v else None %}
@@ -88,8 +94,12 @@
   <nav aria-label="Sections" class="ds-collapsible" id="ds-menu">
     <ul class="nav nav-pills gap-1">
       {% if hub %}
-      {% set hsecs = page_sections.get('hosts', []) %}
-      {{ nav_tab('hosts', '', '/', 'Hosts', hsecs, page == 'hosts') }}
+      {# Hosts' menu: every host A to Z (menu_hosts, from render()), a line, then Recent hub changes. Never live. #}
+      {% set hitems = [] %}
+      {% for h in menu_hosts or [] %}{% set _ = hitems.append({'href': '/h/' ~ h.id ~ '/', 'text': h.id, 'dot': 'green' if h.fresh else 'red', 'current': (true if host and base and host.id == h.id else false)}) %}{% endfor %}
+      {% if hitems %}{% set _ = hitems.append({'sep': true}) %}{% endif %}
+      {% for anchor, text in page_sections.get('hosts', []) %}{% set _ = hitems.append({'href': '/#' ~ anchor, 'text': text}) %}{% endfor %}
+      {{ nav_tab('hosts', '', '/', 'Hosts', hitems, page == 'hosts', false) }}
       {# A + on wide screens; the phone menu has room for the words. #}
       <li class="nav-item"><a class="nav-link ds-nav-add{{ ' active' if page == 'remotes' }}" {% if page == 'remotes' %}aria-current="page"{% endif %} href="/remotes/new" title="Add a system" aria-label="Add a system"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg><span class="ds-nav-add-text">Add a system</span></a></li>
       {% if base %}<li class="ds-nav-sep" aria-hidden="true"></li>{% endif %}
@@ -104,8 +114,9 @@
       {% endif %}
       {% for key, href, label in sections %}
       {% if key != 'vulnerabilities' or hub %}
-      {% set secs = page_sections.get(key, []) %}
-      {{ nav_tab(key, base, href, label, secs, page == key) }}
+      {% set items = [] %}
+      {% for anchor, text in page_sections.get(key, []) %}{% set _ = items.append({'href': base ~ href ~ '#' ~ anchor, 'text': text}) %}{% endfor %}
+      {{ nav_tab(key, base, href, label, items, page == key) }}
       {% endif %}
       {% endfor %}
       {% endif %}
