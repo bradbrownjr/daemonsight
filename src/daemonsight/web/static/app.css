@@ -61,7 +61,7 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
   .ds-header .container-xl { column-gap: .75rem !important; }
   .ds-brand .fs-3 { font-size: 1.15rem !important; }
   .ds-brand { flex: 0 0 auto; }
-  .ds-hostpill { flex: 0 1 auto; min-width: 0; flex-wrap: nowrap !important; padding: 2px 8px; }
+  .ds-hostpill { flex: 1 1 0; max-width: max-content; min-width: 0; flex-wrap: nowrap !important; padding: 2px 8px; }
   .ds-hostpill .fw-bold { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .ds-hostpill .text-secondary { display: none; }
   .ds-js .ds-menu-btn { display: inline-flex; margin-left: auto; }
@@ -302,10 +302,18 @@ textarea.ds-set-input { max-width: 28rem; }
   .ds-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .5rem 16px; }
   .ds-header > .container-xl { display: contents !important; }   /* beats Tabler's d-flex !important */
   .ds-header nav { order: 4; flex: 0 0 100%; }
-  .ds-header > .container-xl > .ds-js-only { order: 5; }
+  /* Two rows at most: logo and host, then the filter with the menu button at its right.
+     Without a filter the button sits at the right of row 1. */
+  .ds-header > .container-xl > .ds-js-only { order: 2; flex: 1 1 calc(100% - 44px - .75rem); min-width: 0; }
+  .ds-js .ds-menu-btn { order: 3; flex: 0 0 auto; width: 44px; height: 44px; min-width: 44px; padding: 0; justify-content: center; align-items: center; }
+  .ds-js .ds-header:not(:has(#ds-filter)) .ds-menu-btn { order: 1; }
+  .ds-header .ds-js-only .ds-filter { min-height: 44px; }
+  .ds-brand, .ds-hostpill { order: 0; }
   .ds-js .ds-header .ds-account { order: 6; padding-top: .5rem; border-top: 1px solid var(--tblr-border-color); }
   .ds-acct-item { padding-left: 0; padding-right: 0; }
 }
+
+@media (max-width: 359.98px) { .ds-brand .fs-3 { display: none; } }
 
 /* Account menu: toggles first, then Settings and Log out as menu items (icon,
    full width, a hover background) so they read as things to click. */
