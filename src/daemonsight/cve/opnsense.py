@@ -398,10 +398,14 @@ def watch_series(fw: dict | None) -> list[str]:
 def _seen(fw: dict) -> str:
     """The highest version in the installed series that the firewall's own status names: what it runs, what it calls the
     latest, the new version, and the OPNsense package of a pending update (a hotfix appears there). A version from another
-    series (a major upgrade on offer) says nothing about this series."""
+    series (a major upgrade on offer) says nothing about this series.
+
+    `latest` and `new_version` count only when the last check offered updates (`count` > 0). Seen live on 2026-11-24: with no
+    check since Nov 18, the status said latest and new_version 26.7.10 while `status` was "none" and `count` 0, so the
+    firewall knew the release's name (its changelog download) without offering it."""
     ser = opnver.series_of(fw["version"])
     best = fw["version"]
-    cands = [fw.get("latest"), fw.get("new_version")]
+    cands = [fw.get("latest"), fw.get("new_version")] if (fw.get("count") or 0) > 0 else []
     cands += [p.get("new") for p in (fw.get("packages") or []) + (fw.get("sets") or []) if p.get("name") in CORE_PACKAGES]
     for v in cands:
         if opnver.valid(v) and opnver.series_of(v) == ser and opnver.compare(v, best) > 0:
