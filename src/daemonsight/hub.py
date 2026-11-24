@@ -29,8 +29,9 @@ log = logging.getLogger("daemonsight.hub")
 # upload never closes them: host.* (silence, clock), cve.* (CVE matching),
 # remote.* (a system the hub reads over its API is unreachable), unraid.*
 # and opnsense.* (what the hub reads from an Unraid server or an OPNsense
-# firewall), docker.* (an Unraid server's Docker reader) and outside.* (what Shodan's InternetDB says the internet sees).
-HUB_RULES = ("host.", "cve.", "remote.", "unraid.", "opnsense.", "outside.", "docker.")
+# firewall), docker.* (an Unraid server's Docker reader), crowdsec.* (bans on a firewall's CrowdSec) and outside.*
+# (what Shodan's InternetDB says the internet sees).
+HUB_RULES = ("host.", "cve.", "remote.", "unraid.", "opnsense.", "outside.", "docker.", "crowdsec.")
 # The package list is not a snapshot source: see InventoryIn.
 INVENTORY = "inventory"
 SOURCES = ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall", "packages")
@@ -136,7 +137,7 @@ class FindingIn(_Model):
     @classmethod
     def _not_hub_rule(cls, v: str) -> str:
         if v.startswith(HUB_RULES):
-            raise ValueError("host.*, cve.*, remote.*, unraid.*, opnsense.* and outside.* findings belong to the hub")
+            raise ValueError("host.*, cve.*, remote.*, unraid.*, opnsense.*, docker.*, crowdsec.* and outside.* findings belong to the hub")
         return v
 
 

@@ -496,7 +496,7 @@ def test_migration_adds_the_settings_table(tmp_path):
     conn.close()
     assert "settings" not in {r[0] for r in sqlite3.connect(path).execute("SELECT name FROM sqlite_master")}
     conn = db.connect_writer(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 9
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 10
     assert [r[1] for r in conn.execute("PRAGMA table_info(settings)")] == ["key", "value", "changed_at", "changed_by"]
     conn.close()
 

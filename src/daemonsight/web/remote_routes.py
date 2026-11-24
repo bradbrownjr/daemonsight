@@ -20,7 +20,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from .. import db, hub
 from ..config import Config
 from . import views
-from ..remote import docker_storage, opnsense, poll, roles, store, unraid
+from ..remote import crowdsec, docker_storage, opnsense, poll, roles, store, unraid
 from ..remote.client import (Net, RemoteError, clean_fingerprint, fingerprint, fmt_fingerprint, normalize_url)
 
 log = logging.getLogger("daemonsight.remote")
@@ -79,6 +79,7 @@ def opnsense_rules_roles(data: dict) -> dict[str, str]:
 def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login, flash, net: Net) -> None:
     pending = Pending()
     pending_reader = Pending()          # the Docker reader's token, typed and not yet saved (memory only)
+    pending_crowdsec = Pending()        # the CrowdSec bouncer key, the same
 
     def post_guard(request: Request) -> None:
         require_login(request)
@@ -96,7 +97,8 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
             last = {"polled": views.fmt_ago(row["last_poll"]) if row["last_poll"] else None,
                     "ok": views.fmt_ago(row["last_ok"]) if row["last_ok"] else None,
                     "error": (row["last_error"] or "")[:300] if row["fails"] else None}
-        return render(request, "remote_form.html", {"page": "remotes", "v": {"host": None}, "last": last, **ctx}, status)
+        return render(request, "remote_form.html", {"page": "remotes", "v": {"host": None}, "last": last,
+                                                    "crowdsec_result": None, **ctx}, status)
 
     def blank(existing=None) -> dict:
         return {"kind": existing["kind"] if existing else "unraid", "name": existing["id"] if existing else "",
@@ -107,7 +109,11 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                 "enabled": bool(existing["enabled"]) if existing else True, "pending": "",
                 "reader_on": bool(existing["reader_url"]) if existing else False,
                 "reader_url": (existing["reader_url"] or "") if existing else "", "pending_reader": "",
-                "reader_token_saved": bool(existing and store.read_reader_token(cfg.data_dir, existing["id"]))}
+                "reader_token_saved": bool(existing and store.read_reader_token(cfg.data_dir, existing["id"])),
+                "crowdsec_on": bool(existing["crowdsec_url"]) if existing else False,
+                "crowdsec_url": (existing["crowdsec_url"] or "") if existing else "", "pending_crowdsec": "",
+                "crowdsec_never": "\n".join(store.never_list(existing)) if existing else "",
+                "crowdsec_key_saved": bool(existing and store.read_crowdsec_key(cfg.data_dir, existing["id"]))}
 
     async def work(request: Request, form: dict, existing, action: str):
         """Check the form, look at the server, and (on Save) store it. Returns
@@ -117,6 +123,8 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
         problems = ctx["problems"]
         typed_reader_token = form.pop("reader_token", "")
         form["reader_token_saved"] = bool(existing and store.read_reader_token(cfg.data_dir, existing["id"]))
+        typed_cs_key = form.pop("crowdsec_key", "")
+        form["crowdsec_key_saved"] = bool(existing and store.read_crowdsec_key(cfg.data_dir, existing["id"]))
         # --- the fields
         kind = existing["kind"] if existing is not None else form["kind"]
         if kind not in store.KINDS:
@@ -145,6 +153,43 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                 problems.append("Docker reader token: enter the token from the reader's token file.")
             if reader_token is not None and reader_new:
                 form["pending_reader"] = pending_reader.put(reader_token, form["pending_reader"] or None)
+        # --- CrowdSec bans (OPNsense only): the Local API's address, a bouncer key and a never-ban list, a dependent
+        # option of the same form
+        cs_url, cs_key, cs_new, cs_never = None, None, False, []
+        if kind == "opnsense" and form["crowdsec_on"]:
+            try:
+                cs_url = crowdsec.normalize_url(form["crowdsec_url"])
+                form["crowdsec_url"] = cs_url
+            except ValueError as exc:
+                problems.append(f"CrowdSec address: {exc}")
+            if typed_cs_key.strip():
+                try:
+                    cs_key, cs_new = store.clean_crowdsec_key(typed_cs_key), True
+                except ValueError as exc:
+                    problems.append(f"CrowdSec key: {exc}")
+            elif (held := pending_crowdsec.get(form["pending_crowdsec"])) is not None:
+                cs_key, cs_new = held, True
+            elif existing is not None:
+                cs_key = store.read_crowdsec_key(cfg.data_dir, existing["id"])
+            if cs_key is None and not any(p.startswith("CrowdSec key") for p in problems):
+                problems.append("CrowdSec key: enter the key that cscli bouncers add printed.")
+            if cs_key is not None and cs_new:
+                form["pending_crowdsec"] = pending_crowdsec.put(cs_key, form["pending_crowdsec"] or None)
+            try:
+                cs_never = store.clean_never_list(form["crowdsec_never"])
+                form["crowdsec_never"] = "\n".join(cs_never)
+            except ValueError as exc:
+                problems.append(f"Never-ban list: {exc}")
+        if action == "test-crowdsec":
+            if kind != "opnsense" or not form["crowdsec_on"]:
+                problems.append("Tick Read CrowdSec bans first.")
+            elif cs_url is not None and cs_key is not None:
+                try:
+                    await crowdsec.probe(net, cs_url, cs_key)
+                    ctx["crowdsec_result"] = {"ok": True}
+                except RemoteError as exc:
+                    problems.append("CrowdSec: " + crowdsec.error_text(exc, cs_key))
+            return ctx, None
         if action == "test-reader":
             if kind != "unraid" or not form["reader_on"]:
                 problems.append("Tick Read images and volumes first.")
@@ -253,15 +298,18 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
             if existing is None:
                 store.add(conn, cfg.data_dir, form["name"], kind, url, key, tls=tls, pin=fp, cert=pem,
                           interval=interval, secret=secret, reader_url=reader_url,
-                          reader_token=reader_token if reader_url else None)
+                          reader_token=reader_token if reader_url else None, crowdsec_url=cs_url,
+                          crowdsec_key=cs_key if cs_url else None, crowdsec_never=cs_never)
                 log.info("System %s (%s) added from %s", form["name"], kind, client(request))
                 flash(request, f"Added {form['name']}. The first read happens within a few seconds.")
             else:
                 reader_arg = None if (reader_url is None and not existing["reader_url"]) else \
                     (reader_url, reader_token if reader_new else None)
+                cs_arg = None if (cs_url is None and not existing["crowdsec_url"]) else \
+                    (cs_url, cs_key if cs_new else None, cs_never)
                 store.update(conn, cfg.data_dir, existing["id"], url=url, tls=tls, pin=fp, cert=pem, interval=interval,
                              enabled=form["enabled"], key=key if key_new else None, secret=secret if key_new else None,
-                             reader=reader_arg)
+                             reader=reader_arg, crowdsec=cs_arg)
                 if not form["enabled"]:
                     poll._set_unreachable(conn, store.get(conn, existing["id"]), time.time(), None)
                 log.info("System %s updated from %s", existing["id"], client(request))
@@ -271,16 +319,20 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
             return ctx, None
         pending.drop(form["pending"])
         pending_reader.drop(form["pending_reader"])
+        pending_crowdsec.drop(form["pending_crowdsec"])
         return ctx, RedirectResponse("/", status_code=303)
 
     def read_form(kind, name, url, key, tls, pin_confirm, trust, interval, pending_token, enabled, secret="",
-                  reader_on="", reader_url="", reader_token="", pending_reader_token="") -> dict:
+                  reader_on="", reader_url="", reader_token="", pending_reader_token="", crowdsec_on="", crowdsec_url="",
+                  crowdsec_key="", crowdsec_never="", pending_crowdsec_key="") -> dict:
         # "trust" is the button next to a fingerprint: it confirms exactly the fingerprint that was shown.
         return {"kind": kind[:20], "name": name.strip()[:80], "url": url.strip()[:300], "key": key[:300], "secret": secret[:300],
                 "tls": tls[:10], "pin_confirm": (trust or pin_confirm)[:120], "interval": interval[:8],
                 "pending": pending_token[:60], "enabled": enabled != "", "reader_on": reader_on != "",
                 "reader_url": reader_url.strip()[:300], "reader_token": reader_token[:300],
-                "pending_reader": pending_reader_token[:60]}
+                "pending_reader": pending_reader_token[:60], "crowdsec_on": crowdsec_on != "",
+                "crowdsec_url": crowdsec_url.strip()[:300], "crowdsec_key": crowdsec_key[:300],
+                "crowdsec_never": crowdsec_never[:4000], "pending_crowdsec": pending_crowdsec_key[:60]}
 
     @app.get("/remotes/new")
     async def new_form(request: Request, kind: str = "unraid"):
@@ -296,7 +348,9 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                        trust: str = Form(""), interval: str = Form("60"),
                        pending_token: str = Form("", alias="pending"), action: str = Form("test"),
                        reader_on: str = Form(""), reader_url: str = Form(""), reader_token: str = Form(""),
-                       pending_reader_token: str = Form("", alias="pending_reader")):
+                       pending_reader_token: str = Form("", alias="pending_reader"), crowdsec_on: str = Form(""),
+                       crowdsec_url: str = Form(""), crowdsec_key: str = Form(""), crowdsec_never: str = Form(""),
+                       pending_crowdsec_key: str = Form("", alias="pending_crowdsec")):
         try:
             post_guard(request)
         except HTTPException as exc:
@@ -304,7 +358,8 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                 return PlainTextResponse(exc.detail, status_code=403)
             raise
         form = read_form(kind, name, url, key, tls, pin_confirm, trust, interval, pending_token, "on", secret,
-                         reader_on, reader_url, reader_token, pending_reader_token)
+                         reader_on, reader_url, reader_token, pending_reader_token, crowdsec_on, crowdsec_url,
+                         crowdsec_key, crowdsec_never, pending_crowdsec_key)
         ctx, redirect = await work(request, form, None, action)
         return redirect or page(request, ctx, 400 if ctx["problems"] else 200)
 
@@ -327,7 +382,9 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                         interval: str = Form("60"), pending_token: str = Form("", alias="pending"),
                         enabled: str = Form(""), action: str = Form("test"), reader_on: str = Form(""),
                         reader_url: str = Form(""), reader_token: str = Form(""),
-                        pending_reader_token: str = Form("", alias="pending_reader")):
+                        pending_reader_token: str = Form("", alias="pending_reader"), crowdsec_on: str = Form(""),
+                        crowdsec_url: str = Form(""), crowdsec_key: str = Form(""), crowdsec_never: str = Form(""),
+                        pending_crowdsec_key: str = Form("", alias="pending_crowdsec")):
         try:
             post_guard(request)
         except HTTPException as exc:
@@ -336,7 +393,8 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
             raise
         row = existing_or_404(remote_id)
         form = read_form(row["kind"], row["id"], url, key, tls, pin_confirm, trust, interval, pending_token, enabled, secret,
-                         reader_on, reader_url, reader_token, pending_reader_token)
+                         reader_on, reader_url, reader_token, pending_reader_token, crowdsec_on, crowdsec_url,
+                         crowdsec_key, crowdsec_never, pending_crowdsec_key)
         ctx, redirect = await work(request, form, row, action)
         return redirect or page(request, ctx, 400 if ctx["problems"] else 200)
 

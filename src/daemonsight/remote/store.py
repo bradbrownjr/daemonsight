@@ -8,10 +8,13 @@ secret: the same file, two lines (key, then secret).
 
 The Docker reader's token (an Unraid system can have one, see remote/docker_storage.py) is kept the same way, in
 `<data_dir>/remotes/<id>.reader-token`: 0600, never in the database, a page, a log or an event, never shown again.
+So is the CrowdSec bouncer key of an OPNsense system (see remote/crowdsec.py), in `<id>.crowdsec-key`.
 """
 
 from __future__ import annotations
 
+import ipaddress
+import json
 import os
 import re
 import time
@@ -85,7 +88,7 @@ GUIDES = {
 }
 KEY_RE = re.compile(r"^[\x21-\x7e]{8,200}$")      # printable ASCII, no spaces
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")   # the same rule as hub.HOST_RE
-KEY_FILE_RE = re.compile(r"^remotes/([A-Za-z0-9][A-Za-z0-9._-]{0,62})\.(key|reader-token)$")
+KEY_FILE_RE = re.compile(r"^remotes/([A-Za-z0-9][A-Za-z0-9._-]{0,62})\.(key|reader-token|crowdsec-key)$")
 MIN_INTERVAL, MAX_INTERVAL, DEFAULT_INTERVAL = 30, 3600, 60
 
 
@@ -105,6 +108,88 @@ def reader_token_path(data_dir: str | os.PathLike, remote_id: str) -> Path:
     if not ID_RE.match(remote_id):
         raise ValueError(f"not a valid system name: {remote_id!r}")
     return key_dir(data_dir) / f"{remote_id}.reader-token"
+
+
+def crowdsec_key_path(data_dir: str | os.PathLike, remote_id: str) -> Path:
+    if not ID_RE.match(remote_id):
+        raise ValueError(f"not a valid system name: {remote_id!r}")
+    return key_dir(data_dir) / f"{remote_id}.crowdsec-key"
+
+
+CROWDSEC_KEY_RE = re.compile(r"^[\x21-\x7e]{8,200}$")
+NEVER_MAX = 50
+# A range wider than this is refused in the never-ban list: asking CrowdSec what lies inside a very wide range could
+# return a large part of its community blocklist (docs/DESIGN.md, "CrowdSec").
+NEVER_MIN_PREFIX = {4: 16, 6: 48}
+
+
+def clean_crowdsec_key(raw: str | None) -> str:
+    key = (raw or "").strip()
+    if not CROWDSEC_KEY_RE.match(key):
+        raise ValueError("The bouncer key must be 8 to 200 printable characters with no spaces (the text "
+                         "cscli bouncers add prints).")
+    return key
+
+
+def clean_never_list(raw: str | list | None) -> list[str]:
+    """The addresses and networks that must never be banned, from the form's text (one per line, or separated by
+    commas or spaces) or a stored list: each a single IP or a CIDR, normalised (a network's host bits are dropped;
+    a /32 or /128 is the address), no repeats, at most NEVER_MAX, and no range wider than NEVER_MIN_PREFIX.
+    Raises ValueError saying which entry is wrong."""
+    items = re.split(r"[\s,;]+", raw.strip()) if isinstance(raw, str) else [str(x) for x in (raw or [])]
+    out: list[str] = []
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+        if len(item) > 60:
+            raise ValueError(f"{item[:20]}...: not an IP address or network.")
+        try:
+            net = ipaddress.ip_network(item, strict=False)
+        except ValueError:
+            raise ValueError(f"{item}: not an IP address or network (for example 192.0.2.7 or 198.51.100.0/24).") from None
+        if net.prefixlen == net.max_prefixlen:
+            norm = str(net.network_address)
+        else:
+            if net.prefixlen < NEVER_MIN_PREFIX[net.version] and not net.is_private:
+                raise ValueError(f"{item}: too wide. Use /{NEVER_MIN_PREFIX[net.version]} or narrower.")
+            norm = str(net)
+        if norm not in out:
+            out.append(norm)
+    if len(out) > NEVER_MAX:
+        raise ValueError(f"At most {NEVER_MAX} addresses or networks (you gave {len(out)}).")
+    return out
+
+
+def write_crowdsec_key(data_dir, remote_id: str, key: str) -> Path:
+    path = crowdsec_key_path(data_dir, remote_id)
+    _write_secret(path, clean_crowdsec_key(key) + "\n")
+    return path
+
+
+def read_crowdsec_key(data_dir, remote_id: str) -> str | None:
+    try:
+        key = crowdsec_key_path(data_dir, remote_id).read_text().strip()
+    except (OSError, ValueError):
+        return None
+    return key if CROWDSEC_KEY_RE.match(key) else None
+
+
+def delete_crowdsec_key(data_dir, remote_id: str) -> bool:
+    try:
+        crowdsec_key_path(data_dir, remote_id).unlink()
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def never_list(row) -> list[str]:
+    """The stored never-ban list of a remotes row (empty when none, or when the stored text is not a list)."""
+    try:
+        v = json.loads(row["crowdsec_never"] or "[]") if "crowdsec_never" in row.keys() else []
+    except ValueError:
+        return []
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
 
 
 def clean_reader_token(raw: str | None) -> str:
@@ -224,17 +309,17 @@ def delete_key(data_dir, remote_id: str) -> bool:
 
 
 def member_path(data_dir, member: str) -> Path | None:
-    """Where a backup archive's `remotes/<id>.key` or `remotes/<id>.reader-token` goes back to, or None."""
+    """Where a backup archive's `remotes/<id>.key`, `.reader-token` or `.crowdsec-key` goes back to, or None."""
     m = KEY_FILE_RE.match(member)
     if not m:
         return None
-    return key_path(data_dir, m.group(1)) if m.group(2) == "key" else reader_token_path(data_dir, m.group(1))
+    return {"key": key_path, "reader-token": reader_token_path, "crowdsec-key": crowdsec_key_path}[m.group(2)](data_dir, m.group(1))
 
 
 def key_files(data_dir) -> dict[str, Path]:
     """Every saved key as the name a backup archive stores it under."""
     out = {}
-    for suffix in (".key", ".reader-token"):
+    for suffix in (".key", ".reader-token", ".crowdsec-key"):
         for p in sorted(key_dir(data_dir).glob("*" + suffix)):
             if p.is_file() and ID_RE.match(p.name[:-len(suffix)]):
                 out[f"remotes/{p.name}"] = p
@@ -269,7 +354,8 @@ def valid_interval(value) -> int:
 def add(conn, data_dir, remote_id: str, kind: str, url: str, key: str, *, tls: str = "verify",
         pin: str | None = None, cert: str | None = None, interval: int = DEFAULT_INTERVAL,
         now: float | None = None, secret: str | None = None, reader_url: str | None = None,
-        reader_token: str | None = None) -> None:
+        reader_token: str | None = None, crowdsec_url: str | None = None, crowdsec_key: str | None = None,
+        crowdsec_never: list[str] | None = None) -> None:
     """Create the system: a hosts row marked with its kind (no upload token
     exists for it and `hub update` skips it), the remotes row and the key file."""
     if kind not in KINDS:
@@ -286,18 +372,23 @@ def add(conn, data_dir, remote_id: str, kind: str, url: str, key: str, *, tls: s
         raise ValueError("This kind of system needs a key and a secret." if kind in TWO_PART else "This kind of system has a key only.")
     if bool(reader_url) != bool(reader_token):
         raise ValueError("The Docker reader needs an address and a token.")
+    if bool(crowdsec_url) != bool(crowdsec_key) or (crowdsec_url and kind != "opnsense"):
+        raise ValueError("CrowdSec needs an address and a bouncer key, and only an OPNsense system has it.")
+    never = json.dumps(clean_never_list(crowdsec_never)) if crowdsec_url else None
     write_key(data_dir, remote_id, key, secret)
     if reader_token:
         write_reader_token(data_dir, remote_id, reader_token)
+    if crowdsec_key:
+        write_crowdsec_key(data_dir, remote_id, crowdsec_key)
     try:
         conn.execute("BEGIN IMMEDIATE")
         try:
             # The sentinel can never equal a SHA-256 hex digest, so no token matches this host.
             conn.execute("INSERT INTO hosts (id, token_hash, created_at, kind) VALUES (?, ?, ?, ?)",
                          (remote_id, f"remote:{remote_id}", now, kind))
-            conn.execute("INSERT INTO remotes (id, kind, url, enabled, tls, tls_pin, tls_cert, interval, created_at, reader_url) "
-                         "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)", (remote_id, kind, url, tls, pin, cert, interval, now,
-                                                                    reader_url or None))
+            conn.execute("INSERT INTO remotes (id, kind, url, enabled, tls, tls_pin, tls_cert, interval, created_at, reader_url, "
+                         "crowdsec_url, crowdsec_never) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (remote_id, kind, url, tls, pin, cert, interval, now, reader_url or None, crowdsec_url or None, never))
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -305,14 +396,17 @@ def add(conn, data_dir, remote_id: str, kind: str, url: str, key: str, *, tls: s
     except Exception:
         delete_key(data_dir, remote_id)
         delete_reader_token(data_dir, remote_id)
+        delete_crowdsec_key(data_dir, remote_id)
         raise
 
 
 def update(conn, data_dir, remote_id: str, *, url: str, tls: str, pin: str | None, cert: str | None,
            interval: int, enabled: bool, key: str | None = None, secret: str | None = None,
-           reader: tuple[str | None, str | None] | None = None) -> None:
+           reader: tuple[str | None, str | None] | None = None,
+           crowdsec: tuple[str | None, str | None, list[str]] | None = None) -> None:
     """`reader` is None to leave the Docker reader as it is, else (url, token): url None turns it off (and deletes the
-    token file); a url with a token None keeps the saved token."""
+    token file); a url with a token None keeps the saved token. `crowdsec` is the same for CrowdSec bans:
+    (url, key, never-ban list); url None turns it off and deletes the key file and the stored readings."""
     if tls not in ("verify", "pin") or (tls == "pin" and not (pin and cert)):
         raise ValueError("TLS mode needs a confirmed certificate.")
     interval = valid_interval(interval)
@@ -330,6 +424,20 @@ def update(conn, data_dir, remote_id: str, *, url: str, tls: str, pin: str | Non
             elif read_reader_token(data_dir, remote_id) is None:
                 raise ValueError("The Docker reader needs a token.")
             conn.execute("UPDATE remotes SET reader_url=? WHERE id=?", (r_url, remote_id))
+    if crowdsec is not None:
+        c_url, c_key, c_never = crowdsec
+        if c_url is None:
+            delete_crowdsec_key(data_dir, remote_id)
+            conn.execute("UPDATE remotes SET crowdsec_url=NULL, crowdsec_never=NULL WHERE id=?", (remote_id,))
+            conn.execute("DELETE FROM snapshots WHERE host=? AND source='opnsense_crowdsec'", (remote_id,))
+        else:
+            never = json.dumps(clean_never_list(c_never))
+            if c_key:
+                write_crowdsec_key(data_dir, remote_id, c_key)
+            elif read_crowdsec_key(data_dir, remote_id) is None:
+                raise ValueError("CrowdSec needs a bouncer key.")
+            conn.execute("UPDATE remotes SET crowdsec_url=?, crowdsec_never=? WHERE id=?", (c_url, never, remote_id))
+            conn.execute("DELETE FROM snapshots WHERE host=? AND source='opnsense_crowdsec'", (remote_id,))
     conn.execute("UPDATE remotes SET url=?, tls=?, tls_pin=?, tls_cert=?, interval=?, enabled=?, "
                  "last_poll=NULL, fails=0 WHERE id=?",
                  (url, tls, pin if tls == "pin" else None, cert if tls == "pin" else None, interval,
@@ -362,6 +470,7 @@ def remove(conn, data_dir, remote_id: str, purge: bool = True) -> bool:
     if data_dir:
         delete_key(data_dir, remote_id)
         delete_reader_token(data_dir, remote_id)
+        delete_crowdsec_key(data_dir, remote_id)
     from . import roles
     roles.delete_overrides(conn, remote_id)
     return True

@@ -522,7 +522,7 @@ def test_migration_adds_reader_url_to_a_version_8_database(tmp_path):
     conn.close()
     assert "reader_url" not in {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(remotes)")}
     conn = db.connect_writer(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 9
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 10
     assert "reader_url" in {r[1] for r in conn.execute("PRAGMA table_info(remotes)")}
     conn.close()
 

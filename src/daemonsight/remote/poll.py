@@ -40,14 +40,14 @@ import time
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import docker_storage, opnsense, release, roles, store, unraid
+from . import crowdsec, docker_storage, opnsense, release, roles, store, unraid
 from .client import Graph, Net, RemoteError, Rest
 
 log = logging.getLogger("daemonsight.remote")
 UNREACHABLE_AFTER_INTERVALS = 3
 UNREACHABLE_MIN_SECONDS = 180
 MAX_PARALLEL = 4
-RULE_PREFIX = {"unraid": ("unraid.", "docker."), "opnsense": "opnsense."}
+RULE_PREFIX = {"unraid": ("unraid.", "docker."), "opnsense": ("opnsense.", "crowdsec.")}
 
 
 HOWTO_UNREACHABLE_OPNSENSE = "\n".join((
@@ -158,7 +158,56 @@ def opnsense_inputs(conn, host: str) -> dict[str, dict | None]:
 
 def opnsense_rules_evaluate(conn, host: str, now: float) -> list[Finding]:
     from . import opnsense_rules
-    return opnsense_rules.evaluate(opnsense_inputs(conn, host), now, roles.load_overrides(conn, host), opnsense.collector_hosts(conn))
+    out = opnsense_rules.evaluate(opnsense_inputs(conn, host), now, roles.load_overrides(conn, host), opnsense.collector_hosts(conn))
+    snap = db.get_snapshot(conn, host, crowdsec.SNAPSHOT)
+    if snap is not None and snap.data:
+        out += crowdsec.evaluate(snap.data, None if snap.ok else snap.error)
+    return out
+
+
+def crowdsec_hosts(conn, self_id: str) -> list[tuple[str, str | None]]:
+    """(name, address) of every host the hub knows: a collector's reported address, a remote system's address from its
+    URL (a name stays a name: it is listed as not checked)."""
+    out = []
+    for h in conn.execute("SELECT h.id, h.address, h.kind, r.url FROM hosts h LEFT JOIN remotes r ON r.id = h.id ORDER BY h.id"):
+        if h["id"] == self_id:
+            continue
+        address = h["address"]
+        if h["kind"] is not None:
+            from urllib.parse import urlsplit
+            address = urlsplit(h["url"] or "").hostname
+        out.append((h["id"], address))
+    return out
+
+
+async def read_crowdsec(conn, cfg: Config, row, net: Net, now: float, results: dict, snaps: dict) -> None:
+    """CrowdSec's bans on the addresses DaemonSight protects, when this firewall has CrowdSec set up and the last read
+    is older than READ_EVERY. Like the Docker reader it is optional: a failed read keeps the last data, counts the
+    failure (crowdsec.unreachable opens after a few) and never fails the poll."""
+    url = row["crowdsec_url"] if "crowdsec_url" in row.keys() else None
+    if not url:
+        return
+    prev = snaps.get(crowdsec.SNAPSHOT)
+    if prev is not None and now - prev.taken_at < max(crowdsec.READ_EVERY, row["interval"]) - 1:
+        return
+    old = prev.data if prev and prev.data else None
+    key = store.read_crowdsec_key(cfg.data_dir, row["id"])
+    if key is None:
+        results[crowdsec.SNAPSHOT] = (False, "The CrowdSec key file is missing or unreadable. Edit the system and enter "
+                                              "the bouncer key again.", crowdsec.failed(old))
+        return
+    try:
+        fresh = results.get("opnsense_interfaces")
+        iface = fresh[2] if fresh and fresh[0] else (snaps["opnsense_interfaces"].data if snaps.get("opnsense_interfaces") else None)
+        iface = iface if iface and iface.get("available") is not False else None
+        from . import opnsense_rules
+        rl = opnsense_rules.interface_roles({"interfaces": iface}, roles.load_overrides(conn, row["id"]))
+        entries, unresolved = crowdsec.protected(iface, rl, crowdsec_hosts(conn, row["id"]), store.never_list(row), row["id"])
+        results[crowdsec.SNAPSHOT] = (True, None, await crowdsec.read(net, url, key, entries, unresolved, now))
+    except RemoteError as exc:
+        results[crowdsec.SNAPSHOT] = (False, crowdsec.error_text(exc, key), crowdsec.failed(old))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        results[crowdsec.SNAPSHOT] = (False, f"Unexpected reply: {type(exc).__name__}", crowdsec.failed(old))
 
 
 async def _sample_stats(graph: Graph, docker: dict | None, key: str, now: float) -> tuple[bool, str | None, dict | None]:
@@ -331,6 +380,7 @@ async def poll_opnsense(conn, cfg: Config, row, net: Net, now: float) -> None:
                         results[name] = (False, opnsense.error_text(exc, key, secret), None)
                 except (KeyError, TypeError, ValueError, AttributeError) as exc:
                     results[name] = (False, f"Unexpected reply: {type(exc).__name__}", None)
+            await read_crowdsec(conn, cfg, row, net, now, results, snaps)
         finally:
             await rest.aclose()
     except RemoteError as exc:

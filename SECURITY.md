@@ -366,6 +366,33 @@ The token is stored on the hub and in its backups, and a hub that is compromised
 up to date with the hub's (they are the same image), keep the network to the two containers, and remove the reader when you
 no longer use the page.
 
+## CrowdSec bans
+
+An OPNsense system can have the hub read CrowdSec's Local API on the firewall (Edit, "Read CrowdSec bans"), so a ban on an address
+that must never be banned shows up as a finding. What the hub asks and why is in [docs/DESIGN.md](docs/DESIGN.md), "CrowdSec bans on
+an OPNsense firewall".
+
+- **A bouncer key, which only reads.** The credential is a CrowdSec bouncer key (`cscli bouncers add daemonsight-hub`). CrowdSec's
+  docs say a bouncer's key "can only read decisions"; machine credentials can also create and delete them, so DaemonSight never takes
+  those. The key reaches only `GET /v1/decisions`.
+- **GET, filtered, nothing else.** The client has one method, which sends GET of `/v1/decisions` with an address, a network or
+  `origins=crowdsec`, always with a `limit`. A read with no such filter would return all of CrowdSec's decisions, community blocklist
+  included, so it is refused before it is sent, as is `/v1/decisions/stream` (the bouncer sync call) and every other parameter. Tests check
+  this against a fake Local API that answers an unfiltered read with the whole list.
+- **Plain http on the LAN.** CrowdSec's Local API listens on plain http unless you set up TLS, and the bouncer config shows
+  `api_url: http://<firewall address>:<port>/`. The hub follows that: the key travels in clear on the LAN between the hub and the
+  firewall, so anyone who can read that traffic can read decisions with it (and nothing else). Keep the hub and the firewall on a
+  network you trust. To use TLS, enable it in CrowdSec's Local API config and change the address in the form to `https://`: the
+  certificate is then checked against the usual authorities. A self-signed Local API certificate cannot be pinned yet.
+- **Where the key is kept.** `<data>/remotes/<id>.crowdsec-key`, mode 0600 in a 0700 folder, written atomically. Never in the
+  database, `config.toml`, a page, a log line or an event, and never shown back (a badge says a key is saved). Tests check each.
+  Backups include the file and a restore puts it back, so the archive is as private as the key. Unticking the option or removing the
+  system deletes it. If the hub is compromised the key leaks: delete the bouncer on the firewall (`cscli bouncers delete daemonsight-hub`).
+- **Untrusted replies.** Whatever the Local API sends is cut to named fields and lengths, checked against the address that was asked
+  about, capped in size and count, and shown escaped. A value that is not an address or a network is never put into a command.
+- **Your never-ban list** holds addresses and networks you choose, validated and limited to 50. The hub asks CrowdSec about each, so
+  the list is sent to CrowdSec on the firewall only.
+
 ## The hub
 
 One install, the hub, shows every host. Collectors push to it over HTTPS,

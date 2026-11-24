@@ -28,7 +28,8 @@ SECTIONS: dict[str, dict[str, list[tuple[str, str]]]] = {
     },
     "opnsense": {
         "overview": [("findings", "Findings"), ("glance", "At a glance"), ("events", "Recent changes")],
-        "firewall": [("rules", "Pass rules"), ("forwards", "Port forwards"), ("caddy", "Caddy sites")],
+        "firewall": [("rules", "Pass rules"), ("forwards", "Port forwards"), ("caddy", "Caddy sites"),
+                    ("crowdsec", "CrowdSec")],
         "vpn": [("wireguard", "WireGuard"), ("tailscale", "Tailscale")],
         "network": [("gateways", "Gateways"), ("interfaces", "Interfaces and their roles"), ("services", "Services")],
         "report": [("steps", "Steps"), ("decide", "Decide"), ("all", "All findings"), ("accepted", "Accepted")],

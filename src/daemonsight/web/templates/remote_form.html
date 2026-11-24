@@ -1,7 +1,11 @@
 {% extends "base.html" %}
+{% from "_macros.html" import src with context %}
 {% block title %}{{ 'Edit ' ~ existing.id if existing else 'Add a system' }} · DaemonSight{% endblock %}
 {% block content %}
 {% set kind = existing.kind if existing else f.kind %}
+{% set never_help = {"title": "Addresses that must never be banned",
+  "read": "Add the services you depend on, for example the address range of an AI provider or of a backup target. DaemonSight ships no vendor ranges. A ban on any of these opens a High finding with the command that ends it. Use a single address (192.0.2.7) or a network (198.51.100.0/24), 50 at most. A public network wider than /16 (IPv6: /48) is refused, because asking what lies inside it could return much of CrowdSec's community blocklist.",
+  "entries": []} %}
 <div class="mb-4">
   <div class="page-pretitle">Systems the hub reads over their API</div>
   <h1 class="page-title">{% if existing %}Edit {{ existing.id }}{% else %}Add a system{% endif %}</h1>
@@ -88,6 +92,33 @@
         <div class="form-hint mb-2"><a href="https://github.com/bradbrownjr/daemonsight/blob/main/docs/INSTALL.md#add-the-docker-reader-to-an-unraid-server" target="_blank" rel="noopener noreferrer">How to set up the reader</a></div>
         <button type="submit" class="btn btn-sm" name="action" value="test-reader" formaction="{{ '/remotes/' ~ existing.id ~ '/edit' if existing else '/remotes/new' }}#docker-reader">Test reader</button>
         {% if reader_result and reader_result.ok %}<div class="alert alert-success mt-3 mb-0" role="status" id="reader-result">Connected to the reader. Docker {{ reader_result.docker or '?' }}, API {{ reader_result.api or '?' }}.</div>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+    {% if kind == 'opnsense' %}
+    <div class="mb-3" id="crowdsec-option">
+      <label class="form-check"><input class="form-check-input" type="checkbox" id="crowdsec-on" name="crowdsec_on" value="1"{% if f.crowdsec_on %} checked{% endif %}><span class="form-check-label">Read CrowdSec bans</span></label>
+      <div class="form-hint">Shows when CrowdSec on the firewall bans the firewall's own address, a host the hub knows, or an address you list below.</div>
+      <div class="ds-subpanel mt-2" id="crowdsec" data-ds-when="crowdsec-on=on">
+        <div class="mb-3">
+          <label class="form-label" for="crowdsec_url">CrowdSec address</label>
+          <input type="text" class="form-control" id="crowdsec_url" name="crowdsec_url" value="{{ f.crowdsec_url }}" maxlength="300" placeholder="http://192.168.1.1:8180" inputmode="url" spellcheck="false">
+          <div class="form-hint">The api_url in the bouncer's config on the firewall. It is plain http on your LAN unless you turned on TLS for CrowdSec's Local API.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="crowdsec_key">Bouncer key</label>
+          <input type="password" class="form-control" id="crowdsec_key" name="crowdsec_key" autocomplete="new-password" maxlength="200" spellcheck="false">
+          <div class="form-hint">{% if f.crowdsec_key_saved %}<span class="badge bg-green-lt">A key is saved</span> Leave empty to keep it.{% else %}On the firewall run <code>cscli bouncers add daemonsight-hub</code>. It prints the key once.{% endif %} This bouncer can only read decisions.{% if f.pending_crowdsec %}<br>Held in memory for ten minutes, so Save needs no retyping.{% endif %}</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="crowdsec_never">Addresses that must never be banned {{ src("src-never", never_help) }}</label>
+          <textarea class="form-control font-monospace" id="crowdsec_never" name="crowdsec_never" rows="3" maxlength="4000" spellcheck="false" placeholder="192.0.2.7&#10;198.51.100.0/24">{{ f.crowdsec_never }}</textarea>
+          <div class="form-hint">One address or network per line, 50 at most. A ban on any of them is a finding.</div>
+        </div>
+        <input type="hidden" name="pending_crowdsec" value="{{ f.pending_crowdsec }}">
+        <div class="form-hint mb-2"><a href="https://github.com/bradbrownjr/daemonsight/blob/main/docs/INSTALL.md#read-crowdsec-bans-from-an-opnsense-firewall" target="_blank" rel="noopener noreferrer">How to set up the bouncer key</a></div>
+        <button type="submit" class="btn btn-sm" name="action" value="test-crowdsec" formaction="{{ '/remotes/' ~ existing.id ~ '/edit' if existing else '/remotes/new' }}#crowdsec">Test CrowdSec</button>
+        {% if crowdsec_result and crowdsec_result.ok %}<div class="alert alert-success mt-3 mb-0" role="status" id="crowdsec-result">Connected to CrowdSec's Local API. The key is accepted and can read decisions.</div>{% endif %}
       </div>
     </div>
     {% endif %}

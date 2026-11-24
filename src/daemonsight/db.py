@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from .findings import fingerprint
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Events that belong to no host (a setting changed on the hub) use this as their
 # host. No host id can be empty (hub.HOST_RE), so a row never shows up under a host.
@@ -159,7 +159,9 @@ CREATE TABLE IF NOT EXISTS remotes (
     last_ok    REAL,                             -- last attempt that worked
     last_error TEXT,
     fails      INTEGER NOT NULL DEFAULT 0,       -- polls in a row that failed
-    reader_url TEXT                              -- an Unraid server's Docker reader (its token is a file); NULL: none
+    reader_url TEXT,                             -- an Unraid server's Docker reader (its token is a file); NULL: none
+    crowdsec_url   TEXT,                         -- an OPNsense firewall's CrowdSec Local API (its bouncer key is a file); NULL: none
+    crowdsec_never TEXT                          -- JSON list of addresses and networks that must never be banned
 );
 """
 
@@ -231,6 +233,10 @@ def migrate(conn: sqlite3.Connection) -> None:
         # Version 8 remotes have no reader_url (the Docker reader, schema 9).
         if "reader_url" not in {r[1] for r in conn.execute("PRAGMA table_info(remotes)")}:
             conn.execute("ALTER TABLE remotes ADD COLUMN reader_url TEXT")
+        # Version 9 remotes have no crowdsec_url or crowdsec_never (CrowdSec bans, schema 10).
+        for col in ("crowdsec_url", "crowdsec_never"):
+            if col not in {r[1] for r in conn.execute("PRAGMA table_info(remotes)")}:
+                conn.execute(f"ALTER TABLE remotes ADD COLUMN {col} TEXT")
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 

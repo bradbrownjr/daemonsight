@@ -216,6 +216,13 @@ class Net:
             return httpx.AsyncClient(transport=self.transport, timeout=READER_TIMEOUT, follow_redirects=False)
         return httpx.AsyncClient(timeout=READER_TIMEOUT, follow_redirects=False, trust_env=False)
 
+    def lapi(self) -> httpx.AsyncClient:
+        """A client for CrowdSec's Local API (remote/crowdsec.py): plain http on the LAN or https with the usual CA
+        check, no redirects (the bouncer key would go to the new address) and no proxy from the environment."""
+        if self.transport is not None:
+            return httpx.AsyncClient(transport=self.transport, timeout=TIMEOUT, follow_redirects=False)
+        return httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False, trust_env=False)
+
     def public(self) -> httpx.AsyncClient:
         """A client for a public page (no key, normal CA check, no redirects)."""
         if self.transport is not None:

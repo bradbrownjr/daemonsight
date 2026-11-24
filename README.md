@@ -66,6 +66,11 @@ the row they are about, and a port's panel shows the process behind it.
   also shows on that host's Exposure page. OPNsense has no read-only
   privilege, so the hub's client sends GET only and the key's user should hold
   only the listed privileges. See [SECURITY.md](SECURITY.md).
+- **CrowdSec bans on the firewall.** An optional read of CrowdSec's Local API on an OPNsense firewall, with a
+  bouncer key that can only read. DaemonSight asks about the firewall's own addresses and networks, every host the
+  hub knows and a never-ban list you keep, and opens a High finding, with the command that ends it, when CrowdSec bans
+  one of them (a ban on the firewall's own address once cut every connection on a LAN). The Firewall page has a
+  CrowdSec card with each address checked and the local bans by scenario. See [SECURITY.md](SECURITY.md).
 - **Automatic updates.** The Packages page shows whether unattended-upgrades
   (apt) or dnf5-automatic (Fedora) will install security updates, and a
   low finding says how to turn it on.

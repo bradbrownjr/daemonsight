@@ -640,6 +640,38 @@ def opnsense_section(source: str, url: str | None = None, interval: int = 60) ->
     return {"title": src.title, "read": "OPNsense REST API, GET only: " + ", ".join(paths), "entries": entries}
 
 
+CROWDSEC_DOCS = "https://docs.crowdsec.net/docs/next/local_api/authentication"
+
+
+def crowdsec_section(url: str | None, interval: int = 60, sample: str = "192.0.2.10") -> dict:
+    """The panel of the CrowdSec card: the Local API request behind it and the matching cscli command. The bouncer key
+    is never shown; a command that needs it names it as $KEY."""
+    from ..remote import crowdsec
+    base = url or "http://FIREWALL:8180"
+    every = max(crowdsec.READ_EVERY, interval)
+    entries = [plain("Local API endpoint", f"GET {base}{crowdsec.PATH}?ip=<address>, with the bouncer's key in the X-Api-Key header"),
+               plain("What is asked", "One filtered read per protected address (ip=), two per network (range= with contains true and "
+                                      "false), and one for the local decisions (origins=crowdsec). Never /v1/decisions/stream, never an unfiltered read"),
+               plain("How often", f"The hub reads it every {every // 60} min" if every % 60 == 0 else f"The hub reads it every {every} s"),
+               cmd("On the firewall", f"cscli decisions list -i {sample}"),
+               cmd("Local bans", "cscli decisions list --origin crowdsec"),
+               text("The same read, with the key in $KEY", f"curl -s -H \"X-Api-Key: $KEY\" {q(f'{base}{crowdsec.PATH}?ip={sample}&limit=50')}"),
+               plain("The key", "A bouncer key: it can only read decisions. cscli bouncers list shows it on the firewall"),
+               {"kind": "url", "label": "CrowdSec docs", "text": "Authentication: bouncer keys", "href": CROWDSEC_DOCS}]
+    return {"title": "CrowdSec", "read": "CrowdSec's Local API on the firewall, GET only", "entries": entries}
+
+
+def crowdsec_row(value: str, whys: list[str], url: str | None) -> dict:
+    from ..remote import crowdsec
+    base = url or "http://FIREWALL:8180"
+    flag, param = ("-r", "range") if "/" in value else ("-i", "ip")
+    entries = [plain("Checked because", "; ".join(whys)),
+               cmd("On the firewall", f"cscli decisions list {flag} {q(value)}"),
+               text("The same read, with the key in $KEY",
+                    f"curl -s -H \"X-Api-Key: $KEY\" {q(f'{base}{crowdsec.PATH}?{param}={value}&limit=50' + ('&contains=true' if param == 'range' else ''))}")]
+    return {"title": f"CrowdSec and {value}", "read": "The Local API's decisions that contain or overlap this address", "entries": entries}
+
+
 def opnsense_row(title: str, source: str, url: str | None, extra: list[dict] | None = None) -> dict:
     """The panel for one table row: which source it came from, and the page in OPNsense where it can be changed."""
     from ..remote import opnsense

@@ -67,7 +67,7 @@
   <div class="card-body text-secondary ds-nomatch">No port forwards match the filter.</div>
 </section>
 
-<section class="card" id="caddy" aria-labelledby="caddy-title" data-section{% if not v.site_rows %} data-empty{% endif %}>
+<section class="card mb-4" id="caddy" aria-labelledby="caddy-title" data-section{% if not v.site_rows %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="caddy-title">Caddy sites</h2>{{ src("src-caddy", v.src.caddy) }}
     <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.site_rows|length }} total{% if v.caddy_service %} · service {{ v.caddy_service }}{% endif %}</div>
@@ -95,6 +95,53 @@
   </div>
   {% endif %}
   <div class="card-body text-secondary ds-nomatch">No sites match the filter.</div>
+</section>
+
+{% set c = v.crowdsec %}
+<section class="card" id="crowdsec" aria-labelledby="cs-title" data-section{% if not c.rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="cs-title">CrowdSec</h2>{{ src("src-crowdsec", c.src) }}
+    {% if c.rows %}<div class="card-actions text-secondary"><span class="ds-shown"></span>{{ c.banned }} banned of {{ c.total }}</div>{% endif %}
+  </div>
+  {% if not c.configured %}
+  <div class="card-body text-secondary">CrowdSec bans are not read for this system. <a href="{{ c.edit }}">Edit it</a> and tick "Read CrowdSec bans".</div>
+  {% elif not c.rows %}
+  <div class="card-body text-secondary">{% if c.state.state == 'error' %}<span class="text-red">CrowdSec could not be read: {{ c.state.reason }}</span>{% else %}No data yet. The first read happens within a few minutes of saving.{% endif %}</div>
+  {% else %}
+  <div class="card-body">{% if c.banned %}CrowdSec bans {{ c.banned }} of the {{ c.total }} addresses and networks DaemonSight protects.{% else %}CrowdSec bans none of the {{ c.total }} addresses and networks DaemonSight protects.{% endif %}
+    {% if c.state.state == 'error' %}<div class="text-red small mt-1">The last read failed: {{ c.state.reason }} This is the last good read{% if c.ago %}, {{ c.ago }}{% endif %}.</div>{% elif c.ago %}<div class="text-secondary small mt-1">Read {{ c.ago }}.</div>{% endif %}</div>
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-crowdsec">
+      <thead><tr><th data-sort="text">Address</th><th data-sort="text">Why it is checked</th><th data-sort="text">CrowdSec says</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for r in c.rows %}
+        <tr id="{{ r.anchor }}" data-row>
+          <td class="font-monospace" data-label="Address">{{ r.value }}{{ src("src-cs-" ~ loop.index, r.src) }}</td>
+          <td data-label="Why it is checked"><strong>{{ r.group }}</strong>{% if r.detail %}<div class="text-secondary small">{{ r.detail }}</div>{% endif %}</td>
+          <td data-label="CrowdSec says">{% if r.bans %}{% for b in r.bans %}<div>{% if b.type == 'ban' %}<span class="text-red">Banned</span>{% else %}{{ b.type|capitalize }}{% endif %} <span class="font-monospace">{{ b.value }}</span><div class="text-secondary small">{{ b.scenario }} · {{ b.origin }}{% if b.left %} · {{ b.left }} left{% endif %}</div></div>{% endfor %}{% else %}Not banned{% endif %}</td>
+          <td data-label="Status" data-v="{{ r.status.label }}">{{ status_cell(r.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body text-secondary small">{% if c.unresolved %}Not checked, because the hub knows them by name and not by address: {{ c.unresolved|join(', ') }}. Add their addresses to the never-ban list to check them. {% endif %}{% if c.skipped %}{{ c.skipped }} more were left out to keep the reads few. {% endif %}{% if c.errors %}CrowdSec refused {{ c.errors }} of the reads. {% endif %}DaemonSight only reads; end a ban with the command in its finding.</div>
+  <div class="card-body border-top">
+    <div class="subheader mb-1">Local bans by scenario</div>
+    {% if c.local_error %}<div class="text-red small">Could not read them: {{ c.local_error }}</div>
+    {% elif not c.local or not c.local.count %}<div class="text-secondary">None. CrowdSec's own scenarios have no active ban on this firewall.</div>
+    {% else %}<div class="text-secondary small">{{ 'At least ' if c.local.capped }}{{ c.local.count }} active ban{{ 's' if c.local.count != 1 }} made by this firewall's own scenarios; the community blocklist is not read.</div>{% endif %}
+  </div>
+  {% if c.local and c.local.count %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="opn-crowdsec-local">
+      <thead><tr><th data-sort="text">Scenario</th><th data-sort="num">Bans</th></tr></thead>
+      <tbody>{% for x in c.local.scenarios %}<tr data-row><td class="font-monospace" data-label="Scenario">{{ x.scenario }}</td><td data-label="Bans" data-v="{{ x.count }}">{{ x.count }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No addresses match the filter.</div>
 </section>
 {% endif %}
 </div>

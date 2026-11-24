@@ -828,6 +828,38 @@ The poller runs with the hub. To stop all remote reading, turn off "Read remote
 systems" on the Settings page, or set `[remote] enabled = false` in
 `config.toml` and restart.
 
+### Read CrowdSec bans from an OPNsense firewall
+
+If the firewall runs CrowdSec, the hub can show when CrowdSec bans an address that must never be banned: the firewall's own
+addresses, a host the hub knows, or an address you list. It is optional and needs the firewall added first (above). Read
+"CrowdSec bans" in [SECURITY.md](../SECURITY.md) before you start; the Local API is plain http on your LAN by default.
+
+1. Find the Local API's address. The bouncer's config on the firewall has it as `api_url`, for example
+   `http://192.168.1.1:8180/`. The hub has to be able to reach that port: check the firewall's rules for the LAN
+   interface.
+2. On the firewall, in a shell, make a key for the hub:
+
+   ```
+   cscli bouncers add daemonsight-hub
+   ```
+
+   It prints the key once; copy it. A bouncer can only read decisions. Give the hub its own key: CrowdSec ties a key to the
+   first address that uses it.
+3. On the hub, open Hosts, Edit the firewall, tick "Read CrowdSec bans" and enter the address and the key.
+4. Under "Addresses that must never be banned", list the addresses you depend on, one address or network per line (50 at
+   most): the services whose loss would hurt, such as the range of an AI provider or a backup target. DaemonSight lists none
+   of its own. A public network wider than /16 (IPv6: /48) is refused.
+5. Press Test CrowdSec: it asks for one local decision, which proves the address and the key. Then Save.
+6. Within a few minutes the Firewall page has a CrowdSec card: every address and network checked, with a status label, and the
+   count of local bans by scenario.
+
+To stop, untick the option and save: the key file, the list and the readings are deleted. Remove the bouncer on the firewall as
+well (`cscli bouncers delete daemonsight-hub`). If you turn on TLS for CrowdSec's Local API, change the address to `https://`;
+the certificate is checked against the usual authorities, and pinning a self-signed one is not available yet.
+
+When a finding opens, its "What to do" steps give the command that ends the ban (`cscli decisions delete -i <address>`), how to
+see why it happened, and how to add the address to a CrowdSec allowlist so it does not return.
+
 ### Remove a host
 
 ```bash

@@ -13,7 +13,7 @@ import time
 
 from .. import db, findings as rules
 from ..config import Config
-from ..remote import opnsense, opnsense_rules, roles as roles_mod, store
+from ..remote import crowdsec, opnsense, opnsense_rules, roles as roles_mod, store
 from . import provenance as prov
 from . import views
 from .views import fmt_ago, fmt_bytes, fmt_duration, level_class, pct_class, status_of
@@ -202,6 +202,56 @@ def _site_row(s: dict, bare: set[str], exposed: set[int] | None, findings: dict,
             "src": _src(prov.opnsense_row(f"Caddy site {s['domain']}", "opnsense_caddy", url), f, anchor)}
 
 
+GROUP_LABEL = {"self": "This firewall", "host": "A host the hub knows", "never": "Your never-ban list"}
+
+
+def _why_detail(e: dict) -> str:
+    """The second line under "This firewall", "A host the hub knows" or "Your never-ban list": what is left to say."""
+    parts = [w.removeprefix("this firewall's ").removeprefix("host ") for w in e["whys"] if w != "your never-ban list"]
+    return "; ".join(parts)
+
+
+def crowdsec_card(conn, cfg: Config, snaps: dict, url: str | None, interval: int) -> dict:
+    """The CrowdSec card on the Firewall page: what was checked, what CrowdSec bans, and the local ban count. The
+    card is always on the page (a card that is switched off says how to switch it on), so its anchor is in the
+    section registry."""
+    host = cfg.host_id
+    remote = _remote(conn, host)
+    cs_url = remote["crowdsec_url"] if remote and "crowdsec_url" in remote.keys() else None
+    snap = snaps.get(crowdsec.SNAPSHOT)
+    data = snap.data if snap and snap.data and snap.data.get("entries") is not None else None
+    state = views._source_state(snaps, crowdsec.SNAPSHOT)
+    found = _by_key(conn, host, "crowdsec.")
+    now = time.time()
+    rank = {"unexpected": 0, "changed": 1, "accepted": 2, "expected": 3}
+    rows = []
+    for e in (data or {}).get("entries", []):
+        bans, statuses, first = [], [], None
+        for b in e["bans"]:
+            f = found.get(("crowdsec.self_banned", b["value"])) or found.get(("crowdsec.host_banned", b["value"]))
+            if f is not None and b["type"] == "ban":
+                statuses.append(_status(f))
+                first = first or f
+            left = None if b.get("left") is None else max(0, b["left"] - (now - data["at"]))
+            bans.append({"value": b["value"], "type": b["type"] or "?", "scenario": b["scenario"] or "no scenario",
+                         "origin": b["origin"] or "?", "left": fmt_duration(left) if left is not None else None})
+        status = min(statuses, key=lambda x: rank[x["key"]]) if statuses else views.status_info("expected")
+        anchor = rules.anchor("cs", e["value"])
+        rows.append({"anchor": anchor, "value": e["value"], "net": e["net"], "group": GROUP_LABEL[e["group"]],
+                     "whys": e["whys"], "detail": _why_detail(e), "bans": bans, "banned": any(b["type"] == "ban" for b in e["bans"]), "status": status,
+                     "src": _src(prov.crowdsec_row(e["value"], e["whys"], cs_url or None), first, anchor)})
+    banned = sum(1 for r in rows if r["banned"])
+    local = (data or {}).get("local")
+    return {
+        "configured": bool(cs_url), "state": state, "edit": f"/remotes/{host}/edit#crowdsec", "rows": rows, "banned": banned,
+        "total": len(rows), "ago": fmt_ago(snap.taken_at, now) if data and snap else None,
+        "unresolved": (data or {}).get("unresolved", []), "skipped": (data or {}).get("skipped", 0),
+        "errors": (data or {}).get("errors", 0), "local": local, "local_error": (data or {}).get("local_error"),
+        "never_count": sum(1 for r in rows if r["group"] == GROUP_LABEL["never"]),
+        "src": prov.crowdsec_section(cs_url or None, interval, next((r["value"] for r in rows if not r["net"]), "192.0.2.10")),
+    }
+
+
 def firewall(conn, cfg: Config) -> dict:
     host = cfg.host_id
     snaps = db.get_snapshots(conn, host)
@@ -244,6 +294,7 @@ def firewall(conn, cfg: Config) -> dict:
         "caddy_state": views._source_state(snaps, "opnsense_caddy"), "no_roles": not roles,
         "unlisted": unlisted, "automatic": (rl or {}).get("automatic", 0), "legacy": (rl or {}).get("legacy", 0),
         "caddy_service": (cd or {}).get("service"), "bare": len(bare),
+        "crowdsec": crowdsec_card(conn, cfg, snaps, url, interval),
         "src": {"rules": prov.opnsense_section("opnsense_rules", url, interval), "nat": prov.opnsense_section("opnsense_nat", url, interval),
                 "caddy": prov.opnsense_section("opnsense_caddy", url, interval)},
     }

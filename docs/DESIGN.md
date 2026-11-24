@@ -1447,6 +1447,97 @@ core source https://github.com/opnsense/core (ACL.xml, `Menu.xml`, the API
 controllers named above); plugin source https://github.com/opnsense/plugins
 (`www/caddy`, `security/tailscale`).
 
+### CrowdSec bans on an OPNsense firewall
+
+Optional, per firewall. On 2026-11-19 the firewall's CrowdSec banned the firewall's own WAN address twice (scenario
+`firewallservices/pf-scan-multi_ports`); its pf bouncer then dropped the states of every NAT'd connection, and the cascade got an AI
+provider's API address banned for four hours. DaemonSight now reads CrowdSec's Local API (LAPI) and opens a finding when a ban
+covers an address it should never see banned, instead of the owner finding out through an outage. (The pf bouncer kills the states of
+every banned address that has any: `pfctl -k <ip>` and `pfctl -k 0.0.0.0/0 -k <ip>` in `add()`, cs-firewall-bouncer
+`pkg/pf/pf_context.go`, read 2026-11-19. A ban on the firewall's WAN address therefore drops every NAT'd connection.)
+
+**What is read.** One endpoint, `GET /v1/decisions`, on the LAPI, with a bouncer's API key in the `X-Api-Key` header. Nothing else is
+called. Read from the CrowdSec source (github.com/crowdsecurity/crowdsec, `master`, read 2026-11-24) and docs; no request was sent to a
+real LAPI (see "Unverified"):
+
+| Fact | Source |
+|------|--------|
+| `GET /v1/decisions` ("Returns information about existing decisions") takes `scope`, `value`, `type`, `ip` ("shorthand for scope=ip&value="), `range`, `contains` (boolean: "a decision that contains the value, or that is contained within the value"), `origins`, `scenarios_containing`, `scenarios_not_containing`; its security is `APIKeyAuthorizer`, the header `X-Api-Key` | `pkg/models/localapi_swagger.yaml` |
+| The route is in the API-key group; `/alerts`, `DELETE /decisions`, `/allowlists` and the rest are in the machine (JWT) group | `pkg/apiserver/controllers/controller.go` (`apiKeyAuth` and `jwtAuth`) |
+| A bouncer key "can only read decisions"; a machine (login and password) "can read, create and delete decisions" | docs, Local API, Authentication (https://docs.crowdsec.net/docs/next/local_api/authentication) |
+| A wrong or missing key is HTTP 403, `{"message": "access forbidden"}` (not 401) | `pkg/apiserver/middlewares/v1/api_key.go` |
+| Decision fields: `id`, `origin`, `type`, `scope`, `value`, `duration`, `until`, `scenario`, `simulated`, `uuid`. A GET answers `id`, `duration`, `scenario`, `scope`, `value`, `type`, `origin` and `uuid`; it sets neither `until` nor `simulated`. `duration` is the time left (until minus now), a Go duration such as `3h59m12.5s` | swagger `Decision`; `FormatDecisions` in `pkg/apiserver/controllers/v1/decisions.go` |
+| No decisions is JSON `null`, not `[]`: `FormatDecisions` returns a nil slice. The hub reads both as none | `FormatDecisions` |
+| Only active decisions (`until` in the future) and, by default, no simulated ones | `QueryDecisionWithFilter` in `pkg/database/decisions.go`; `applyDecisionFilter` in `pkg/database/decisionfilter.go` |
+| `ip` and `range` both take an address or a CIDR (`Addr2Ints` handles a value with a slash). `contains` defaults to true: decisions that contain the query. `contains=false`: decisions inside it. Address families never match each other (the size is part of the filter). An invalid value is a 400 | `applyDecisionFilter`, `decisionIPFilter`; `pkg/types/ip.go`, `pkg/csnet/ip.go` |
+| `origins` is a comma list, matched exactly. Origins in the source: `cscli`, `crowdsec`, `console`, `cscli-import`, `lists`, `CAPI`, `remediation_sync`. `crowdsec` is a decision a local scenario made | `pkg/types/constants.go` |
+| `limit` and `offset` are read by `applyDecisionFilter` but are not in the swagger file | `decisionfilter.go` |
+| With none of `ip`, `range`, `origins` and the like, **no address filter is applied: the answer is every active decision**, the community blocklist (tens of thousands) included | `decisionIPFilter` (`case 0` returns the query unchanged) |
+| `/v1/decisions/stream` is a bouncer's sync call: "Returns a list of new/expired decisions. Intended for remediation component that need to "stream" decisions". With `startup=true` it sends the full list. Not used. (Its handler was not read; that it moves the bouncer's pull state is from the project brief. `GET /v1/decisions` also stamps the bouncer's last-pull time, at most once a minute: harmless, read in `GetDecision`) | swagger `getDecisionsStream`; `controller.go` (`LimitStreamConcurrency`, `StreamDecision`) |
+
+**What is never done, and how that is enforced.** `crowdsec.Lapi.check_params` runs before any request and refuses what is not one of
+these three reads, each with a `limit`: `ip=<one address>`; `range=<cidr>` with `contains=true` or `false`; `origins=crowdsec`. So there
+is no call to `/v1/decisions/stream`, no read without an address or origin filter (the fake LAPI in the tests answers the whole
+community list to one, and a test asserts the hub never sends it), and no `scope`, `value`, `type`, `startup` or other parameter. A
+`contains=false` read of a public range wider than /16 (IPv6: /48) is refused, since what lies inside it could be most of the
+community blocklist. The client sends GET only, follows no redirects (the key would go to the new address), caps a reply at 8 MiB,
+and scrubs the key from every message.
+
+**Why a bouncer key.** A bouncer can only read decisions; a machine's credentials can also push alerts and delete decisions. The key
+file is `<data>/remotes/<id>.crowdsec-key`: 0600 in the 0700 folder, written atomically, never shown back, deleted when the option is
+turned off or the system removed, and included in backups. On the firewall: `cscli bouncers add daemonsight-hub`
+(https://docs.crowdsec.net/docs/next/cscli/cscli_bouncers_add). CrowdSec stores the key hashed (`HashSHA512` in
+`CreateBouncer`), so it cannot show it again; the docs page does not say "printed once", the hash does. A key is bound to the first
+address that uses it: a second client with the same key makes a second bouncer row (`api_key.go`), so give the hub its own key.
+The hub's requests name themselves `DaemonSight/<version>`, which `cscli bouncers list` shows as the bouncer's type and version.
+
+**What is asked about** (`crowdsec.protected`), merged by value, at most 160 reads per pass:
+
+1. The firewall's own addresses: each address on an internet-facing interface (role `wan`, from `remote/roles.py`) with `ip=`; the
+   network of each LAN and VPN interface with `range=` twice (a ban that covers it: `contains=true`; a ban of anything inside:
+   `contains=false`). Link-local and loopback addresses are left out.
+2. Every host the hub knows: a collector's address (what the hub saw it upload from), a remote system's address when its URL has an IP. A host the hub knows only by name is
+   listed on the card as not checked.
+3. The owner's never-ban list (the system form), at most 50 addresses or networks, each a single IP or a CIDR, normalised. DaemonSight
+   ships no vendor ranges; the field's (i) help suggests adding the services the owner depends on, such as an AI provider's range.
+4. `origins=crowdsec&limit=500` for the local decisions: counted by scenario (top 20 kept), shown on the card. Capped, and marked
+   "at least" when the cap is reached.
+
+Every decision that comes back is checked again against the address it was asked about (`crowdsec.covers`, address ranges that
+overlap), cut to named fields and lengths, and capped at 10 per address. A value that is not an address or a network never reaches a
+command.
+
+**Findings.** Prefix `crowdsec.` in `HUB_RULES` and `poll.RULE_PREFIX`. `basis` is the scenario and origin, with no times, so Accept
+survives a re-ban. Only a decision of type `ban` is a finding; any other type is listed on the card.
+
+| Rule | Severity | When | Fix |
+|------|----------|------|-----|
+| `crowdsec.self_banned` | High | A ban covers an address of this firewall, or is inside or covers one of its LAN or VPN networks. The key is the decision's value | `cscli decisions delete -i <address>` (or `-r <range>`) |
+| `crowdsec.host_banned` | High | A ban covers a host the hub knows, or an address on the never-ban list | the same |
+| `crowdsec.unreachable` | Low | The last two reads in a row failed (the key is never in the text). The last good bans stay as findings | none |
+
+The "What to do" steps give the fix, how to find out why (`cscli alerts list -i <address>`, `cscli alerts inspect <id> -d`) and how to
+stop it coming back with an allowlist (`cscli allowlists create <name> -d "..."`, then `cscli allowlists add <name> <address> -d "..."`).
+Per CrowdSec's allowlist page, an allowlist drops matching local alerts, removes matching addresses from blocklist pulls before they are
+stored, and makes `cscli decisions add` refuse the value; the page does not say that adding an entry removes a decision that already
+exists, so the steps say to run the fix as well (https://docs.crowdsec.net/docs/next/local_api/centralized_allowlists;
+cscli flags: https://docs.crowdsec.net/docs/next/cscli/cscli_allowlists_add, `_create`, `cscli_decisions_delete`, `cscli_decisions_list`,
+`cscli_alerts_list`, `cscli_alerts_inspect`).
+
+**Hub side.** Schema 10 adds `remotes.crowdsec_url` and `remotes.crowdsec_never` (a JSON list). The poll (`remote/poll.py`,
+`read_crowdsec`) reads at most every two minutes (or the system's interval if longer) and stores the snapshot `opnsense_crowdsec`.
+A failed read keeps the last data, counts the failure and never fails the poll. Turning the option off deletes the key file, the
+columns and the snapshot, and the findings resolve at the next poll. The Add and Edit form for an OPNsense system has "Read CrowdSec
+bans" as a dependent option (address, key, never-ban list, Test CrowdSec); the Firewall page has a CrowdSec card (`web/sections.py`
+anchor `crowdsec`) with what was checked, status labels and the local ban count.
+
+**Unverified.** No request was sent to a real LAPI and no bouncer was added, by rule; the table above is the source and the docs only,
+so these rest on reading code and are untested against a live firewall: the `null` for no decisions; that `limit` works (it is in the
+source, not the swagger file, and an older CrowdSec that ignores it would only return more rows, which the hub still cuts to size);
+that the read behaviour is the same in the CrowdSec version on the firewall as in `master`; the status for a wrong key (403, from
+`api_key.go`). The docs name no version in which allowlists arrived (the swagger on `master` has them). LAPI TLS: a `https://` address is
+checked against the usual authorities only; pinning a self-signed LAPI certificate is not built.
+
 ### Unraid
 
 Done. The hub reads the Unraid GraphQL API with an `x-api-key` header
@@ -2057,6 +2148,7 @@ The collector must stay light:
 - fail2ban 1.0.2 on Debian 12.
 - Fedora: `dnf needs-restarting -C -s` output (the parser takes lines naming `*.service`; not captured, since a container has no D-Bus), the JSON for "no reboot needed", the whole collector on a real Fedora 44 KDE host, and `install.sh` under SELinux enforcing. dnf5 was tested in `fedora:44` containers only.
 - CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
+- CrowdSec: no request was sent to a real Local API (no bouncer was added, by rule). `null` for no decisions, `limit`, the 403 for a wrong key, the `duration` format and the filter semantics are read from CrowdSec's source (`master`, 2026-11-24) and docs; run Test CrowdSec once against the real firewall before relying on it, and check the CrowdSec version there. That the pf bouncer drops the states of a banned address is the owner's account, not read from its source. See "CrowdSec bans on an OPNsense firewall".
 - Whether the Docker source works against Podman's Docker-compatible socket.
 - The Docker source on a real Docker host (alpha or the VPS).
 - The systemd sandboxing in `daemonsight-web.service` inside an unprivileged LXC.
@@ -2128,3 +2220,5 @@ The collector must stay light:
 56. Shodan Datapedia, the banner reference and JSON schema v29 (`product`, `version`, `transport`, `timestamp` in UTC, `vulns`, `cpe23`, and the Tag values `c2`, `compromised`, `doublepulsar`, `malware` ...): https://datapedia.shodan.io/ and https://datapedia.shodan.io/banner.schema.json
 57. Shodan's official Python client, `shodan/client.py` (`params['key'] = self.api_key`, `api_rate_limit = 1`, HTTP 401 and 403 handling, `host(ips, history, minify)` taking a comma-separated list): https://github.com/achillean/shodan-python
 58. Shodan Enterprise ("The Enterprise Data License provides rights to commercial use without attribution"): https://enterprise.shodan.io/
+59. CrowdSec Local API: `pkg/models/localapi_swagger.yaml` (`getDecisions`, `getDecisionsStream`, `Decision`, `securityDefinitions`), `pkg/apiserver/controllers/controller.go` (the `apiKeyAuth` and `jwtAuth` route groups), `controllers/v1/decisions.go` (`GetDecision`, `FormatDecisions`), `pkg/apiserver/middlewares/v1/api_key.go` (403 `access forbidden`, bouncers bound to an address), `pkg/database/decisions.go` and `decisionfilter.go` (`QueryDecisionWithFilter`, `applyDecisionFilter`), `pkg/types/ip.go`, `pkg/types/constants.go` (origins): https://github.com/crowdsecurity/crowdsec (`master`, read 2026-11-24)
+60. CrowdSec docs: Local API authentication (bouncer keys "can only read decisions"): https://docs.crowdsec.net/docs/next/local_api/authentication ; centralized allowlists: https://docs.crowdsec.net/docs/next/local_api/centralized_allowlists ; cscli: `bouncers add` (`cscli bouncers add MyBouncerName`), `decisions delete` (`-i`, `-r`), `decisions list` (`-i`, `-r`, `--origin`), `allowlists create` (`-d`), `allowlists add` (`-e`, `-d`), `alerts list` (`-i`), `alerts inspect` (`-d`): https://docs.crowdsec.net/docs/next/cscli/
