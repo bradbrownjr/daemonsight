@@ -99,6 +99,25 @@ GROUPS = {
                         "under Hosts, Add a system; each one sets its own read interval there.", "note": ""},
 }
 
+# The Settings page's tabs, in order: (id, title, the groups on it). The id is the URL, /settings/<id>.
+# "general" is first, so a bare /settings opens it. "changes" holds Recent hub changes and is shown on a hub only.
+# Every group is on exactly one tab (tests/test_settings_tabs.py).
+TABS = (
+    ("general", "General", ("retention", "backup")),
+    ("security", "Security checks", ("cve", "outside")),
+    ("systems", "Systems", ("remote",)),
+    ("notifications", "Notifications", ("notify",)),
+    ("changes", "Changes", ()),
+)
+TAB_IDS = tuple(t[0] for t in TABS)
+TAB_OF_GROUP = {g: t[0] for t in TABS for g in t[2]}
+
+
+def tab_of(group: str) -> str:
+    """The tab a settings group is on; the first tab for anything unknown."""
+    return TAB_OF_GROUP.get(group, TABS[0][0])
+
+
 # Beside a group: how to get what it needs. Steps follow Shodan's own pages (linked); check them when Shodan
 # changes its site.
 GUIDES = {

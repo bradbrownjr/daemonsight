@@ -219,7 +219,7 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   button opens the whole list of pages.
 - **Settings page and account menu.** The button at the right of the header
   opens one menu with Settings, the theme (Light, Dark or Auto), "Hide empty
-  sections" and Log out. On a hub the Settings page changes the outside view,
+  sections" and Log out. On a hub the Settings page (in tabs: General, Security checks, Systems, Notifications, Changes) changes the outside view,
   CVE checks, retention, backups and remote polling without a restart. Each
   setting shows whether it comes from the Default, the Config file or "Set
   here", and can be reset. What controls login or where the server listens stays

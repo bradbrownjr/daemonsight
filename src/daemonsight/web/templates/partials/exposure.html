@@ -127,7 +127,7 @@
     <div class="card-actions text-secondary">{{ v.outside.source_name }}{% if v.outside.state == 'ok' %} · every {{ '%g' % v.outside.refresh_hours }} h{% endif %}</div>
   </div>
   {% if v.outside.message %}
-  <div class="card-body text-secondary">{{ v.outside.message }}{% if hub and v.outside.state == 'off' and not v.outside.enabled %} <a href="/settings#outside">Open the Settings page</a>.{% endif %}</div>
+  <div class="card-body text-secondary">{{ v.outside.message }}{% if hub and v.outside.state == 'off' and not v.outside.enabled %} <a href="/settings/security#outside">Open the Settings page</a>.{% endif %}</div>
   {% endif %}
   {% for a in v.outside.addresses %}{% set oi = loop.index %}
   <div class="card-body border-top" id="{{ a.anchor }}">
@@ -136,7 +136,7 @@
       <span class="text-secondary">{% if a.state == 'waiting' %}not asked yet{% elif a.state == 'error' %}no answer yet{% else %}fetched {{ a.fetched }}{% endif %}</span>
       {% if a.stale %}<span class="badge bg-orange-lt">stale</span>{% endif %}
     </div>
-    {% if a.error %}<div class="text-orange small">Last attempt failed: {{ a.error }}{% if a.key_finding %} <a href="/settings#outside">Open the Settings page</a>.{% endif %}</div>{% endif %}
+    {% if a.error %}<div class="text-orange small">Last attempt failed: {{ a.error }}{% if a.key_finding %} <a href="/settings/security#outside">Open the Settings page</a>.{% endif %}</div>{% endif %}
     {% if a.state == 'none' %}
     <div class="text-secondary mt-2">Shodan has no record of this address (HTTP 404): it has not scanned it, or nothing answered.</div>
     {% endif %}

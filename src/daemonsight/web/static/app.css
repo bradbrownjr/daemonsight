@@ -294,6 +294,7 @@ textarea.ds-set-input { max-width: 28rem; }
 .ds-ro-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ds-ro-table td:nth-child(2) { max-width: 28rem; }
 
+
 /* Account items line up with the Theme and toggle rows. */
 .ds-acct-item { padding-left: .5rem; padding-right: .5rem; }
 
@@ -408,4 +409,18 @@ textarea.ds-set-input { max-width: 28rem; }
   .ds-dk th:nth-child(3) { width: 12%; }
   .ds-dk th:nth-child(5) { width: 14%; }
   .ds-dk td { overflow-wrap: anywhere; }
+}
+
+/* Settings tabs: real links, one row on a desktop; on a phone they wrap and each row fills the width. */
+.ds-tabs-list { display: flex; flex-wrap: wrap; gap: .5rem; list-style: none; margin: 0; padding: 0; }
+.ds-tabs-list li { flex: 0 0 auto; }
+.ds-tab { display: flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .35rem .9rem;
+  border: 1px solid var(--tblr-border-color); border-radius: var(--tblr-border-radius, 4px); color: inherit; text-decoration: none; }
+.ds-tab[aria-current="page"] { background: var(--tblr-primary-lt, rgba(32, 107, 196, .1)); border-color: var(--tblr-primary);
+  color: var(--tblr-primary); font-weight: 600; }
+.ds-tab:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; }
+@media (hover: hover) { .ds-tab:hover { background: var(--tblr-bg-surface-secondary, rgba(128, 128, 128, .12)); } }
+@media (max-width: 767.98px) {
+  .ds-tabs-list li { flex: 1 1 auto; }
+  .ds-tab { min-height: 44px; }
 }

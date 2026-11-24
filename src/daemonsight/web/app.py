@@ -226,10 +226,13 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     can_edit = cfg.hub.enabled
 
     def settings_page(request: Request, conn, status: int = 200, errors: dict | None = None,
-                      posted: dict | None = None, problems: list | None = None) -> HTMLResponse:
-        groups = settings.describe(cfg, conn, can_edit)
+                      posted: dict | None = None, problems: list | None = None,
+                      tab: str = settings.TAB_IDS[0]) -> HTMLResponse:
+        groups = [g for g in settings.describe(cfg, conn, can_edit) if settings.tab_of(g["id"]) == tab]
+        tabs = [{"id": t[0], "title": t[1], "current": t[0] == tab}
+                for t in settings.TABS if can_edit or t[0] != "changes"]
         events = views.events_list(conn, db.HUB_HOST, 20) if conn is not None and can_edit else []
-        ctx = {"groups": groups, "read_only": settings.read_only(live(conn) if conn is not None else cfg),
+        ctx = {"groups": groups, "tabs": tabs, "tab": tab, "read_only": settings.read_only(live(conn) if conn is not None else cfg),
                "shodan": {"saved": shodan.key_saved(cfg), "path": str(cfg.shodan_key_path)},
                "can_edit": can_edit, "config_path": str(file_path), "errors": errors or {},
                "posted": posted or {}, "problems": problems or [], "events": events, "no_filter": True, "host": None,
@@ -242,6 +245,15 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
         require_login(request)
         with reader() as conn:
             return settings_page(request, conn)
+
+    @app.get("/settings/{tab}", response_class=HTMLResponse)
+    async def settings_tab_get(request: Request, tab: str):
+        """One tab of the Settings page. An unknown tab is a 404, so a typo in a link shows."""
+        require_login(request)
+        if tab not in settings.TAB_IDS or (tab == "changes" and not can_edit):
+            raise HTTPException(status_code=404)
+        with reader() as conn:
+            return settings_page(request, conn, tab=tab)
 
     def _origin(key: str) -> str:
         f = settings.BY_KEY[key]
@@ -264,7 +276,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             # taken out here and written to its own file, never to the settings table.
             typed_key = next((v for k, v in items if k == "shodan_key"), "").strip()
             items = [(k, v) for k, v in items if k != "shodan_key"]
-            refused = [k for k, _ in items if k not in settings.BY_KEY and k not in ("group", "reset")]
+            tab = next((v for k, v in items if k == "tab" and v in settings.TAB_IDS), settings.TAB_IDS[0])
+            refused = [k for k, _ in items if k not in settings.BY_KEY and k not in ("group", "reset", "tab")]
             resets = [v for k, v in items if k == "reset"]
             if resets and (len(resets) > 1 or resets[0] not in settings.BY_KEY):
                 refused.append(resets[0][:60])
@@ -274,7 +287,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                             f"({file_path}) and needs a restart." if k in fixed else f"{k[:60]} is not a setting."
                             for k in refused]
                 with reader() as conn:
-                    return settings_page(request, conn, 400, problems=problems)
+                    return settings_page(request, conn, 400, problems=problems, tab=tab)
             if resets:
                 key = resets[0]
                 f = settings.BY_KEY[key]
@@ -283,7 +296,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                     flash(request, f"Reset: {f.name}. It now follows the {_origin(key)}.")
                 else:
                     flash(request, f"{f.name} was not set here; nothing to reset.", error=True)
-                return RedirectResponse(f"/settings#{f.group}", status_code=303)
+                return RedirectResponse(f"/settings/{settings.tab_of(f.group)}#{f.group}", status_code=303)
             values, errors = {}, {}
             posted = {k: v for k, v in items if k in settings.BY_KEY}
             for key, raw in posted.items():
@@ -300,7 +313,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                 errors["outside.source"] = "No Shodan API key is saved. Paste your key under Source, then save."
             if errors:
                 with reader() as conn:
-                    return settings_page(request, conn, 400, errors=errors, posted=posted)
+                    return settings_page(request, conn, 400, errors=errors, posted=posted,
+                                         tab=settings.tab_of(settings.BY_KEY[next(iter(errors))].group))
             key_saved = False
             if typed_key:
                 try:
@@ -309,20 +323,20 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                     log.error("Could not save the Shodan API key: %s", exc.strerror or type(exc).__name__)
                     flash(request, "Nothing was saved: the key file could not be written. Check the data folder's "
                                    "permissions.", error=True)
-                    return RedirectResponse("/settings#outside", status_code=303)
+                    return RedirectResponse("/settings/security#outside", status_code=303)
                 db.add_event(hub_conn, db.HUB_HOST, time.time(), "setting", "Shodan API key saved", detail=f"by {by}")
                 log.info("Shodan API key saved by %s from %s", by, client)
                 key_saved = True
             changed = settings.save(hub_conn, cfg, values, by)
             for key in changed:
                 log.info("Setting %s changed by %s from %s", key, by, client)
-            group = next((k.split(".")[0] for k in posted), "")
+            group = next((settings.BY_KEY[k].group for k in posted), "")
             if changed or key_saved:
                 names = [settings.BY_KEY[k].name for k in changed] + (["Shodan API key"] if key_saved else [])
                 flash(request, "Saved: " + "; ".join(names) + ". It applies at the next pass of the chore that uses it.")
             else:
                 flash(request, "No changes: those values are already in effect.")
-            return RedirectResponse(f"/settings#{group}" if group else "/settings", status_code=303)
+            return RedirectResponse(f"/settings/{settings.tab_of(group)}#{group}" if group else f"/settings/{tab}", status_code=303)
 
         @app.post("/settings/shodan-key")
         async def shodan_key_post(request: Request, key: str = Form(""), shodan_key: str = Form(""),
@@ -336,7 +350,7 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                 return PlainTextResponse("cross-site request refused", status_code=403)
             by = str(request.session.get("user") or "admin")
             client = request.client.host if request.client else "?"
-            back = RedirectResponse("/settings#outside", status_code=303)
+            back = RedirectResponse("/settings/security#outside", status_code=303)
             typed = (key or shodan_key).strip()   # shodan_key: the box in the Outside view form
             if action == "save":
                 try:
