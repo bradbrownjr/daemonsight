@@ -388,17 +388,20 @@ class Chore:
                     titles[name] = feeds.alpine_title(name)
                 elif name.startswith(feeds.UBUNTU_PREFIX):
                     titles[name] = feeds.ubuntu_title(name)
+            matched = {r["host"] for r in conn.execute("SELECT host FROM matched")}
         finally:
             conn.close()
         stale_f = match.stale_finding(stale, titles)
         packages: dict[str, list[Finding]] = {}
         exposures = self._host_exposures(invs, now)
         if self.dirty:
-            packages = await asyncio.to_thread(self._package_findings, invs,
+            packages = await asyncio.to_thread(self._package_findings, {h: i for h, i in invs.items() if h in matched},
                                                {h: _pending_names(self.state, h) for h in invs},
                                                {h for h in invs if _reboot_pending(self.state, h)}, dict(exposures))
         for host in invs:
-            if self.dirty:
+            # A host with no match made yet (its rows were forgotten or never made) says nothing about its CVEs: its findings stay as
+            # they are until the matching runs, which makes the findings dirty again.
+            if self.dirty and host in matched:
                 _set_cve_findings(self.state, host, now, packages.get(host, []), "cve.package")
             db.set_finding(self.state, host, now, stale_f, rule="cve.feed_stale", key="feeds")
         self.dirty = False

@@ -5,6 +5,7 @@ there); the firewall's replies are the synthetic ones in tests/fixtures/opnsense
 
 import asyncio
 import copy
+import dataclasses
 import re
 import time
 from pathlib import Path
@@ -886,3 +887,59 @@ def test_a_release_the_status_names_but_no_check_offered_is_still_unseen(tmp_pat
     got, _cves = unseen_findings(cfg, conn, fw, now)
     assert len(got) == 1 and got[0].basis == "26.7.10"
     assert both(cfg, conn, fw, now) == ["opnsense.unseen_release"]
+
+
+# --- findings stay open while the CVE data is not matched (a hub restart) --------------------------------------------------------
+
+def _prior(findings):
+    return {(f.rule, f.key): dataclasses.asdict(f) for f in findings}
+
+
+def _forget_matches(cfg, drop_changelog=False):
+    """What a restart leaves for a while: the chore's matches gone (`_forget`), and with `drop_changelog` the changelog rows too."""
+    cdb = store.connect(cfg.cve_db_path)
+    cdb.execute("DELETE FROM match")
+    cdb.execute("DELETE FROM matched")
+    if drop_changelog:
+        for t in ("opn_fix", "opn_release"):
+            cdb.execute(f"DELETE FROM {t}")
+        cdb.execute("DELETE FROM meta WHERE key LIKE 'opn_%'")
+    cdb.close()
+
+
+@pytest.mark.parametrize("drop_changelog", [False, True])
+def test_the_unseen_release_finding_stays_open_while_its_cves_are_not_matched(tmp_path, drop_changelog):
+    fw = idle("26.7.1", latest="26.7.1")
+    cfg, conn, c = unseen_world(tmp_path, fw)
+    now = LC_TS + 3 * DAY
+    got, cves = unseen_findings(cfg, conn, fw, now)
+    assert len(got) == 1
+    prior = _prior(got)
+    _forget_matches(cfg, drop_changelog)
+    cves = opnsense_cves.load(cfg, conn, "fw1", fw)
+    assert cves["unseen"] is None or cves["unseen"]["state"] == "pending"
+    held = [f for f in rules.firmware_rules(fw, now, cves, prior) if f.rule == "opnsense.unseen_release"]
+    assert held == got                                                  # the same finding, basis and all
+    # without an open finding there is nothing to keep, and a recent check still clears it
+    assert [f for f in rules.firmware_rules(fw, now, cves) if f.rule == "opnsense.unseen_release"] == []
+    assert [f for f in rules.firmware_rules(fw, LC_TS + DAY, cves, prior) if f.rule == "opnsense.unseen_release"] == []
+    # after the chore matches again the finding is computed afresh
+    asyncio.run(c.run_once(NOW + 10))
+    assert unseen_findings(cfg, conn, fw, now)[0] == got
+
+
+def test_the_updates_finding_keeps_its_cves_while_the_update_is_not_matched(tmp_path):
+    pending = firmware(to="26.7.10", frm="26.7.1", last_check=LC)
+    cfg, conn, c = unseen_world(tmp_path, pending)
+    cves = opnsense_cves.load(cfg, conn, "fw1", pending)
+    first = [f for f in rules.firmware_rules(pending, LC_TS, cves) if f.rule == "opnsense.updates"]
+    assert len(first) == 1 and "CVE" in first[0].title
+    _forget_matches(cfg)
+    cves = opnsense_cves.load(cfg, conn, "fw1", pending)
+    assert cves["state"] == "pending"
+    bare = [f for f in rules.firmware_rules(pending, LC_TS, cves) if f.rule == "opnsense.updates"][0]
+    assert bare.basis != first[0].basis                                 # this is what used to replace it
+    assert [f for f in rules.firmware_rules(pending, LC_TS, cves, _prior(first)) if f.rule == "opnsense.updates"] == first
+    # the update installed: nothing pending, the finding goes
+    done = idle("26.7.10")
+    assert [f for f in rules.firmware_rules(done, LC_TS, opnsense_cves.load(cfg, conn, "fw1", done), _prior(first)) if f.rule == "opnsense.updates"] == []

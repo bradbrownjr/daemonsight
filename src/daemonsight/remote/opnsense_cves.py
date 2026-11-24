@@ -89,7 +89,7 @@ def load(cfg, state_conn, host: str, fw: dict | None) -> dict:
     (`unseen_state`)."""
     p = opnsense.plan(fw)
     out: dict = {"state": "none", "plan": p, "feed": {"ok_at": None, "error": None, "tried": False}, "epss_automatable": 0.04,
-                 "cves": [], "advisories": [], "releases": [], "note": "", "unseen": None}
+                 "cves": [], "advisories": [], "releases": [], "note": "", "unseen": None, "enabled": False, "changelog_ready": False}
     if not p["ok"]:
         out["state"] = "none" if p["why"] == "nothing" else "unmapped"
     eff = settings.effective(cfg, state_conn)
@@ -99,6 +99,7 @@ def load(cfg, state_conn, host: str, fw: dict | None) -> dict:
         if p["ok"]:
             out["state"] = "off"
         return out
+    out["enabled"] = True
     if p["ok"]:
         out["state"] = "pending"
     cdb = store.connect_reader(cfg.cve_db_path)
@@ -106,6 +107,9 @@ def load(cfg, state_conn, host: str, fw: dict | None) -> dict:
         return out
     try:
         out["feed"] = _feed_state(cdb)
+        # The changelog rows for what this firewall needs are loaded (the chore drops them while it has nothing to read them for).
+        loaded = opnsense.loaded_series(cdb)
+        out["changelog_ready"] = bool(loaded) and set(p["series"] if p["ok"] else []) | set(opnsense.watch_series(fw)) <= loaded
         if p["ok"]:
             row = cdb.execute("SELECT inv_hash, note FROM matched WHERE host = ?", (opnsense.pseudo_host(host),)).fetchone()
             if row is not None and row["inv_hash"] == opnsense.plan_hash(p):
@@ -127,6 +131,13 @@ def load(cfg, state_conn, host: str, fw: dict | None) -> dict:
 # --- a release the firewall has not been offered ----------------------------------------------------------------------------------
 
 STALE_DAYS = 2        # DaemonSight's choice (the owner's): a firewall that has not checked for two days may have missed a release
+
+
+def check_recent(fw: dict | None, now: float) -> bool:
+    """The firewall's last firmware check is under `STALE_DAYS` old."""
+    from .opnsense import last_check_ts
+    ts = last_check_ts((fw or {}).get("last_check"))
+    return ts is not None and now - ts < STALE_DAYS * 86400
 
 
 def unseen_state(fw: dict | None, cves: dict | None, now: float) -> dict | None:

@@ -43,7 +43,7 @@ from __future__ import annotations
 import re
 
 from ..cve import match, opnsense, priority
-from ..findings import Finding, anchor, digest
+from ..findings import Finding, anchor, digest, held as held_finding
 from . import opnsense_cves
 from . import roles as roles_mod
 
@@ -126,12 +126,17 @@ HOWTO_UNSEEN = (
     "Read what changed: {url}")
 
 
-def unseen_rules(fw: dict | None, now: float, cves: dict | None) -> list[Finding]:
+def unseen_rules(fw: dict | None, now: float, cves: dict | None, prior: dict | None = None) -> list[Finding]:
     """`opnsense.unseen_release`: a newer release in the firewall's series than it runs and than its last check showed, with
     that check two days or more old. Clears when the check shows the release (then `opnsense.updates` is the finding)."""
     st = opnsense_cves.unseen_state(fw, cves, now)
     if not st or not st["ready"]:
-        return []
+        # An open finding stays while the changelog is not loaded or its CVEs are not matched yet (after a restart): the answer is
+        # unknown, not "no release". It clears when the check is recent, or when the loaded changelog holds nothing newer.
+        unknown = bool(cves) and cves.get("enabled") and not opnsense_cves.check_recent(fw, now) and (
+            not cves.get("changelog_ready") or (st is not None and bool(st["version"])))
+        held = held_finding(prior, "opnsense.unseen_release", "unseen") if unknown else None
+        return [held] if held else []
     s = opnsense_cves.summary(st["cves"], st["epss_automatable"], st["advisories"])
     sev = s["severity"] or "low"
     title = opnsense_cves.unseen_title(st, now)
@@ -150,8 +155,8 @@ def unseen_rules(fw: dict | None, now: float, cves: dict | None) -> list[Finding
                     steps(*lines))]
 
 
-def firmware_rules(fw: dict | None, now: float, cves: dict | None = None) -> list[Finding]:
-    out = unseen_rules(fw, now, cves)
+def firmware_rules(fw: dict | None, now: float, cves: dict | None = None, prior: dict | None = None) -> list[Finding]:
+    out = unseen_rules(fw, now, cves, prior)
     if not fw or not (fw.get("count") or fw.get("needs_reboot")):
         return out
     n, sets = fw.get("count_packages") or 0, fw.get("count_sets") or 0
@@ -190,7 +195,9 @@ def firmware_rules(fw: dict | None, now: float, cves: dict | None = None) -> lis
             if s["worst"] is not None:
                 why += match.finding_text(s["worst"], s["exposure"].why)[1]
             howto = steps(*why)
-        out.append(Finding("opnsense.updates", "updates", sev, title[:300], detail[:3900], "/#firmware", None, basis, howto))
+        # The update's CVEs are not matched yet (after a restart): keep the finding as it was rather than one without them.
+        held = held_finding(prior, "opnsense.updates", "updates") if cves and cves.get("state") == "pending" and cves.get("enabled") else None
+        out.append(held or Finding("opnsense.updates", "updates", sev, title[:300], detail[:3900], "/#firmware", None, basis, howto))
     if fw.get("needs_reboot"):
         out.append(Finding("opnsense.reboot", "reboot", "medium", "A reboot is needed to finish the pending update",
                            "The firewall says the pending firmware update needs a reboot to take effect.", "/#firmware", None,
@@ -668,7 +675,7 @@ def interface_roles(data: dict[str, dict | None], overrides: dict[str, str] | No
 
 
 def evaluate(data: dict[str, dict | None], now: float, overrides: dict[str, str] | None = None,
-             hosts: dict[str, dict] | None = None, cves: dict | None = None) -> list[Finding]:
+             hosts: dict[str, dict] | None = None, cves: dict | None = None, prior: dict | None = None) -> list[Finding]:
     """`data` maps short source names (firmware, gateways, interfaces, wireguard, rules, nat, caddy, tailscale,
     services, system) to their latest stored data, or None when that source can't be read (no privilege, not
     installed, never read). `overrides` are the owner's interface roles. `hosts` maps a hub host to
@@ -677,7 +684,7 @@ def evaluate(data: dict[str, dict | None], now: float, overrides: dict[str, str]
     (opnsense_cves.load); without it the updates finding has no CVEs in it."""
     roles = interface_roles(data, overrides)
     out: list[Finding] = []
-    out += firmware_rules(data.get("firmware"), now, cves)
+    out += firmware_rules(data.get("firmware"), now, cves, prior)
     out += gateway_rules(data.get("gateways"))
     out += wireguard_rules(data.get("wireguard"), now)
     if roles:

@@ -46,6 +46,16 @@ class Finding:
     howto: str | None = None
 
 
+def held(prior: dict | None, rule: str, key: str) -> Finding | None:
+    """The open finding (rule, key) as it stands, to be emitted again unchanged. A rule uses it when it cannot tell whether the
+    finding still holds (data not read yet, a match not made yet): a finding the rule does not emit is resolved by the
+    reconcile step, so "unknown" must emit the last finding rather than nothing. `prior` maps (rule, key) to the open rows."""
+    row = (prior or {}).get((rule, key))
+    if row is None:
+        return None
+    return Finding(rule, key, row["severity"], row["title"], row["detail"], row["link"], row["fix"], row["basis"], row["howto"])
+
+
 # Where a fix sits in the report's steps, by rule. Steps run in this order;
 # a finding with a fix and no step gets a card of its own after "auto-updates",
 # and "os-upgrade" (planning) comes last. A finding with no fix is a decision
