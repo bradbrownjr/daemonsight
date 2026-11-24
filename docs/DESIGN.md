@@ -795,6 +795,38 @@ for workstations.
 - Flatpak updates shown beside dnf's.
 - Quieter alerts, once alerts exist.
 
+### Managing hosts in the web UI
+
+`web/host_routes.py` (hub only) adds, updates, re-keys, revokes and removes
+collector hosts. It calls the functions behind the CLI (`hub.add_host`,
+`request_update`, `cancel_update`, `revoke_host`) and adds `hub.replace_token`,
+`hub.data_counts` and `hub.forget_cves`; it keeps no logic of its own.
+
+- **Pages.** The Hosts table's last column, Manage, links every row: an API
+  system to `/remotes/<id>/edit`, a collector host to `/hosts/<id>/manage`
+  (`/hosts/new` adds one). Replace token, Revoke and Remove each have a
+  confirmation page at `/hosts/<id>/manage/<token|revoke|remove>`; Remove
+  lists what it deletes and needs the host's name typed.
+- **Actions.** All are POSTs behind the login, and refuse cross-site requests
+  with the same `Sec-Fetch-Site` check as `/hosts/update`. They apply only to
+  hosts uploaded for (`kind IS NULL`); an API system has its own pages.
+- **Replace token** overwrites `token_hash` and keeps the row, so history and
+  settings stay and the old token fails at once. The CLI has no single
+  command for this (it is `hub revoke` then `hub add-host`).
+- **Remove** is `revoke_host(purge=True)`: the host's rows in snapshots,
+  metrics, findings, events and accepted (`hub.PURGE_TABLES`), its row in
+  hosts, and its CVE matches in `cve.db` (`match` and `matched`), which the
+  CLI's `--purge` now clears too. It is one transaction in the hub database.
+- **Revoked hosts.** A revoked host's row is deleted, so it is not listed and
+  there is no "Allow again" button. Adding the same name again issues a new
+  token, and the kept history shows under it. That is the CLI's behaviour too.
+- **Tokens.** Shown once, in the response to the POST that made them (no
+  redirect, flash or database copy), with `Cache-Control: no-store`, and never
+  logged. The install command's URL comes from the request (`base_url`, which
+  follows the proxy headers the web server trusts).
+- **Events.** Each action adds an event with an empty host, shown under Recent
+  hub changes, and so do adding and removing an API system.
+
 ### Updates from the hub
 
 The hub can ask a host to update to the hub's own commit. It is the only

@@ -258,7 +258,8 @@ def cmd_hub(args, cfg) -> int:
             where = f"{h['kind']} (API)" if h["kind"] else (h["address"] or "")
             print(f"{h['id']:<24} {what} {seen:<20} {where:<40} {h['version'] or ''}")
     elif args.hub_command == "revoke":
-        if not hub.revoke_host(conn, args.name, purge=args.purge, data_dir=cfg.data_dir):
+        if not hub.revoke_host(conn, args.name, purge=args.purge, data_dir=cfg.data_dir,
+                                cve_path=cfg.cve_db_path):
             print(f"No host named {args.name}.", file=sys.stderr)
             return 1
         print(f"Revoked {args.name}: its token or API key no longer works." +

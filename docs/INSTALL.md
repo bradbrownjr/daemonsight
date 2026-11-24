@@ -532,6 +532,32 @@ Within a minute the host shows as "Reporting" on the hub's Hosts page.
 The host's own web UI keeps working; stop it with
 `sudo systemctl disable --now daemonsight-web` if the hub is all you need.
 
+### Manage hosts in the web UI
+
+The command line above is one way to do it; the hub's web UI is the other.
+On the Hosts page, **Add a Linux host** asks for a name (same rule as above),
+makes the host and shows its token once with the two commands to run on the
+host. The address in the command is the one you opened the page with; if
+hosts upload through another hostname, use that one.
+
+The **Manage** button at the end of each row opens the host's page:
+
+- **Update now** is `hub update NAME`. It is greyed out, with the reason, when
+  the host runs the hub's version, has not reported, or has turned updates off.
+- **Replace upload token** is `hub revoke` then `hub add-host`, but it keeps
+  the host's history. The new token is shown once; the old one stops working
+  at once, so the host stops uploading until you run
+  `set-upload-token` with the new one and restart its collector.
+- **Revoke** is `hub revoke NAME`. The host leaves the list and its history
+  stays. To allow it again, add the same name as a new Linux host.
+- **Remove from hub** is `hub revoke NAME --purge`. The confirmation page lists
+  what is deleted (snapshots, metric points, findings, events, accepted
+  findings, CVE matches and the token) and asks you to type the name. Nothing
+  changes on the host; stop its collector there.
+
+For an Unraid or OPNsense system, Manage opens its edit page, where it can be
+changed, disabled or removed.
+
 ### CVE matching
 
 The hub matches each host's installed packages against Debian's security

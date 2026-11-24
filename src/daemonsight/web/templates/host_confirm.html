@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% set heading = {'token': 'Replace the upload token', 'revoke': 'Revoke', 'remove': 'Remove from hub'}[action] %}
+{% block title %}{{ heading }} · {{ h.id }} · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">Manage {{ h.id }}</div>
+  <h1 class="page-title">{{ heading }}</h1>
+</div>
+<form method="post" action="/hosts/{{ h.id }}/{{ action }}" class="card mb-4" autocomplete="off">
+  <div class="card-body">
+    {% if action == 'token' %}
+    <p class="mb-0">The old token for {{ h.id }} stops working as soon as you confirm. The host can't upload until the new token is installed on it. The new token is shown once.</p>
+    {% elif action == 'revoke' %}
+    <p class="mb-0">The hub stops accepting uploads from {{ h.id }} and drops it from the Hosts list. Its stored history stays. To allow it again, add {{ h.id }} as a new Linux host.</p>
+    {% else %}
+    <p>This revokes {{ h.id }} and deletes the following from the hub. Other hosts are not touched.</p>
+    <table class="table table-sm" id="remove-list">
+      <thead><tr><th>Stored for {{ h.id }}</th><th class="text-end">Rows</th></tr></thead>
+      <tbody>
+        {% for label, n in counts %}<tr><td>{{ label }}</td><td class="text-end">{{ n }}</td></tr>{% endfor %}
+        <tr><td>Upload token</td><td class="text-end">1</td></tr>
+      </tbody>
+    </table>
+    <div class="mb-0">
+      <label class="form-label" for="confirm">Type the name to confirm</label>
+      <input type="text" class="form-control" id="confirm" name="confirm" autocomplete="off" placeholder="{{ h.id }}" required>
+    </div>
+    {% endif %}
+  </div>
+  <div class="card-footer d-flex flex-wrap gap-2">
+    <button type="submit" class="btn {{ 'btn-primary' if action == 'token' else 'btn-danger' }}">{{ {'token': 'Replace upload token', 'revoke': 'Revoke ' ~ h.id, 'remove': 'Remove ' ~ h.id}[action] }}</button>
+    <a class="btn btn-ghost-secondary ms-auto" href="/hosts/{{ h.id }}/manage">Cancel</a>
+  </div>
+</form>
+{% endblock %}

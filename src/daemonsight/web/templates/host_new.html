@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_macros.html" import info_button, info_panel %}
+{% block title %}Add a Linux host · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">Host that uploads through a collector</div>
+  <h1 class="page-title">Add a Linux host</h1>
+</div>
+{% if problem %}<div class="alert alert-danger" role="alert">{{ problem }}</div>{% endif %}
+<form method="post" action="/hosts/new" class="card mb-4" autocomplete="off">
+  <div class="card-header"><h2 class="card-title d-flex align-items-center gap-1">New host{{ info_button("host-new-info", "More about adding a host") }}</h2>
+    {{ info_panel("host-new-info", "What happens next", "The hub makes the host and shows its token once. You then run one command on the host to save the token and the hub's address, and restart its collector. DaemonSight must already be installed on the host (see INSTALL.md). The command line does the first step with: daemonsight hub add-host NAME") }}</div>
+  <div class="card-body">
+    <label class="form-label" for="name">Name</label>
+    <input type="text" class="form-control" id="name" name="name" value="{{ name }}" required maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,62}" aria-describedby="name-hint" title="Letters, digits, . _ and -; no spaces" placeholder="vps">
+    <div class="form-hint" id="name-hint">Letters, digits, <code>.</code> <code>_</code> and <code>-</code>, no spaces; start with a letter or digit; 63 characters at most. It must match the host's <code>host_id</code>. It is part of the host's page address and can't be changed later.</div>
+  </div>
+  <div class="card-footer d-flex flex-wrap gap-2">
+    <button type="submit" class="btn btn-primary">Add host</button>
+    <a class="btn btn-ghost-secondary ms-auto" href="/">Cancel</a>
+  </div>
+</form>
+{% endblock %}

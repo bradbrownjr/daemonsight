@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_macros.html" import fix_block %}
+{% block title %}{{ 'Upload token replaced' if replaced else 'Host added' }} · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ name }}</div>
+  <h1 class="page-title">{{ 'Upload token replaced' if replaced else 'Host added' }}</h1>
+</div>
+<div class="alert alert-warning" role="status">This token is shown once. The hub keeps only its hash, so leaving this page loses it.{% if replaced %} The old token no longer works.{% endif %}</div>
+<section class="card mb-4" id="token" aria-labelledby="token-title">
+  <div class="card-header"><h2 class="card-title" id="token-title">Token for {{ name }}</h2></div>
+  <div class="card-body">{{ fix_block(token) }}</div>
+</section>
+<section class="card mb-4" id="install" aria-labelledby="install-title">
+  <div class="card-header"><h2 class="card-title" id="install-title">Install it on {{ name }}</h2></div>
+  <div class="card-body">
+    <p>Run this on the host and paste the token at the prompt. Its <code>host_id</code> must be <code>{{ name }}</code>.</p>
+    {{ fix_block("sudo daemonsight set-upload-token --url " ~ url) }}
+    <p class="mt-3">Then restart the collector.</p>
+    {{ fix_block("sudo systemctl restart daemonsight-collector") }}
+    <p class="text-secondary small mt-3 mb-0">The address is the one you used to open this page. If hosts upload through another hostname, use that one in <code>--url</code>.</p>
+  </div>
+  <div class="card-footer"><a class="btn btn-primary" href="/">Done</a></div>
+</section>
+{% endblock %}
