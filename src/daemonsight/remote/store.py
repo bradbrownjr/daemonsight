@@ -239,6 +239,9 @@ def _write_secret(path: Path, body: str) -> None:
         tmp.unlink(missing_ok=True)
 
 
+write_secret = _write_secret     # also used for the alert channels' secrets (notify/channels.py)
+
+
 def write_reader_token(data_dir, remote_id: str, token: str) -> Path:
     path = reader_token_path(data_dir, remote_id)
     _write_secret(path, clean_reader_token(token) + "\n")

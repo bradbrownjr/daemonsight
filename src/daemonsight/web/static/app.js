@@ -380,14 +380,16 @@
 
   // Dependent options: an element with data-ds-when="<control id>=<value>" shows only while that control has that
   // value (the Shodan key under Source). A checkbox has the value "on" while it is ticked (the Docker reader under
-  // "Read images and volumes"). Without JavaScript it always shows.
+  // "Read images and volumes"). Several values may be listed with | (data-ds-when="mode=digest|both"). Without JavaScript it
+  // always shows.
   function bindDependents() {
     document.querySelectorAll("[data-ds-when]").forEach(function (el) {
       var rule = el.getAttribute("data-ds-when").split("=");
       var select = document.getElementById(rule[0]);
       if (!select) return;
       var value = function () { return select.type === "checkbox" ? (select.checked ? "on" : "") : select.value; };
-      var sync = function () { el.hidden = value() !== rule[1]; };
+      var wanted = (rule[1] || "").split("|");
+      var sync = function () { el.hidden = wanted.indexOf(value()) === -1; };
       select.addEventListener("change", sync);
       sync();
     });

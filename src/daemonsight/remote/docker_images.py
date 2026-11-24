@@ -479,7 +479,8 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
                        "they are listed on the page and raise nothing.")
         out.append(Finding("docker.image_cves", r["name"], c["severity"], title[:300], detail[:3900],
                            f"{LINK}#{r['anchor']}", None, f"{r['repo']}:{digest(x['cve'] for x in fixable)}",
-                           "\n".join(((HOWTO_CVES_ALPINE if r["kind"] == "alpine" else HOWTO_CVES).split("\n") + why))[:3900]))
+                           "\n".join(((HOWTO_CVES_ALPINE if r["kind"] == "alpine" else HOWTO_CVES).split("\n") + why))[:3900],
+                           deadline_days=top.days))
     if prior and (cves or {}).get("enabled"):          # with CVE matching switched off the findings go, as before
         out += _held_images(a, data, {f.key for f in out if f.rule == "docker.image_cves"}, prior)
     out.sort(key=lambda f: (priority.SEV_ORDER.index(f.severity), f.rule, f.title))

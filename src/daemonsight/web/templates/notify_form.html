@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% from "_macros.html" import info_button, info_panel %}
+{% set kind = existing.kind if existing else f.kind %}
+{% block title %}{{ 'Edit ' ~ existing.name if existing else 'Add a channel' }} · DaemonSight{% endblock %}
+{% block content %}
+{% macro err(name) %}{% if errors.get(name) %}<div class="invalid-feedback d-block" id="{{ name }}-err">{{ errors[name] }}</div>{% endif %}{% endmacro %}
+<div class="mb-4">
+  <div class="page-pretitle">Notification channel</div>
+  <h1 class="page-title">{% if existing %}Edit {{ existing.name }}{% else %}Add a channel{% endif %}</h1>
+</div>
+
+{% if result %}<div class="alert {{ 'alert-success' if result.ok else 'alert-danger' }}" role="{{ 'status' if result.ok else 'alert' }}" id="result">{{ result.text }}</div>{% endif %}
+{% if errors and not result %}<div class="alert alert-danger" role="alert">Nothing was saved. Fix the marked fields and try again.</div>{% endif %}
+
+<form method="post" action="{{ '/settings/notify/' ~ existing.id if existing else '/settings/notify/new' }}" class="card mb-4" autocomplete="off">
+  <div class="card-body">
+    <p class="text-secondary">{{ help[kind] }}</p>
+    <div class="mb-3">
+      <label class="form-label" for="f-kind">Type</label>
+      {% if existing %}
+      <input type="text" class="form-control" id="f-kind" value="{{ kinds[existing.kind] }}" disabled>
+      <input type="hidden" name="id" value="{{ existing.id }}">
+      {% else %}
+      <div class="btn-group" role="group" aria-label="Type of channel" id="f-kind">
+        {% for k, label in kinds.items() %}<a class="btn{{ ' active' if kind == k }}" href="/settings/notify/new?kind={{ k }}"{% if kind == k %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
+      </div>
+      <input type="hidden" name="kind" value="{{ kind }}">
+      {% endif %}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-name">Name</label>
+      <input type="text" class="form-control{{ ' is-invalid' if errors.get('name') }}" id="f-name" name="name" value="{{ f.name }}" required maxlength="40" pattern="[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}" placeholder="{{ {'ntfy': 'Phone', 'slack': 'Ops channel', 'discord': 'Ops channel', 'email': 'Weekly report'}[kind] }}">
+      {{ err('name') }}
+      <div class="form-hint">Shown on this page only. Letters, digits, spaces, <code>.</code> <code>_</code> and <code>-</code>; start with a letter or digit; 40 characters at most.</div>
+    </div>
+
+    {% if kind == 'ntfy' %}
+    <div class="mb-3">
+      <label class="form-label" for="f-ntfy-server">Server</label>
+      <input type="text" class="form-control{{ ' is-invalid' if errors.get('ntfy_server') }}" id="f-ntfy-server" name="ntfy_server" value="{{ f.ntfy_server }}" required maxlength="200" inputmode="url">
+      {{ err('ntfy_server') }}
+      <div class="form-hint">https, or http to this machine only. A path may follow if the server sits behind one.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-ntfy-topic">Topic</label>
+      <input type="text" class="form-control{{ ' is-invalid' if errors.get('ntfy_topic') }}" id="f-ntfy-topic" name="ntfy_topic" value="{{ f.ntfy_topic }}" required maxlength="64" pattern="[A-Za-z0-9_-]{1,64}">
+      {{ err('ntfy_topic') }}
+      <div class="form-hint">Letters, digits, <code>-</code> and <code>_</code>, 64 at most. On a public server anyone who knows it can read it.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-ntfy-auth">Login</label>
+      <select class="form-select ds-set-input" id="f-ntfy-auth" name="ntfy_auth">
+        {% for v, label in ntfy_auth %}<option value="{{ v }}"{% if f.ntfy_auth == v %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <div class="ds-subpanel mt-2" data-ds-when="f-ntfy-auth=basic">
+        <label class="form-label" for="f-ntfy-user">User name</label>
+        <input type="text" class="form-control{{ ' is-invalid' if errors.get('ntfy_user') }}" id="f-ntfy-user" name="ntfy_user" value="{{ f.ntfy_user }}" maxlength="100">
+        {{ err('ntfy_user') }}
+      </div>
+    </div>
+    {% elif kind == 'email' %}
+    <div class="mb-3">
+      <label class="form-label" for="f-email-host">Mail server</label>
+      <input type="text" class="form-control{{ ' is-invalid' if errors.get('email_host') }}" id="f-email-host" name="email_host" value="{{ f.email_host }}" required maxlength="253" placeholder="smtp.example.com">
+      {{ err('email_host') }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-email-security">Connection</label>
+      <select class="form-select ds-set-input" id="f-email-security" name="email_security">
+        {% for v, label in security %}<option value="{{ v }}"{% if f.email_security == v %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      {{ err('email_security') }}
+      <div class="form-hint">Always encrypted, and the server's certificate is checked. A server with neither is refused.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-email-port">Port</label>
+      <input type="number" class="form-control ds-set-input{{ ' is-invalid' if errors.get('email_port') }}" id="f-email-port" name="email_port" value="{{ f.email_port }}" min="1" max="65535" placeholder="465 or 587">
+      {{ err('email_port') }}
+      <div class="form-hint">Usually 465 for implicit TLS and 587 for STARTTLS.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-email-user">User name</label>
+      <input type="text" class="form-control{{ ' is-invalid' if errors.get('email_user') }}" id="f-email-user" name="email_user" value="{{ f.email_user }}" maxlength="200" autocomplete="off">
+      {{ err('email_user') }}
+      <div class="form-hint">Blank if the server needs no login.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-email-from">From</label>
+      <input type="email" class="form-control{{ ' is-invalid' if errors.get('email_from') }}" id="f-email-from" name="email_from" value="{{ f.email_from }}" required maxlength="254" placeholder="daemonsight@example.com">
+      {{ err('email_from') }}
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-email-to">Send to</label>
+      <textarea class="form-control{{ ' is-invalid' if errors.get('email_to') }}" id="f-email-to" name="email_to" rows="3" required spellcheck="false" placeholder="admin@example.com">{{ f.email_to }}</textarea>
+      {{ err('email_to') }}
+      <div class="form-hint">One address per line, 20 at most. They all get the same message.</div>
+    </div>
+    {% endif %}
+
+    {# The secret: one box, never shown back. #}
+    {% if kind == 'slack' or kind == 'discord' or kind == 'email' or kind == 'ntfy' %}
+    {% set label = {'slack': 'Webhook URL', 'discord': 'Webhook URL', 'ntfy': 'Access token or password', 'email': 'Password'}[kind] %}
+    <div class="mb-3"{% if kind == 'ntfy' %} data-ds-when="f-ntfy-auth=token|basic"{% endif %}>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+        <label class="form-label mb-0" for="f-secret">{{ label }}</label>
+        {% if secret_saved %}<span class="badge bg-green-lt">{{ 'A webhook URL is saved' if kind in ('slack', 'discord') else 'A secret is saved' }}</span>{% else %}<span class="badge bg-secondary-lt">Nothing saved</span>{% endif %}
+      </div>
+      <input type="password" class="form-control ds-key-input{{ ' is-invalid' if errors.get('secret') }}" id="f-secret" name="secret" autocomplete="new-password" maxlength="300" spellcheck="false" placeholder="{{ 'Paste a new one to replace it' if secret_saved else 'Paste it here' }}">
+      {{ err('secret') }}
+      <div class="form-hint">Saved to a file only the hub can read, and never shown again.{% if existing and kind == 'email' %} Leave it blank to keep the saved password.{% elif existing %} Leave it blank to keep the saved one.{% endif %}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="card-body border-top">
+    <div class="mb-3">
+      <div class="form-label" id="sev-label">Severities to send</div>
+      <div role="group" aria-labelledby="sev-label" class="d-flex flex-wrap gap-3">
+        {% for s in severities %}<label class="form-check m-0"><input class="form-check-input" type="checkbox" name="severity" value="{{ s }}"{% if s in f.severity %} checked{% endif %}><span class="form-check-label">{{ s|capitalize }}</span></label>{% endfor %}
+      </div>
+      {{ err('severity') }}
+      <div class="form-hint">Findings of these severities only. Critical and high by default.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="f-mode">Send</label>
+      <select class="form-select ds-set-input" id="f-mode" name="mode">
+        {% for v, label in modes %}<option value="{{ v }}"{% if f.mode == v %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      {{ err('mode') }}
+      <div class="ds-subpanel mt-2" data-ds-when="f-mode=digest|both">
+        <div class="row g-2 align-items-end">
+          <div class="col-auto">
+            <label class="form-label" for="f-digest-freq">Digest</label>
+            <select class="form-select" id="f-digest-freq" name="digest_freq">{% for v, label in freqs %}<option value="{{ v }}"{% if f.digest_freq == v %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+          </div>
+          <div class="col-auto">
+            <label class="form-label" for="f-digest-time">At</label>
+            <input type="time" class="form-control{{ ' is-invalid' if errors.get('digest_time') }}" id="f-digest-time" name="digest_time" value="{{ f.digest_time }}">
+          </div>
+          <div class="col-auto" data-ds-when="f-digest-freq=weekly">
+            <label class="form-label" for="f-digest-weekday">On</label>
+            <select class="form-select" id="f-digest-weekday" name="digest_weekday">{% for d in weekdays %}<option value="{{ loop.index0 }}"{% if f.digest_weekday|int == loop.index0 %} selected{% endif %}>{{ d }}</option>{% endfor %}</select>
+          </div>
+          <div class="col-auto" data-ds-when="f-digest-freq=monthly">
+            <label class="form-label" for="f-digest-day">On day</label>
+            <input type="number" class="form-control" id="f-digest-day" name="digest_day" value="{{ f.digest_day }}" min="1" max="28">
+          </div>
+        </div>
+        {{ err('digest_time') }}{{ err('digest_day') }}{{ err('digest_weekday') }}{{ err('digest_freq') }}
+        <div class="form-hint">In the hub's time zone, {{ tz }}. Monthly runs on a day from 1 to 28, so every month has one.</div>
+        <label class="form-check mt-2"><input class="form-check-input" type="checkbox" name="skip_empty" value="on"{% if f.skip_empty %} checked{% endif %}><span class="form-check-label">Skip empty digests</span></label>
+        <div class="form-hint">Off sends "No changes; N open" on schedule.</div>
+      </div>
+    </div>
+    <div class="mb-3">
+      <label class="form-check"><input class="form-check-input" type="checkbox" name="send_resolved" value="on"{% if f.send_resolved %} checked{% endif %}><span class="form-check-label">Send an alert when a finding resolves</span></label>
+      <label class="form-check"><input class="form-check-input" type="checkbox" name="deadline_reminders" value="on"{% if f.deadline_reminders %} checked{% endif %}><span class="form-check-label">Remind before and after a deadline</span></label>
+      <div class="form-hint">Reminders use each finding's CISA BOD 26-04 timeline: a day before for 14- and 60-day items, 12 hours before for 3-day items, and once more when it passes. Digests always list resolved findings.</div>
+    </div>
+  </div>
+  <div class="card-footer d-flex flex-wrap gap-2">
+    <button type="submit" class="btn btn-primary">Save channel</button>
+    {% if existing %}<button type="submit" class="btn" formaction="/settings/notify-test" formnovalidate>Send test</button>{% endif %}
+    <a class="btn btn-ghost-secondary" href="/settings#notify-channels">Cancel</a>
+    {% if existing %}<a class="btn btn-outline-danger ms-auto" href="/settings/notify/{{ existing.id }}/remove">Remove</a>{% endif %}
+  </div>
+</form>
+{% if not existing %}<p class="text-secondary small">Save the channel first, then open it and press Send test.</p>{% endif %}
+{% endblock %}

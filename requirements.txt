@@ -10,3 +10,4 @@ argon2-cffi==25.1.0
 itsdangerous==2.2.0
 python-multipart==0.0.34
 pydantic==2.14.3
+tzdata==2026.1

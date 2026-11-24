@@ -202,6 +202,16 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
 - **Retention and backups.** Retention sets how long history stays. Scheduled
   backups and `daemonsight restore` cover the database, config and secrets.
 
+## Alerts and digests
+
+- **Alerts and digests to Ntfy, Slack, Discord and email.** Add any number of channels on the Settings page. Each
+  picks its severities (Critical and High by default) and whether it gets alerts at once, a daily, weekly or monthly
+  digest, or both. An alert goes out when a finding opens, gets worse, is about to pass its CISA BOD 26-04 deadline or
+  has passed it, and optionally when it resolves; what one poll finds arrives as one message. Accepted findings never
+  alert. Every message names DaemonSight, its version and the hub's address, and links to the finding. Secrets are
+  kept in files and never shown again; failed sends are retried for a day. See
+  [INSTALL.md](INSTALL.md#alerts-and-digests).
+
 ## Navigation and UI
 
 - **Section menus.** Each page with sections has a section menu in its tab. The
@@ -226,6 +236,6 @@ DaemonSight checks one question: what is exposed or out of date, and what do I d
 | Main job | Health, load, availability | Log analysis, intrusion detection, compliance | Exposure, patching and change findings |
 | Needs an agent on every system | Often | Yes | A collector on Linux hosts only; none on Unraid, OPNsense or UniFi |
 | Cross-checks (a public port with no firewall rule or jail, a route with a dead upstream) | No | Not as one finding | Yes |
-| Logs and alerts | Yes | Yes | Not yet: planned (see [DESIGN.md](DESIGN.md#phases)) |
+| Logs and alerts | Yes | Yes | Alerts and digests to Ntfy, Slack, Discord and email; logs not yet (see [DESIGN.md](DESIGN.md#phases)) |
 
 It does not scan networks, read logs yet, or act on a server: it never changes anything it reads.

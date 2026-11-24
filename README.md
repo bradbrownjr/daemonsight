@@ -40,6 +40,7 @@ one list of what to fix, without a SIEM.
 - Read-only and least-privilege by design: a Viewer-only key for Unraid, GET-only calls to OPNsense and UniFi.
 - No agent on Unraid, OPNsense or UniFi; the hub reads their APIs.
 - Accepted findings stay visible with a label, and come back if what you accepted changes.
+- Alerts and digests to Ntfy, Slack, Discord or email, with each finding's deadline and a link to it.
 
 ## What it monitors
 
@@ -54,6 +55,7 @@ one list of what to fix, without a SIEM.
 | OPNsense and CrowdSec | REST API, GET only, and the project's changelog, with the FreeBSD and GitHub advisories it names, for the CVEs a pending update fixes; CrowdSec Local API, read-only key |
 | UniFi Network | Integration API, GET only, with a View Only admin's key: devices, firmware updates, Wi-Fi security, clients as a count |
 | Seen from outside | Shodan InternetDB or API (off by default) |
+| Alerts and digests | Sent by the hub to Ntfy, Slack, Discord and email: findings that open, get worse, near or pass their deadline, or resolve |
 
 Details, and how it differs from general monitors and SIEMs: [docs/FEATURES.md](docs/FEATURES.md).
 

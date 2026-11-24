@@ -252,6 +252,7 @@ def test_the_finding_for_an_image_ranks_and_counts_like_a_hosts(cvedb):
     # The same image with a container the internet reaches: the same CVE, now row 2, 3 days.
     exp = [x for x in di.evaluate(stored([e]), None, matched(cvedb, [e], exposed=True), TODAY) if x.rule == "docker.image_cves"][0]
     assert exp.severity == "critical" and exp.title.endswith("fix within 3 days") and exp.basis == f.basis
+    assert (exp.deadline_days, f.deadline_days) == (3, 14)
     assert "exploited, CISA KEV" in f.detail and "4 more in the image have no fix yet" in f.detail
     assert "Docker tab" not in f.detail and "Check for Updates" in f.howto and "apt upgrade" in f.howto and "does not help" in f.howto
     assert "newer image" in f.howto and f.link == f"/images#ci-{IDS['nginx'].removeprefix('sha256:')[:12]}"

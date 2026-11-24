@@ -159,6 +159,7 @@ restarting:
 | Retention | Chart points (hours), Recent changes (days), cleared findings (days); 0 keeps for good |
 | Backups | Hours between scheduled backups (blank is automatic, 0 is off), how many to keep |
 | Remote systems | Whether the hub reads Unraid, OPNsense and UniFi systems at all, and how long a UniFi device is offline before it is a finding |
+| Notifications | The hub address alert links point at, and the alert channels (Ntfy, Slack, Discord, email), added and edited on their own pages: see "Alerts and digests" |
 
 Each setting shows its default, the range it accepts and where its current
 value comes from:
@@ -730,6 +731,62 @@ addresses = []                # extra addresses, see below
   the hub makes no requests and closes the `outside.*` findings at its next
   pass, about a minute later. Remove the key from the Settings page (with
   Source on InternetDB) to delete the key file.
+
+### Alerts and digests
+
+The hub can send alerts and digests to Ntfy, Slack, Discord and email. On a hub, open Settings, Notifications. The group has
+"Hub address for links" (the address you reach the hub at; blank, it is filled in from the address you use when you save the first
+channel), and "Notification channels" below it lists the channels. Choose "Add a channel", pick a type, fill in its fields, and Save.
+Open a channel with Manage, then press **Send test**: it sends one test message with what is on the page, and says what the service
+answered. Nothing is saved by a test.
+
+Each channel chooses:
+
+- **Severities.** Critical and High by default.
+- **Send.** Immediately, in a digest, or both. An immediate message goes out when a finding opens, gets worse, is about to pass its CISA
+  BOD 26-04 deadline (a day before for 14 and 60 day items, 12 hours before for 3 day items) or has passed it. Findings found in one pass
+  arrive together in one message. Accepted findings never alert. A new channel does not announce what was already open.
+- **Resolved alerts.** Off by default. A digest always lists what resolved.
+- **Digest.** Daily, weekly (pick the weekday) or monthly (pick a day from 1 to 28), at a time, in the hub's time zone. The zone is the
+  hub's `TZ` variable (Unraid sets it for its containers; with `docker run`, add `-e TZ=America/New_York`); the Settings page shows it. "Skip empty
+  digests" is on by default: with nothing changed and nothing overdue, no digest is sent. Turn it off to get "No changes; N open".
+
+A secret (a webhook URL, a token, a password) is typed once into a password box, saved to a file only the hub can read
+(`<data>/notify/<id>.secret`, in the backups) and never shown again. To replace it, type a new one; leave the box blank to keep it.
+A message that cannot be sent is tried again for a day, with growing waits, then given up; the channel's row on the Settings page shows
+the last error and any messages given up. Every message names DaemonSight, its version and the hub's address.
+
+**Slack.** Slack's incoming webhook is one URL for one channel. Make a Slack app (api.slack.com/apps, Create New App), turn on Incoming
+Webhooks, "Add New Webhook to Workspace", pick the channel, and copy the URL (it starts `https://hooks.slack.com/services/`). Paste it as
+the webhook URL. Anyone who has the URL can post to that channel, so treat it like a password; remove the webhook in Slack to revoke it.
+Slack's pages: [incoming webhooks](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/).
+
+**Discord.** In Discord open the channel's settings (the gear beside the channel), Integrations, Webhooks, New Webhook, choose its name and
+channel, and Copy Webhook URL (it starts `https://discord.com/api/webhooks/`). Paste it as the webhook URL. DaemonSight sends no
+mentions, whatever a finding says. Anyone who has the URL can post to that channel; delete the webhook in Discord to revoke it. Discord's
+page: [webhook resource](https://docs.discord.com/developers/resources/webhook).
+
+**Ntfy.** Choose a server (`https://ntfy.sh` is the public one; a server of your own works too, over https, or over http on the same
+machine) and a topic. On a public server anyone who knows the topic can read what is sent, so use a long one that cannot be guessed, or
+a server where topics need a login: then choose "Access token" (make one in Ntfy's web app under Account, or with `ntfy token add`)
+or "User name and password". In the Ntfy app, subscribe to the same topic. Critical findings arrive at Ntfy's highest priority.
+Ntfy's page: [publishing](https://docs.ntfy.sh/publish/).
+
+**Email.** Enter the SMTP server, choose **Implicit TLS** (port 465) or **STARTTLS** (port 587), the user name and password (blank user
+name for a server that needs no login), the From address and up to 20 recipients. DaemonSight always encrypts and checks the server's
+certificate and name; a server that offers neither is refused, and the password is only sent over the encrypted connection. A server
+with a self-signed certificate is refused: use one with a certificate from an authority, or one whose certificate the hub's system
+trusts. The message is plain text and HTML in one, with the DaemonSight logo inline.
+
+| Provider | Server and port | What to know |
+|---|---|---|
+| Gmail or Google Workspace | `smtp.gmail.com`, 465 (implicit TLS) or 587 (STARTTLS) | Use the full address as the user name and an **app password**, not the account password. An app password needs 2-Step Verification on, and is not offered for accounts that use only security keys, for some work or school accounts, or with Advanced Protection ([Google: app passwords](https://support.google.com/mail/answer/185833), [Google Workspace: send email from a printer, scanner or app](https://knowledge.workspace.google.com/admin/gmail/send-email-from-a-printer-scanner-or-app)). Google's own pages disagree on whether a password login still works for Workspace accounts (the second says less secure apps are not supported from 1 May 2025 and points to OAuth, which DaemonSight does not use): not confirmed that it works for your account, so use Send test. |
+| Microsoft 365 | `smtp.office365.com`, 587 (STARTTLS) | Needs a licensed mailbox with **SMTP AUTH** switched on for it (off by default for organisations made after January 2020), its address and password as the login. Port 465 does not work with Microsoft 365. Microsoft says basic authentication for client submission is scheduled for retirement and recommends OAuth, which DaemonSight does not support: the retirement date was not read, so check [Microsoft's page](https://learn.microsoft.com/en-us/exchange/mail-flow-best-practices/how-to-set-up-a-multifunction-device-or-application-to-send-email-using-microsoft-365-or-office-365) before you rely on it. For internal recipients only, Microsoft points to High Volume Email, which DaemonSight has not been tried with. |
+| Your own mail server | its host, 465 or 587 | A relay that trusts the hub's address needs no user name. |
+| A mail service (SendGrid, Mailgun, Amazon SES and the like) | their SMTP host, 465 or 587 | Use the SMTP credentials the service makes for you. Their pages were not read for this guide. |
+
+Nothing here was tested against a live service. The steps inside the Slack, Discord and Ntfy apps are from memory of their usual
+layouts, not from pages read for this guide (only the pages linked above were); check them against what you see.
 
 ### Hosts that stop reporting
 

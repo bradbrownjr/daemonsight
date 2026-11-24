@@ -72,7 +72,7 @@
           {% else %}
           <div class="input-group ds-set-input">
             <input type="{{ 'number' if f.kind in ('int', 'float') else 'text' }}" class="form-control{{ ' is-invalid' if err }}" id="{{ fid }}" name="{{ it.key }}"
-              value="{{ shown if shown is not none else ('' if it.value is none else it.text) }}"
+              value="{{ shown if shown is not none else ('' if it.value is none else (it.value if f.kind == 'url' else it.text)) }}"
               {% if f.lo is not none %}min="{{ f.lo }}"{% endif %} {% if f.hi is not none %}max="{{ f.hi }}"{% endif %}
               step="{{ '1' if f.kind == 'int' else 'any' }}"{% if f.nullable %} placeholder="automatic"{% endif %}{% if err %} aria-describedby="{{ fid }}-err"{% endif %}>
             {% if f.unit %}<span class="input-group-text">{{ f.unit }}</span>{% endif %}
@@ -104,6 +104,7 @@
   </form>
   {% endif %}
 </section>
+{% if gid == 'notify' and v.can_edit %}{% include "partials/notify_channels.html" %}{% endif %}
 {% endfor %}
 
 <section class="card mb-4" id="config-file-only" aria-labelledby="ro-title">

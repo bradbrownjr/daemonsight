@@ -40,7 +40,7 @@ class Field:
     key: str                    # "outside.enabled": the config file's [section] and name
     label: str
     group: str
-    kind: str                   # "bool", "int", "float", "addresses", "choice"
+    kind: str                   # "bool", "int", "float", "addresses", "choice", "url"
     help: str
     lo: float | None = None
     hi: float | None = None
@@ -80,6 +80,14 @@ GROUPS = {
             "intro": "Downloads the Debian security tracker, FIRST's EPSS scores, CISA's KEV list and CISA's SSVC ratings (from the "
                      "CVE Services record of each matched CVE), matches each host's packages against them, and sets each "
                      "finding's deadline by CISA BOD 26-04.", "note": ""},
+    "notify": {"title": "Notifications", "hub_only": True,
+               "intro": "Sends alerts and digests to Ntfy, Slack, Discord or email when findings change. Add the channels "
+                        "below; each one chooses what it receives and when.",
+               "note_title": "About alerts and digests",
+               "note": "An alert goes out when a finding opens, gets worse, is about to pass its deadline or has passed it. "
+                       "Changes found in one pass arrive together in one message. A digest lists what changed since the last "
+                       "one, on a schedule in the hub's time zone. Accepted findings never alert. Every message names "
+                       "DaemonSight, its version and this hub's address."},
     "retention": {"title": "Retention", "hub_only": False,
                   "intro": "How long the database keeps history. On a hub this applies to every host's rows. "
                            "0 keeps it for good.", "note": ""},
@@ -139,6 +147,9 @@ FIELDS: tuple[Field, ...] = (
           "Once a day the hub asks raw.githubusercontent.com for the table of remediation timelines the project publishes "
           "(two small JSON files, checked strictly, never run). A newer table replaces the bundled one when CISA issues a "
           "successor to BOD 26-04, with no new release. Off: the table bundled with this version is used, and a fetched one is removed."),
+    Field("notify.hub_url", "Hub address for links", "notify", "url",
+          "The address you reach this hub at, for example https://daemonsight.example.com. Alerts link to findings here. "
+          "Blank: it is filled in with the address you are using when you save a channel."),
     Field("retention.metrics_hours", "Keep chart points for", "retention", "int",
           "Chart points, about one a second per host. 0 keeps them for good.", 0, 87600, unit="hours"),
     Field("retention.events_days", "Keep Recent changes for", "retention", "int",
@@ -264,6 +275,12 @@ def parse(f: Field, raw) -> object:
         if t not in dict(f.choices):
             raise Invalid("Choose one of: " + ", ".join(label for _v, label in f.choices) + ".")
         return t
+    if f.kind == "url":
+        from .notify import channels
+        try:
+            return channels.clean_hub_url(text)
+        except channels.Invalid as exc:
+            raise Invalid(str(exc)) from None
     if f.kind == "addresses":
         out: list[str] = []
         for line in text.replace("\r", "").split("\n"):
@@ -310,6 +327,14 @@ def valid_stored(f: Field, value) -> object:
         if isinstance(value, str) and value in dict(f.choices):
             return value
         raise Invalid("not one of the choices")
+    if f.kind == "url":
+        from .notify import channels
+        if not isinstance(value, str):
+            raise Invalid("not text")
+        try:
+            return channels.clean_hub_url(value)
+        except channels.Invalid as exc:
+            raise Invalid(str(exc)) from None
     if f.kind == "addresses":
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise Invalid("not a list of text")
@@ -393,6 +418,8 @@ def show(f: Field, value) -> str:
         return ", ".join(value) if value else "none"
     if f.kind == "choice":
         return dict(f.choices).get(value, str(value))
+    if f.kind == "url":
+        return value or "not set"
     if value is None:
         return "automatic"
     return f"{value:g}" if isinstance(value, float) else str(value)

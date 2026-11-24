@@ -180,3 +180,10 @@
 # enabled = true
 # Hours a UniFi device may be offline before it is a finding (0.25 to 720). The Settings page can change it.
 # unifi_offline_hours = 2
+
+[notify]
+# Only on the hub. Alerts and digests go to channels (Ntfy, Slack, Discord, email) that you add on the
+# Settings page, under Notifications; their secrets are files under the data folder, never this file.
+# The address people reach this hub at, for links in messages. Blank: filled in from the address you use
+# when you save a channel. The Settings page can change it.
+# hub_url = "https://daemonsight.example.com"

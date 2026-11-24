@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from .findings import fingerprint
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Events that belong to no host (a setting changed on the hub) use this as their
 # host. No host id can be empty (hub.HOST_RE), so a row never shows up under a host.
@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS findings (
     resolved_at REAL,
     fix         TEXT,   -- command(s) that resolve it, one per line; NULL when none does
     basis       TEXT,   -- what an acceptance is tied to; NULL means the title
-    howto       TEXT    -- plain-language steps, one per line (hub rules only); NULL when none
+    howto       TEXT,   -- plain-language steps, one per line (hub rules only); NULL when none
+    deadline_days INTEGER  -- remediation timeline in days from first_seen (CISA BOD 26-04); NULL when none
 );
 CREATE UNIQUE INDEX IF NOT EXISTS findings_open
     ON findings (host, rule, key) WHERE resolved_at IS NULL;
@@ -167,6 +168,79 @@ CREATE TABLE IF NOT EXISTS remotes (
     crowdsec_url   TEXT,                         -- an OPNsense firewall's CrowdSec Local API (its bouncer key is a file); NULL: none
     crowdsec_never TEXT                          -- JSON list of addresses and networks that must never be banned
 );
+
+-- Hub: alert channels (see notify/). `config` is the non-secret part as JSON; the secret (a webhook URL, a token, an
+-- SMTP password) is a file under <data_dir>/notify/ and is never in the database.
+CREATE TABLE IF NOT EXISTS notify_channels (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    kind        TEXT NOT NULL,                  -- ntfy, slack, discord, email
+    config      TEXT NOT NULL DEFAULT '{}',
+    severities  TEXT NOT NULL DEFAULT '["critical","high"]',
+    mode        TEXT NOT NULL DEFAULT 'immediate',   -- immediate, digest, both
+    send_resolved     INTEGER NOT NULL DEFAULT 0,
+    deadline_reminders INTEGER NOT NULL DEFAULT 1,
+    digest_freq   TEXT NOT NULL DEFAULT 'daily',  -- daily, weekly, monthly
+    digest_time   TEXT NOT NULL DEFAULT '08:00',  -- HH:MM in the hub's time zone
+    digest_weekday INTEGER NOT NULL DEFAULT 0,    -- 0 = Monday
+    digest_day    INTEGER NOT NULL DEFAULT 1,     -- 1 to 28
+    skip_empty    INTEGER NOT NULL DEFAULT 1,
+    created_at    REAL NOT NULL,
+    last_digest_at REAL,
+    next_digest_at REAL,
+    last_ok       REAL,
+    last_error    TEXT,
+    last_error_at REAL,
+    gave_up_at    REAL,
+    gave_up_count INTEGER NOT NULL DEFAULT 0
+);
+
+-- Hub: what each channel has been told about each open finding, so a change is noticed once. A row exists for every
+-- open finding and every channel; `announced` is the most urgent severity sent for this incarnation of the finding
+-- (a finding that resolves and opens again has a new first_seen).
+CREATE TABLE IF NOT EXISTS notify_seen (
+    channel_id  INTEGER NOT NULL,
+    host        TEXT NOT NULL,
+    rule        TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    first_seen  REAL NOT NULL,
+    severity    TEXT NOT NULL,
+    announced   TEXT,
+    accepted    INTEGER NOT NULL DEFAULT 0,
+    title       TEXT NOT NULL,
+    link        TEXT,
+    deadline_days INTEGER,
+    soon_sent   INTEGER NOT NULL DEFAULT 0,
+    passed_sent INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (channel_id, host, rule, key)
+);
+
+-- Hub: the outbox. One row per change per channel (and one per scheduled digest). The unique index is what keeps a
+-- change from being queued twice, across restarts. `state` is pending, sent, gave_up or none (kept for a digest only).
+CREATE TABLE IF NOT EXISTS notify_events (
+    id          INTEGER PRIMARY KEY,
+    channel_id  INTEGER NOT NULL,
+    ts          REAL NOT NULL,
+    kind        TEXT NOT NULL,      -- opened, worse, resolved, deadline_soon, deadline_passed, digest
+    host        TEXT NOT NULL,
+    rule        TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    first_seen  REAL NOT NULL,
+    severity    TEXT NOT NULL,
+    prev_severity TEXT,
+    title       TEXT NOT NULL,
+    link        TEXT,
+    deadline_ts REAL,
+    info        TEXT,               -- digest: JSON {since, until}
+    state       TEXT NOT NULL,
+    in_digest   INTEGER NOT NULL DEFAULT 0,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    next_try    REAL NOT NULL DEFAULT 0,
+    sent_at     REAL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS notify_events_once
+    ON notify_events (channel_id, host, rule, key, first_seen, kind, severity);
+CREATE INDEX IF NOT EXISTS notify_events_pending ON notify_events (channel_id, state);
 """
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -236,6 +310,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         for col in ("fix", "basis", "howto"):
             if col not in have:
                 conn.execute(f"ALTER TABLE findings ADD COLUMN {col} TEXT")
+        # Version 11 findings have no deadline_days (alert channels, schema 12; the notify_* tables are in SCHEMA above).
+        if "deadline_days" not in {r[1] for r in conn.execute("PRAGMA table_info(findings)")}:
+            conn.execute("ALTER TABLE findings ADD COLUMN deadline_days INTEGER")
         # Version 8 remotes have no reader_url (the Docker reader, schema 9).
         if "reader_url" not in {r[1] for r in conn.execute("PRAGMA table_info(remotes)")}:
             conn.execute("ALTER TABLE remotes ADD COLUMN reader_url TEXT")
@@ -317,15 +394,15 @@ def reconcile_findings(conn, host: str, ts: float, current: list,
             seen.add(ident)
             if ident in open_rows:
                 conn.execute(
-                    "UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, howto=?, last_seen=? "
-                    "WHERE id=?",
-                    (f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, ts, open_rows[ident]["id"]),
+                    "UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, howto=?, deadline_days=?, "
+                    "last_seen=? WHERE id=?",
+                    (f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, f.deadline_days, ts, open_rows[ident]["id"]),
                 )
             else:
                 conn.execute(
                     "INSERT INTO findings (host, rule, key, severity, title, detail, link, fix, basis, howto, "
-                    "first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (host, f.rule, f.key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, ts, ts),
+                    "deadline_days, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (host, f.rule, f.key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, f.deadline_days, ts, ts),
                 )
                 changes.append(("opened", f))
         for ident, row in open_rows.items():
@@ -353,12 +430,13 @@ def set_finding(conn, host: str, ts: float, f, *, rule: str, key: str) -> str | 
             return "resolved"
         return None
     if row:
-        conn.execute("UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, howto=?, last_seen=? "
-                     "WHERE id=?", (f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, ts, row["id"]))
+        conn.execute("UPDATE findings SET severity=?, title=?, detail=?, link=?, fix=?, basis=?, howto=?, deadline_days=?, "
+                     "last_seen=? WHERE id=?", (f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto,
+                                                f.deadline_days, ts, row["id"]))
         return None
     conn.execute("INSERT INTO findings (host, rule, key, severity, title, detail, link, fix, basis, howto, "
-                 "first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                 (host, rule, key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, ts, ts))
+                 "deadline_days, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (host, rule, key, f.severity, f.title, f.detail, f.link, f.fix, f.basis, f.howto, f.deadline_days, ts, ts))
     return "opened"
 
 
@@ -409,6 +487,7 @@ def _finding_dict(r: sqlite3.Row) -> dict:
     d.setdefault("fix", None)
     d.setdefault("basis", None)
     d.setdefault("howto", None)
+    d.setdefault("deadline_days", None)
     return d
 
 

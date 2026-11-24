@@ -180,6 +180,7 @@ def firmware_rules(fw: dict | None, now: float, cves: dict | None = None, prior:
         names = sorted({p["name"] for p in fw.get("packages", [])} | {p["name"] for p in fw.get("sets", [])})
         basis = digest(f"{p['name']}={p['new']}" for p in fw.get("packages", []) + fw.get("sets", [])) if names else "updates"
         howto = HOWTO_UPDATES
+        days = None
         # The CVEs the update fixes (the hub's CVE chore matched them against the changelog). Severity and deadline are the
         # worst CVE's by CISA BOD 26-04 (a firewall is always exposed). The basis carries the offered version and the CVE
         # ids, never the severity, so an accepted finding comes back when either changes and only then.
@@ -196,9 +197,11 @@ def firmware_rules(fw: dict | None, now: float, cves: dict | None = None, prior:
             if s["worst"] is not None:
                 why += match.finding_text(s["worst"], s["exposure"].why)[1]
             howto = steps(*why)
+            days = s["worst"]["rating"].days if s["worst"] is not None else None
         # The update's CVEs are not matched yet (after a restart): keep the finding as it was rather than one without them.
         held = held_finding(prior, "opnsense.updates", "updates") if cves and cves.get("state") == "pending" and cves.get("enabled") else None
-        out.append(held or Finding("opnsense.updates", "updates", sev, title[:300], detail[:3900], "/#firmware", None, basis, howto))
+        out.append(held or Finding("opnsense.updates", "updates", sev, title[:300], detail[:3900], "/#firmware", None, basis, howto,
+                                   deadline_days=days))
     if fw.get("needs_reboot"):
         out.append(Finding("opnsense.reboot", "reboot", "medium", "A reboot is needed to finish the pending update",
                            "The firewall says the pending firmware update needs a reboot to take effect.", "/#firmware", None,

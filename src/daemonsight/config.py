@@ -146,6 +146,15 @@ class RemoteConfig:
 
 
 @dataclass
+class NotifyConfig:
+    """On the hub: where alerts and digests link to. The channels themselves (Ntfy, Slack, Discord, email) are added on the
+    Settings page and live in the database; their secrets are files under <data_dir>/notify/."""
+    # The address people reach this hub at, for links in messages ("https://daemonsight.example.com"). Blank: filled in from
+    # the address the administrator used when saving a channel.
+    hub_url: str = ""
+
+
+@dataclass
 class RetentionConfig:
     """How long the database keeps history: on a host its collector prunes,
     on a hub the hub prunes every host's rows. 0 keeps for good."""
@@ -194,6 +203,7 @@ class Config:
     cve: CveConfig = field(default_factory=CveConfig)
     outside: OutsideConfig = field(default_factory=OutsideConfig)
     remote: RemoteConfig = field(default_factory=RemoteConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
     # Web UIs to link from each source's panel, e.g. {caddy = "https://...",

@@ -228,11 +228,12 @@ def test_cisa_rating_replaces_the_estimate_and_exposure_moves_the_row(cvedb):
     src = [["brotli", "1.0.9-2", ["libbrotli1"]]]
     f = findings_for(cvedb, src)["brotli"]                    # not exposed, KEV, not automatable, total: row 11
     assert (f.severity, "row 11: 14 days" in f.detail) == ("high", True)
+    assert f.deadline_days == 14                              # the timeline in days, for the alert channels' deadline reminders
     assert not any("estimated" in x for x in f.howto.split("\n"))
     assert "Automatable by an adversary: no (CISA)" in f.howto and "Technical impact: total (CISA)" in f.howto
     e = findings_for(cvedb, src, exposed=True)["brotli"]      # exposed, KEV, not automatable, total: row 3, 3 days and triage
     assert e.severity == "critical" and "row 3: 3 days and forensic triage" in e.detail
-    assert e.title.endswith("fix within 3 days")
+    assert e.title.endswith("fix within 3 days") and e.deadline_days == 3
     assert "This row also asks for forensic triage" in e.howto and "Preserve evidence before patching" in e.howto
     assert "forensic triage" not in f.howto
     # The basis does not carry the severity: an accepted finding stays accepted when the exposure changes.
