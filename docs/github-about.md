@@ -4,10 +4,10 @@ Not applied by any script. The owner sets these in the repository's web UI.
 
 ## About description
 
-Settings via the gear next to "About" on the repository page (350 characters at most).
+Settings via the gear next to "About" on the repository page (350 characters at most; keep it near 140, since the mobile app and search results cut longer text).
 
 ```
-Self-hosted security dashboard for Linux servers, Docker, Unraid and OPNsense. Shows what the internet can reach, CVEs ranked by CISA KEV and EPSS, and what to fix, with the command. Read-only, no agent on Unraid or OPNsense.
+Self-hosted security dashboard for Linux servers, Docker, Unraid and OPNsense: what's exposed, which CVEs matter, and how to fix them.
 ```
 
 ## Topics
