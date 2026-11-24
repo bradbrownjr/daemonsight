@@ -219,9 +219,6 @@ def load_file(path, release: str):
 
 # ---- matching ---------------------------------------------------------------
 
-MINOR_PRIORITIES = ("negligible",)
-
-
 def classify(rows: list[tuple], installed: str, esm: frozenset[str] | set[str] | None, priority: str) -> tuple[str, str | None] | None:
     """The state and fixed version of one CVE for one source package, from every row the file has for it (one per pocket).
 
@@ -230,7 +227,8 @@ def classify(rows: list[tuple], installed: str, esm: frozenset[str] | set[str] |
       but only through Ubuntu Pro) unless the host has that Pro service on (`esm` holds "esm-infra" and "esm-apps" for the
       services it has), then it is "fix" like any other.
     * With no applicable fix and an open row: "nofix".
-    * A negligible priority makes any of them "minor": listed, never a finding (as Debian's `unimportant`).
+    * A negligible priority does not change the state: it is a vendor rating that cve/priority.py applies (low, only when the
+      system is not exposed and the CVE is not in the KEV catalog).
     Returns None when nothing applies."""
     best = None
     open_row = False
@@ -254,8 +252,6 @@ def classify(rows: list[tuple], installed: str, esm: frozenset[str] | set[str] |
         out = ("nofix", None)
     else:
         return None
-    if priority in MINOR_PRIORITIES:
-        return "minor", out[1]
     return out
 
 
