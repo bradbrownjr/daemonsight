@@ -1,0 +1,86 @@
+{
+ "26:74.ktls": {
+  "cve_name": "CVE-2026-101313",
+  "topic": "Kernel memory disclosure via KTLS control messages"
+ },
+ "26:75.linux": {
+  "cve_name": "CVE-2026-101314",
+  "topic": "Kernel memory disclosure via Linuxulator extattr syscalls"
+ },
+ "26:76.ocs_fc": {
+  "cve_name": "CVE-2026-127752, CVE-2026-127753, CVE-2026-127754",
+  "topic": "Multiple vulnerabilities in the ocs_fc(4) driver"
+ },
+ "26:77.netlink": {
+  "cve_name": "CVE-2026-127747",
+  "topic": "Local privilege escalation via netlink heap buffer overflow"
+ },
+ "26:78.gssd": {
+  "cve_name": "CVE-2026-101315",
+  "topic": "gssd maps unrecognized Kerberos principals to UID 0"
+ },
+ "26:79.nfs": {
+  "cve_name": "CVE-2026-101317",
+  "topic": "NFSv4 server remote code execution via stateid type confusion"
+ },
+ "26:80.vfs": {
+  "cve_name": "CVE-2026-101316",
+  "topic": "Privilege escalation via inotify watch descriptor wraparound"
+ },
+ "26:81.vfs": {
+  "cve_name": "CVE-2026-101312",
+  "topic": "Capsicum and O_RESOLVE_BENEATH bypass at mount roots"
+ },
+ "26:82.ipsec": {
+  "cve_name": "CVE-2026-101318",
+  "topic": "IPsec stream cipher counter reuse"
+ },
+ "26:83.unix": {
+  "cve_name": "CVE-2026-127751",
+  "topic": "Privilege escalation via shutdown(2) race on unix sockets"
+ },
+ "26:84.vmm": {
+  "cve_name": "CVE-2026-101319",
+  "topic": "bhyve guests can panic the host on Intel CPUs"
+ },
+ "26:85.kqueue": {
+  "cve_name": "CVE-2026-101320, CVE-2026-127750",
+  "topic": "Multiple vulnerabilities in kevent(2)"
+ },
+ "26:86.freebsd32": {
+  "cve_name": "CVE-2026-101321",
+  "topic": "Privilege escalation via compat32 recvmsg(2) control messages"
+ },
+ "26:87.socket": {
+  "cve_name": "CVE-2026-127740",
+  "topic": "Privilege escalation via socket unsplice timeout"
+ },
+ "26:88.sound": {
+  "cve_name": "CVE-2026-127741",
+  "topic": "Privilege escalation via sound software buffer resizing"
+ },
+ "26:89.bsnmp": {
+  "cve_name": "CVE-2026-127742, CVE-2026-127743",
+  "topic": "Multiple vulnerabilities in bsnmpd(1)"
+ },
+ "26:90.vm": {
+  "cve_name": "CVE-2026-127744",
+  "topic": "Privilege escalation via prefaulting on largepage mappings"
+ },
+ "26:91.fdescfs": {
+  "cve_name": "CVE-2026-127745",
+  "topic": "Privilege escalation via missing fdescfs(4) access checks"
+ },
+ "26:92.vfs": {
+  "cve_name": "CVE-2026-127746",
+  "topic": "Directory permission bypass via open(2)"
+ },
+ "26:93.tcp": {
+  "cve_name": "CVE-2026-127748",
+  "topic": "Local privilege escalation via TCP MSG_OOB handling"
+ },
+ "26:94.tmpfs": {
+  "cve_name": "CVE-2026-127749",
+  "topic": "tmpfs(4) fails to clear set-group-ID bit on new files"
+ }
+}

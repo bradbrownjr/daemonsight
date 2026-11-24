@@ -1,0 +1,39 @@
+{
+ "ghsa_id": "GHSA-2v2x-m4j7-76pv",
+ "cve_id": "CVE-2026-63442",
+ "url": "https://api.github.com/repos/opnsense/core/security-advisories/GHSA-2v2x-m4j7-76pv",
+ "html_url": "https://github.com/opnsense/core/security/advisories/GHSA-2v2x-m4j7-76pv",
+ "summary": "Log Forgery via Login Username CRLF in WebGUI Authentication \u2192 Pf Table IP Blocking",
+ "severity": "high",
+ "state": "published",
+ "published_at": "2026-07-01T13:44:55Z",
+ "vulnerabilities": [
+  {
+   "package": {
+    "ecosystem": "",
+    "name": "opnsense/core "
+   },
+   "vulnerable_version_range": "<= 26.1.10, <= 26.4.1",
+   "patched_versions": "26.1.11, 26.4.1p1",
+   "vulnerable_functions": []
+  }
+ ],
+ "cvss_severities": {
+  "cvss_v3": {
+   "vector_string": "CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H",
+   "score": 8.1
+  },
+  "cvss_v4": {
+   "vector_string": null,
+   "score": null
+  }
+ },
+ "cwe_ids": [
+  "CWE-117"
+ ],
+ "cvss": {
+  "vector_string": "CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H",
+  "score": 8.1
+ },
+ "description": "#### Summary\n\nAn unauthenticated remote attacker can inject CRLF (`\\r\\n`) characters into the\nOPNsense WebGUI login username field. The injected bytes survive through PHP's\n`syslog()` into syslog- [cut]"
+}

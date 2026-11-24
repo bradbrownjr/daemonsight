@@ -9,12 +9,18 @@ they always agree.
 Severity follows the Debian host rule (cve/match.py `package_findings`) and the image rule (docker_images.cve_summary): a
 fixable CVE on CISA's KEV list, or one with an EPSS score at or above `[cve] epss_high`, is High; any other fixable CVE is
 Medium. Every CVE found here is fixable, because it is listed as fixed by the update the firewall offers.
+
+The changelog also names security advisories (FreeBSD and GitHub) with no CVE id. The hub resolves them to CVE ids where the
+advisory's publisher names any (cve/advisories.py); those CVEs are in the list above, with the advisory as the evidence ("via
+FreeBSD-SA-26:74.ktls"). An advisory that names none, or has not been resolved yet, stays in the advisories list, and
+`summary` rates it: Medium at least (own choice: a security fix that cannot be ranked is not routine), and High when GitHub
+rates it High or Critical (GitHub's own rating of OPNsense's advisory). Errata notices and plugin notes are not counted.
 """
 
 from __future__ import annotations
 
 from .. import settings
-from ..cve import match, opnsense, store
+from ..cve import advisories, match, opnsense, store
 
 SHOWN = 4                  # CVEs named in a finding's text
 LIST_MAX = 60              # rows on the page
@@ -52,11 +58,19 @@ def _matches(cdb, ph: str, p: dict, row) -> dict:
         c["date"] = dates.get(c["fixed"].split("_")[0])
         c["url"] = cve_url(c["cve"])
         c["changelog"] = opnsense.changelog_url(c["fixed"])
-    seen, adv = set(), []
-    for r in opnsense.fixes_between(cdb, p["installed"], p["offered"], "adv"):
-        if r["ref"] not in seen:
-            seen.add(r["ref"])
-            adv.append({"ref": r["ref"], "version": r["version"], "line": r["line"], "url": advisory_url(r["ref"])})
+    adv = []
+    via: dict[str, list[dict]] = {}
+    for a in opnsense.advisories_between(cdb, p["installed"], p["offered"]):
+        a["url"] = advisory_url(a["ref"])
+        a["label"] = advisories.label(a["ref"])
+        adv.append(a)
+        for cve in a["cves"]:
+            via.setdefault(cve, []).append(a)
+    for c in cves:
+        c["direct"] = bool(c["line"])
+        c["via"] = [{"label": a["label"], "url": a["url"]} for a in via.get(c["cve"], [])]
+        if not c["line"] and via.get(c["cve"]):
+            c["line"] = via[c["cve"]][-1]["line"]          # named by an advisory only: its changelog bullet is the line
     return {"state": "ok", "cves": cves, "advisories": adv, "note": row["note"] or "",
             "releases": opnsense.releases_between(cdb, p["installed"], p["offered"])}
 
@@ -132,12 +146,23 @@ def unseen_state(fw: dict | None, cves: dict | None, now: float) -> dict | None:
             "ready": ok and un["state"] == "ok", "note": un.get("note") or ""}
 
 
+def fixes_phrase(n: int, adv: int) -> str:
+    """"27 CVEs and 2 other security advisories", "2 security advisories" (no CVE) or "3 CVEs": what an update fixes. `adv` is
+    the number of security advisories that name no CVE."""
+    cves = f"{n} {'CVE' if n == 1 else 'CVEs'}"
+    if not adv:
+        return cves
+    word = "security advisory" if adv == 1 else "security advisories"
+    return f"{cves} and {adv} other {word}" if n else f"{adv} {word}"
+
+
 def unseen_title(st: dict, now: float | None = None) -> str:
-    """"26.7.10 is out (fixes 3 CVEs); the firewall hasn't checked since Nov 18" (the finding's title and the card's line)."""
+    """"26.7.10 is out (fixes 3 CVEs and 2 other security advisories); the firewall hasn't checked since Nov 18" (the finding's
+    title and the card's line)."""
     import time
-    s = summary(st["cves"], st["epss_high"])
-    n = len(s["fixable"])
-    head = f"{st['version']} is out" + (f" (fixes {n} {'CVE' if n == 1 else 'CVEs'})" if n else "")
+    s = summary(st["cves"], st["epss_high"], st.get("advisories"))
+    n, k = len(s["fixable"]), len(s["unresolved"])
+    head = f"{st['version']} is out" + (f" (fixes {fixes_phrase(n, k)})" if n or k else "")
     if st["checked"] is None:
         return head + "; the firewall's last check time is unknown"
     t = time.gmtime(st["checked"])
@@ -145,17 +170,35 @@ def unseen_title(st: dict, now: float | None = None) -> str:
     return head + "; the firewall hasn't checked since " + time.strftime("%b %-d", t) + ("" if t.tm_year == year else f" {t.tm_year}")
 
 
-def summary(cves: list[dict], epss_high: float) -> dict:
-    """Counts and the worst CVEs, ranked as a host's are (KEV, then EPSS). Every one is fixable by the update."""
+def _worse(a: str | None, b: str) -> str:
+    order = (None, "low", "medium", "high")
+    return b if order.index(b) > order.index(a) else a
+
+
+def summary(cves: list[dict], epss_high: float, advisories: list[dict] | None = None) -> dict:
+    """Counts and the worst CVEs, ranked as a host's are (KEV, then EPSS). Every one is fixable by the update. `advisories` are
+    the security advisories of the range (`opnsense.advisories_between`, as `load` returns them). Those that name no CVE
+    (`unresolved`: not asked about yet, failed, or naming none) make the severity at least Medium, and High when GitHub rates
+    one High or Critical. A CVE that ranks higher is not lowered by any of this."""
     ranked = sorted(cves, key=match.rank_key)
     kev = [c for c in ranked if c["kev"]]
     hot = [c for c in ranked if not c["kev"] and (c["epss"] or 0) >= epss_high]
-    return {"fixable": ranked, "kev": kev, "hot": hot, "severity": "high" if kev or hot else "medium" if ranked else None}
+    unresolved = [a for a in (advisories or []) if not a.get("cves")]
+    sev = "high" if kev or hot else "medium" if ranked else None
+    if unresolved:
+        sev = _worse(sev, "high" if any(a.get("severity") in ("high", "critical") for a in unresolved) else "medium")
+    return {"fixable": ranked, "kev": kev, "hot": hot, "unresolved": unresolved, "severity": sev}
 
 
-def headline(n: int, kev: int, lower: bool = False) -> str:
-    """"Fixes 5 CVEs (2 known exploited)": the card's line, and (lower-case, `lower`) part of the finding's title."""
-    text = f"Fixes {n} {'CVE' if n == 1 else 'CVEs'}" + (f" ({kev} known exploited)" if kev else "")
+def headline(n: int, kev: int, lower: bool = False, adv: int = 0) -> str:
+    """"Fixes 5 CVEs (2 known exploited) and 2 other security advisories": the card's line, and (lower-case, `lower`) part of
+    the finding's title. `adv` counts the advisories with no CVE; with no CVE at all: "Fixes 2 security advisories"."""
+    if n:
+        text = "Fixes " + fixes_phrase(n, 0) + (f" ({kev} known exploited)" if kev else "")
+        if adv:
+            text += f" and {adv} other security {'advisory' if adv == 1 else 'advisories'}"
+    else:
+        text = "Fixes " + fixes_phrase(0, adv)
     return text[0].lower() + text[1:] if lower else text
 
 
@@ -165,4 +208,6 @@ def describe(c: dict) -> str:
         bits.append("exploited, CISA KEV")
     bits.append(match.pct(c["epss"]))
     bits.append(f"fixed in {c['release']}")
+    if c.get("via") and not c.get("direct"):
+        bits.append("via " + ", ".join(v["label"] for v in c["via"][:2]))
     return f"{c['cve']} ({', '.join(bits)})"

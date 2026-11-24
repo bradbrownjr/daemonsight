@@ -84,7 +84,7 @@ def _cves_view(c: dict | None) -> dict | None:
         return None
     p = c["plan"]
     feed = c["feed"]
-    out = {"state": c["state"], "text": None, "headline": None, "rows": [], "more": 0, "advisories": [], "kev": 0,
+    out = {"state": c["state"], "text": None, "headline": None, "rows": [], "more": 0, "advisories": [], "adv_open": 0, "adv_total": 0, "kev": 0,
            "error": None, "note": c.get("note") or "", "releases": len(c.get("releases") or []),
            "src": prov.opnsense_cves(c)}
     if feed.get("error"):
@@ -107,20 +107,30 @@ def _cves_view(c: dict | None) -> dict | None:
     return out
 
 
+def _adv_view(a: dict) -> dict:
+    """One advisory of the card's list: its name and link, the CVEs it named (each with its link) or why there are none."""
+    kind, _, ref = a["ref"].partition(":")
+    state = ("cves" if a["cves"] else "none") if a["state"] == "ok" else ("error" if a["state"] == "error" else "pending")
+    return {"ref": ref, "label": a["label"], "kind": ADVISORY_KIND.get(kind, "Other"), "url": a["url"], "version": a["version"], "line": a["line"],
+            "cves": [{"cve": c, "url": opnsense_cves.cve_url(c)} for c in a["cves"]], "state": state,
+            "severity": a.get("severity") or "", "score": a.get("score")}
+
+
 def _fill_rows(out: dict, c: dict) -> None:
     """The headline, the ranked CVE rows and the advisories of a matched range (`c` has "cves", "advisories", "epss_high")."""
-    s = opnsense_cves.summary(c["cves"], c["epss_high"])
-    n = len(s["fixable"])
+    s = opnsense_cves.summary(c["cves"], c["epss_high"], c.get("advisories"))
+    n, k = len(s["fixable"]), len(s["unresolved"])
     out["kev"] = len(s["kev"])
-    out["headline"] = opnsense_cves.headline(n, out["kev"]) if n else "Fixes no CVE that OPNsense's changelog names"
+    out["headline"] = opnsense_cves.headline(n, out["kev"], adv=k) if n or k else "Fixes no CVE or security advisory that OPNsense's changelog names"
     for x in s["fixable"][:opnsense_cves.LIST_MAX]:
         out["rows"].append({"cve": x["cve"], "url": x["url"], "kev": x["kev"], "kev_name": x.get("kev_name") or "",
                             "epss": x["epss"], "epss_text": views._epss_text(x["epss"]), "epss_v": _epss_v(x["epss"]),
-                            "release": x["release"], "date": x["date"] or "", "changelog": x["changelog"], "line": x["line"]})
+                            "release": x["release"], "date": x["date"] or "", "changelog": x["changelog"], "line": x["line"],
+                            "via": x.get("via") or []})
     out["more"] = max(0, n - opnsense_cves.LIST_MAX)
-    out["advisories"] = [{"ref": a["ref"].split(":", 1)[1], "kind": ADVISORY_KIND.get(a["ref"].split(":", 1)[0], "Other"),
-                          "url": a["url"], "version": a["version"], "line": a["line"]}
-                         for a in c["advisories"]][:opnsense_cves.LIST_MAX]
+    out["advisories"] = [_adv_view(a) for a in c.get("advisories") or []][:opnsense_cves.LIST_MAX]
+    out["adv_open"] = k
+    out["adv_total"] = len(c.get("advisories") or [])
 
 
 def _unseen_view(fw: dict, c: dict, now: float) -> dict | None:
@@ -131,7 +141,7 @@ def _unseen_view(fw: dict, c: dict, now: float) -> dict | None:
     if not st:
         return None
     out = {"title": opnsense_cves.unseen_title(st, now) if st["version"] else None, "version": st["version"], "rows": [], "more": 0,
-           "advisories": [], "kev": 0, "headline": None, "note": st["note"], "pending": bool(st["version"]) and not st["ready"],
+           "advisories": [], "adv_open": 0, "adv_total": 0, "kev": 0, "headline": None, "note": st["note"], "pending": bool(st["version"]) and not st["ready"],
            "newer": (f"OPNsense {st['newer_series']} is also out. It is a major upgrade, which the firewall offers after its next check."
                      if st["newer_series"] else ""),
            "seen": st["plan"].get("seen") or fw.get("version") or "", "installed": st["plan"].get("installed") or "",

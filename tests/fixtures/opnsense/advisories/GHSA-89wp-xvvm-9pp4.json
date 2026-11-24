@@ -1,0 +1,40 @@
+{
+ "ghsa_id": "GHSA-89wp-xvvm-9pp4",
+ "cve_id": null,
+ "url": "https://api.github.com/repos/opnsense/core/security-advisories/GHSA-89wp-xvvm-9pp4",
+ "html_url": "https://github.com/opnsense/core/security/advisories/GHSA-89wp-xvvm-9pp4",
+ "summary": "Authenticated Root Command Injection via Firmware `flavour`/`subscription` Settings (incomplete fix of CVE\u20112026\u2011119409)",
+ "severity": "high",
+ "state": "published",
+ "published_at": "2026-11-24T07:45:01Z",
+ "vulnerabilities": [
+  {
+   "package": {
+    "ecosystem": "",
+    "name": "opnsense/core"
+   },
+   "vulnerable_version_range": "<= 26.7.9, 26.10.0p1",
+   "patched_versions": "26.7.10, 26.10.0p2",
+   "vulnerable_functions": []
+  }
+ ],
+ "cvss_severities": {
+  "cvss_v3": {
+   "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+   "score": 7.2
+  },
+  "cvss_v4": {
+   "vector_string": null,
+   "score": null
+  }
+ },
+ "cwe_ids": [
+  "CWE-20",
+  "CWE-78"
+ ],
+ "cvss": {
+  "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+  "score": 7.2
+ },
+ "description": "### Summary\n\nThe fix for **CVE\u20112026\u2011119409** (\u201cAuthenticated Root Command Injection via Firmware Mirror Configuration\u201d, fixed in 26.7.8) is **incomplete**.\n\nThe patch added an input mask to the `s [cut]"
+}

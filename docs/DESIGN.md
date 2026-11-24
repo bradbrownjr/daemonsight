@@ -626,9 +626,10 @@ Per the core rule in "Goal", these gaps are on the roadmap:
 
 - **OPNsense:** done for releases: the CVEs a pending release or hotfix fixes
   come from the project's own changelog (see "OPNsense updates and CVEs"). Still
-  open: package updates outside a release, and advisories the changelog names
-  without a CVE id. FreeBSD's VuXML (the data behind `pkg audit`) is the next
-  source for both; not researched.
+  open: package updates outside a release. The advisories the changelog names
+  without a CVE id are resolved to CVE ids (see "Security advisories in the
+  changelog"). FreeBSD's VuXML (the data behind `pkg audit`) is the next source
+  for package updates; not researched.
 - **Unraid:** OS updates are shown with no CVE data. Research whether Unraid
   publishes security notes per release that can be matched.
 - **Proxmox VE and PBS:** they run on Debian, so a collector on the node gives
@@ -943,7 +944,8 @@ feed's own host, and a download is capped (400 MB decoded for the tracker,
 100 MB EPSS, 50 MB KEV). A feed that fails is retried an hour later; the last
 good data stays in use. Nothing here runs in a request. Alpine's security database is the exception to "three feeds": its files are
 fetched only for the Alpine releases the hub's container images run (see "CVE matching: Alpine images"). So is the OPNsense project's
-changelog, one tarball fetched while an enabled OPNsense system exists (see "OPNsense updates and CVEs"). Canonical's Ubuntu OVAL files are
+changelog, one tarball fetched while an enabled OPNsense system exists (see "OPNsense updates and CVEs"); the advisories it names are
+then asked for one by one, once each, from `www.freebsd.org` and `api.github.com` (see "Security advisories in the changelog"). Canonical's Ubuntu OVAL files are
 fetched only for the Ubuntu releases the hub's hosts and images run (see "CVE matching: Ubuntu").
 
 | Feed | Size as served | After decoding | Notes |
@@ -1586,8 +1588,8 @@ table; nothing is hidden.
 
 | Rule | Severity | When |
 |------|----------|------|
-| `opnsense.updates` | Low; Medium at 5 packages or a new release; High at 20 packages or waiting more than 30 days. With CVEs the update fixes: at least Medium, and High when one is on CISA's KEV list or has an EPSS score at or above `[cve] epss_high` | The last firmware check found updates. "Waiting" counts from when the hub first saw them. The basis is the package names and versions, and with CVEs also the offered version and the CVE ids, so a new update, another offered version or a new CVE brings an accepted finding back. See "OPNsense updates and CVEs" |
-| `opnsense.unseen_release` | `opnsense_cves.summary(...)["severity"]` of the CVEs the newest release fixes (the call `opnsense.updates` uses); Low with none | The changelog has a release or hotfix in the firewall's series above what it runs and above what its last check showed, and that check is 2 days or more old, missing or unreadable. Clears when the firewall checks. The basis is that version. See "OPNsense updates and CVEs" |
+| `opnsense.updates` | Low; Medium at 5 packages or a new release; High at 20 packages or waiting more than 30 days. With CVEs the update fixes: at least Medium, and High when one is on CISA's KEV list or has an EPSS score at or above `[cve] epss_high`. Security advisories with no CVE: at least Medium, High when GitHub rates one High or Critical | The last firmware check found updates. "Waiting" counts from when the hub first saw them. The basis is the package names and versions, and with CVEs also the offered version and the CVE ids, so a new update, another offered version or a new CVE brings an accepted finding back. See "OPNsense updates and CVEs" |
+| `opnsense.unseen_release` | `opnsense_cves.summary(...)["severity"]` of the CVEs and advisories the newest release fixes (the call `opnsense.updates` uses); Low with none | The changelog has a release or hotfix in the firewall's series above what it runs and above what its last check showed, and that check is 2 days or more old, missing or unreadable. Clears when the firewall checks. The basis is that version. See "OPNsense updates and CVEs" |
 | `opnsense.reboot` | Medium | The pending update needs a reboot |
 | `opnsense.gateway` | High down; Medium degraded | Gateway down, loss of 10% or more, or round trip of 300 ms or more |
 | `opnsense.wg_no_peer` | High | An instance with no peer (an unlinked peer vanishes from the reply, so this is how it shows) |
@@ -1677,9 +1679,9 @@ firewall's own changelog list skips them unless it runs a development version [6
 introduction are not counted: 24.7.3 says CVE-2024-6640 "resurfaces" (not fixed), 23.7.8 says "we are aware of" CVE-2023-5678 and
 21.1.6 says CVE-2020-15078 "does not affect" the shipped version, while 21.7.2 lists four CVEs as addressed. Telling those apart needs
 reading sentences, so none is guessed. The count is a floor: many fixes appear only as a FreeBSD or GitHub advisory with no CVE id
-(267 distinct advisory references against the 50 CVE ids), and some may not be in the file at all. Advisories without a CVE id are counted and
-listed on the card ("The changelog also names N security advisories with no CVE id"), not ranked, since KEV and EPSS need an id.
-Mapping a FreeBSD advisory to its CVE ids needs the advisory text (FreeBSD's VuXML); that is the later option below.
+(267 distinct advisory references against the 50 CVE ids), and some may not be in the file at all. The hub asks each advisory's
+publisher for its CVE ids; the ones it names join the count and are ranked. An advisory that names none stays an advisory, listed on the
+card and rated by `summary()` (see "Security advisories in the changelog" below).
 
 **What docs.opnsense.org adds.** Nothing for this. `CE_releases.html` [69] is an index that links one page per series
 (`releases/CE_26.1.html`), and those pages are the same repository rendered (the CVE set of 26.1 on the page equals the files'),
@@ -1717,8 +1719,8 @@ wording): unverified.
 
 **Matching.** `cve/run.py` makes a firewall's CVEs under the pseudo-host `opnsense:<system id>` in `cve.db` (a host id has no colon,
 so it cannot clash; image CVEs use `docker:<host>:<image id>` the same way). `match` rows: source `opnsense`, state `fix`, `installed` the
-running version, `fixed` the section that names the CVE; `opn_fix` holds the changelog line as the evidence, `opn_release` each
-release's date. The KEV flag and EPSS score come from the same tables as for a host, so the ranking is the same. The rows are made again
+running version, `fixed` the section that names the CVE (a line, or an advisory that lists it); `opn_fix` holds the changelog line as
+the evidence, `opn_release` each release's date, `opn_adv` what each advisory named. The KEV flag and EPSS score come from the same tables as for a host, so the ranking is the same. The rows are made again
 when the plan (installed and offered), the series loaded or the changelog data changes.
 
 **Fetching** (`cve/feeds.py`, `cve/run.py`). While at least one enabled OPNsense system exists, whether or not an update is pending (see "A release the firewall has not been offered"). At most once
@@ -1727,13 +1729,15 @@ no other redirect target), generic User-Agent. A failure (HTTP error, not a tarb
 keeps the last good rows, records the error on the feed's row and shows "The last try to read OPNsense's changelog failed: ... These are
 from the last good copy, N ago." on the card. A change in the series a firewall needs is read from the saved file without
 downloading. When no enabled firewall is left, the file, rows and feed row are dropped. The Vulnerabilities page lists
-the feed while it exists. `cve.db` is schema 3 (adds `opn_release` and `opn_fix`; an older hub refuses it, and `cve.db` can be deleted).
+the feed while it exists. `cve.db` is schema 5 (3 added `opn_release` and `opn_fix`, 5 adds `opn_adv`; an older hub refuses it, and `cve.db` can be deleted).
 
 **The finding** (`opnsense.updates`, in `remote/opnsense_rules.py`, reading `remote/opnsense_cves.py`). With CVEs it adds "; fixes N
 CVEs (K known exploited)" to the title and the count and the top four to the detail. Severity follows the Debian host rule
 (`cve/match.py` `package_findings`) and the image rule (`remote/docker_images.py` `cve_summary`): a fixable CVE on CISA's KEV list, or
 with an EPSS score at or above `[cve] epss_high`, is High; any other fixable CVE is Medium; the finding's own rule (packages, a new
-release, days waiting) can still make it higher. The basis is the package list, the offered version and the CVE ids, so an accepted
+release, days waiting) can still make it higher. A security advisory of the changelog that names no CVE (see "Security advisories in the
+changelog") makes it at least Medium, and High when GitHub rates one High or Critical. The basis is the package list, the offered version, the CVE ids and the
+unresolved advisories, so an accepted
 finding comes back when the offered version or a CVE changes (a CVE newly added to KEV changes the severity, not the basis, as for a
 host). "What to do": the card, the changelog link for the offered version, System, Firmware, Updates (`Menu.xml`: Status, Settings,
 Changelog, Updates, Plugins, Packages) [68].
@@ -1774,7 +1778,8 @@ Unverified: the format on a firewall set to another locale, and the abbreviation
 *The finding.* Title "26.7.10 is out (fixes N CVEs); the firewall hasn't checked since Nov 18" (the count is left out at 0; with no
 readable time: "the firewall's last check time is unknown"). Detail: the installed and seen versions, then the same sentence and top
 CVEs as `opnsense.updates`. Severity is `opnsense_cves.summary(...)["severity"]` on the CVEs of the range from the installed version
-to the newest one, the call `opnsense.updates` makes, with no floor or mapping of its own, and Low with no CVE; a test holds both rules to the
+to the newest one with that range's advisories, the call `opnsense.updates` makes, with no floor or mapping of its own, and Low with no
+CVE and no advisory; a test holds both rules to the
 same severity for the same CVE set. The basis is the newest unseen version. "What to do": Check now: System, Firmware, Status, Check
 for updates (`Menu.xml`) [68]; so it checks on its own: System, Settings, Cron (`Cron/Menu/Menu.xml`: System, Settings, Cron), add a
 job whose command is "Firmware update check", daily. That is the description of the configd action `firmware poll`
@@ -1799,6 +1804,109 @@ Not verified: that the hub's whole path ran against a live firewall (no live sys
 fixture and the changelog files are real); what `all_packages` shows for the `opnsense` package when a hotfix is offered on a real
 firewall; that `upgrade_major_version` names the series the next major upgrade lands on; the file layout before 15.1 (not in the
 repository); the Business Edition's `business/` files (different series, not parsed).
+
+### Security advisories in the changelog
+
+Found 2026-11-24. The live `community/26.7/26.7.10` has no CVE id in a line or a footnote, so the hub read it as a routine release
+("26.7.10 is out", Low). Its footnotes name 21 FreeBSD security advisories (`FREEBSD-SA:26:74.ktls` to `26:94.tmpfs`; the brief
+counted 9, `74` to `82`, and the file has 12 more), 2 GitHub advisories (`GHSA-f35q-c34m-pfw3`, `GHSA-89wp-xvvm-9pp4`), 4 FreeBSD errata
+(`FREEBSD-EN:26:29` to `26:32`), plugin notes (`PLUGINS:`) and version notes (`PHP8:8.5.13`). It is a security release. The parser
+kept the 23 advisories as `adv` rows; they were counted and listed, and nothing ranked them. The hub now asks each advisory's
+publisher for its CVE ids, once, so the release's CVEs join the set that KEV and EPSS rank.
+
+**Which footnote kinds exist.** Counted over every footnote of the 317 release files under `community/` on 2026-11-24: `FREEBSD-SA` 246, `FREEBSD-EN`
+132, `GHSA` 24 (23 distinct), `CVE` 23, `FREEBSD-GH` 46, `FREEBSD-BZ` 8, `FREEBSD-RN` 8, `PLUGINS` 466, and about 40 kinds that name a
+software version (`PHP5`, `PHP7`, `PHP8` 145, `NSS` 81, `SQLITE` 60, `CURL` 54, `OPENVPN`, `UNBOUND`, `OPENSSH`, `LIBRESSL`, `SUDO`,
+`PYTHON`, `OPENSSL`, `EXPAT`, ...) [66]. Handled: `FREEBSD-SA` and `GHSA`, the two with a machine-readable record that names CVEs.
+Not handled, and why:
+
+- The version notes (`PHP8:8.5.13`, `NSS:1.134`, `CURL:7.68.0`): the footnote names a version, not an issue. A CVE list for a PHP or
+  curl version needs NVD or the project's own list, which is another source. Not researched. (Real PHP fixes do reach the card when
+  the changelog types the CVE id in the line, as 26.1.11 and 26.7.7 do.)
+- `FREEBSD-EN`: not security advisories (below). Left out of every count.
+- `FREEBSD-GH`, `FREEBSD-BZ`, `FREEBSD-RN`, `SRC`, `CORE`, `DOCS`, `PLUGINS`: a commit, a bug report, release notes, an issue,
+  a manual page or a plugin directory. None is an advisory.
+- Bullets that say "security" or "vulnerability" with no footnote (23 in the files, most about settings such as "strict security
+  mode"; one is "src: fix out-of-bounds read vulnerability in libarchive"): no identifier, so nothing to look up.
+
+**FreeBSD** [80]. Two fetched: `FreeBSD-SA-26:74.ktls` has `CVE Name:       CVE-2026-101313`, and `FreeBSD-SA-26:76.ocs_fc` has
+`CVE Name:       CVE-2026-127752, CVE-2026-127753, CVE-2026-127754` (one line, ids separated by commas). All 21 advisories of 26.7.10
+were fetched: each has the line, 25 CVE ids between them, 3 at most in one. Older ones read the same (19:08, 18:10, 23:06, 24:04,
+25:08). The advisory is a plain-text, PGP-signed file at `https://www.freebsd.org/security/advisories/FreeBSD-SA-26:74.ktls.asc`
+(HTTP 200, `text/plain`, 5 to 9 KB). `https://security.freebsd.org/advisories/<same name>` answers 301 to that address, so the hub asks
+`www.freebsd.org` directly and follows no redirect. The module part of the name matters (`26:74.ktls`, not `26:74`: the short form is a
+404). The index (`/security/advisories/`, 205 KB of HTML) and the RSS feed (`/security/feed.xml`) list advisory names and dates and no
+CVE ids, so one file cannot cover many advisories: one request per advisory. FreeBSD's VuXML (`vuxml.freebsd.org/freebsd/vuln.xml.bz2`,
+1.4 MB, 10.5 MB decoded) puts a `cvename` next to a `freebsdsa` for only 474 of its 6,880 entries; it was not used. The header block's
+other fields are `Topic:`, `Category:`, `Module:`, `Announced:`, `Credits:`, `Affects:`, `Corrected:`. Only `Topic:` (kept as a short
+title) and `CVE Name:` (and the indented lines after it) are read, and only before the line "For general information" (the sections
+below it can say anything). A page that is not that advisory (the name is not in its first lines) is a failure, not an answer. The
+advisory's PGP signature is not checked. Errata notices are not security advisories: they are a separate document type ("Errata
+Notice" in the header; the security page says an issue "will receive a Security Advisory or an Errata Notice" [80]), and the two read,
+`FreeBSD-EN-26:32.zfs` and `FreeBSD-EN-26:29.tzdata`, have no `CVE Name:` field and no "CVE" at all. They are never asked for and are
+not counted.
+
+**GitHub** [81]. `GET https://api.github.com/advisories/GHSA-f35q-c34m-pfw3` (the global advisory database) answered 404 for both
+advisories of 26.7.10: an advisory published on a repository's own security page is not in it. `GET
+https://api.github.com/repos/opnsense/core/security-advisories/GHSA-f35q-c34m-pfw3` answered 200 with no token ("Anyone can access any
+published security advisory on a public repository"). Both, as returned:
+
+| Advisory | `cve_id` | `severity` | `cvss.score` | `state` | Summary |
+|---|---|---|---|---|---|
+| `GHSA-f35q-c34m-pfw3` | null | high | 7.2 | published | Unquoted PPP password in mpd_*.conf allows root command execution (incomplete fix of CVE-2026-57154) |
+| `GHSA-89wp-xvvm-9pp4` | null | high | 7.2 | published | Authenticated Root Command Injection via Firmware `flavour`/`subscription` Settings (incomplete fix of CVE-2026-119409) |
+
+Four older ones of the changelog, for the shape: `GHSA-2v2x-m4j7-76pv` has `cve_id` CVE-2026-63442 (high, 8.1), `GHSA-33q4-wcv7-r8fr`
+has none (high, 8.1), `GHSA-2f7g-25f3-55v7` and `GHSA-2w8j-hpp2-8rfj` have none (medium, no score). So an OPNsense advisory can carry a
+CVE id, and `severity` can be set while `cvss.score` is null. A summary may name another CVE ("incomplete fix of CVE-2026-57154"); that
+is the earlier fix, not this advisory's, so the description and summary are never read for ids, only `cve_id`. The reply is 17 to 20 KB
+(mostly the description and the reporters' profile fields, none of which is kept). Rate limit [82]: 60 requests an hour per address
+with no token (the replies carried `x-ratelimit-limit: 60`, `x-ratelimit-remaining`, `x-ratelimit-used`, `x-ratelimit-reset` as epoch
+seconds and `x-ratelimit-resource: core`; the research used about 15 of them). Over the limit the answer is 403 or 429; "do not retry
+before `x-ratelimit-reset`", or before `retry-after` seconds when that header is present. Not provoked here: a real 403 was not seen, so
+that the headers are on it is the documentation's word.
+
+**What the hub does** (`cve/advisories.py`, `cve/run.py`).
+
+- Which advisories: those of the changelog sections a firewall needs, the pending range and the unseen range, and no others (a firewall
+  on the newest release asks for nothing). A reference that is not `FREEBSD-SA:` or `GHSA:` is never asked for.
+- Once, for good: an answer is kept in `cve.db` `opn_adv` (reference, `ok`, CVE ids, GitHub's `severity` and `score`, a short title) and
+  never asked again, because a published FreeBSD advisory does not change. It stays when no firewall needs the changelog any more. A
+  failure (HTTP error, 404, not that advisory, too big, not JSON) is stored with a reason and tried again after `[cve] refresh_hours`
+  (24). A GitHub advisory can be given a CVE id after it is published, so one that resolved to none is asked again after 7 days (own
+  choice) for as long as a pending or unseen range still names it; a CVE it names then is kept for good and the firewall is matched
+  again. A failed recheck keeps the earlier answer and waits another 7 days. A FreeBSD advisory that named no CVE is not rechecked.
+- Politely: at most 40 advisories in a pass; one request at a time, 0.5 s apart on `www.freebsd.org` and 1 s apart on `api.github.com`
+  (the hub's own choice; neither site states a limit for this). A 429 or 503 from either stops that host for the pass. A 403 or 429 from
+  GitHub stops GitHub until the time its headers give (`retry-after`, else `x-ratelimit-reset` when `x-ratelimit-remaining` is 0, else an
+  hour; at least a minute and at most six hours, so a hostile header cannot park it for long), kept in `meta` `opn_gh_until`; nothing is
+  held against the advisory. An answer that says no request is left stops GitHub until the reset too.
+- Safely: HTTPS only, the host must be the one asked, no redirect is followed (a 3xx is a failure), 128 KB at most for FreeBSD and 512 KB
+  for GitHub, standard library parsing, and only CVE ids that match `CVE-YYYY-NNNN` and a rating from the four GitHub words are kept.
+  The two hosts are in SECURITY.md.
+- Matching: the CVEs an advisory names join the section's CVE set (`opnsense.match_host`) and are ranked with KEV and EPSS like any
+  other. A CVE named by a line and by an advisory is one row, at the highest section that names it. The card's table says "via
+  FreeBSD-SA-26:74.ktls" under the line (and the finding's top CVEs say it too). The firewall is matched again when the set of
+  answers changes (`cve.db` generation).
+- Unresolved advisories (not asked yet, failed, or naming no CVE) stay in the advisories list. Titles: "fixes 27 CVEs and 2 other
+  security advisories", or "fixes 2 security advisories" with no CVE (singular as needed). Severity, in the one `summary()` that
+  `opnsense.updates` and `opnsense.unseen_release` both call: an unresolved security advisory makes it at least Medium (own choice: a
+  security fix that cannot be ranked is not routine), and High when GitHub rates one High or Critical and no CVE ranks higher already
+  (GitHub's rating is the project's own, so it is taken as given). A CVE that ranks higher is never lowered. Errata and plugin notes do
+  not count. The `opnsense.updates` basis adds the unresolved references, so an advisory that later names a CVE brings an accepted
+  finding back, as a new CVE does.
+- Card: the advisories folded under the CVE table, "23 security advisories in the changelog; 2 with no CVE yet, not ranked", and for each
+  one its name linked to the advisory, the release, and its CVEs (linked to cve.org), "no CVE published", "CVE lookup pending" or "CVE
+  lookup failed, tried again later", and GitHub's rating and score. The (i) panel adds the two address patterns.
+
+Result for 26.7.10 against the real answers: 25 CVE ids through FreeBSD, 2 GitHub advisories with no CVE (both High), so the unseen
+finding reads "26.7.10 is out (fixes 25 CVEs and 2 other security advisories); the firewall hasn't checked since Nov 18" at High (before:
+"26.7.10 is out; ...", Low). For a firewall on 26.7.1 the range adds 26.7.7's two PHP CVEs: 27.
+
+Not verified: a live hub fetching the real sites (the tests use fakes of both, made from the real answers saved on 2026-11-24); a real
+403 or 429 from GitHub; that the FreeBSD site stays at `www.freebsd.org/security/advisories/` (the `security.freebsd.org` address
+redirects there today); the PGP signature; the field's definition on FreeBSD's side (read from 25 advisories, the "how to read an
+advisory" page was not found).
 
 ### CrowdSec bans on an OPNsense firewall
 
@@ -2678,7 +2786,7 @@ The collector must stay light:
 - CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
 - Ubuntu CVE matching: see "CVE matching: Ubuntu" (not run on a live hub with a real Ubuntu host or container; the Pro service files, the signed-kernel names and `pro fix --dry-run` were read from the Pro client's and the archive's files, not seen on a host).
 - Alpine CVE matching: see "CVE matching: Alpine images" (not run on a live hub with a real Alpine container; edge images' `VERSION_ID` and `apk version -l '<'` output in a stock image were not seen).
-- OPNsense update CVEs: see "OPNsense updates and CVEs" (the changelog files are real and the parser was run on all 317 release files; the whole path was not run on a live hub with a real firewall; the offered version of a hotfix in a real firmware status, the placement of out-of-band hotfix lines, and the Business Edition files were not checked).
+- OPNsense update CVEs: see "OPNsense updates and CVEs" (the changelog files are real and the parser was run on all 317 release files; the whole path was not run on a live hub with a real firewall; the offered version of a hotfix in a real firmware status, the placement of out-of-band hotfix lines, and the Business Edition files were not checked). The advisory lookups: see "Security advisories in the changelog".
 - CrowdSec: the read path was checked on a live firewall on 2026-11-24 (see "CrowdSec bans on an OPNsense firewall"). Still read from the source only: `null` for no decisions, `limit`, the 403 for a wrong key and the `duration` format. That the pf bouncer drops the states of a banned address is the owner's account, not read from its source.
 - Whether the Docker source works against Podman's Docker-compatible socket.
 - The Docker source on a real Docker host other than Unraid's.
@@ -2772,3 +2880,6 @@ The collector must stay light:
 77. FreeBSD `date(1)` (`bin/date/date.1`, "The format string for the default display is `%+`"), https://github.com/freebsd/freebsd-src/blob/main/bin/date/date.1, read 2026-11-24
 78. FreeBSD libc `lib/libc/stdtime/timelocal.c`, C locale `date_fmt`: `"%a %b %e %H:%M:%S %Z %Y"`, read 2026-11-24
 79. OPNsense core, read 2026-11-24: `src/opnsense/service/conf/actions.d/actions_firmware.conf` (`[poll]`: `command:/usr/local/opnsense/scripts/firmware/launcher.sh -r 1500 check`, `description:Firmware update check`), `src/opnsense/mvc/app/models/OPNsense/Cron/Cron.xml` (`command` is a `ConfigdActionsField`), `Base/FieldTypes/ConfigdActionsField.php` (lists actions by `description`), `Cron/Menu/Menu.xml` (System, Settings, Cron). The firewall's own cron list was not opened
+80. FreeBSD security advisories, read 2026-11-24: https://www.freebsd.org/security/ (Security Advisory and Errata Notice as separate kinds), the index https://www.freebsd.org/security/advisories/, the feed https://www.freebsd.org/security/feed.xml, 21 advisories `https://www.freebsd.org/security/advisories/FreeBSD-SA-26:74.ktls.asc` to `26:94.tmpfs.asc` (`CVE Name:` in each; `security.freebsd.org/advisories/...` answers 301 to this address), `FreeBSD-EN-26:29.tzdata.asc` and `FreeBSD-EN-26:32.zfs.asc` (no CVE field), and VuXML https://vuxml.freebsd.org/freebsd/vuln.xml.bz2
+81. GitHub REST API, read and called 2026-11-24 with no token: `GET /advisories/{ghsa_id}` (global advisories, 404 for OPNsense's) https://docs.github.com/en/rest/security-advisories/global-advisories, and `GET /repos/opnsense/core/security-advisories/{ghsa_id}` (200; "Anyone can access any published security advisory on a public repository") https://docs.github.com/en/rest/security-advisories/repository-advisories#get-a-repository-security-advisory
+82. GitHub REST API rate limits: https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api ("The primary rate limit for unauthenticated requests is 60 requests per hour"; 403 or 429 when exceeded, `x-ratelimit-remaining` 0, "should not retry your request until after the time specified by the `x-ratelimit-reset` header"; `retry-after` for a secondary limit)

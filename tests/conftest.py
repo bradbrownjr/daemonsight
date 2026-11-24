@@ -14,3 +14,10 @@ def cfg(tmp_path):
     (tmp_path / "password").write_text(hash_password(PASSWORD))
     (tmp_path / "secret").write_text("x" * 64)
     return c
+
+
+@pytest.fixture(autouse=True)
+def _no_advisory_spacing(monkeypatch):
+    """The hub waits between two requests for an OPNsense advisory (cve/advisories.py `SPACING`); tests do not."""
+    from daemonsight.cve import advisories
+    monkeypatch.setattr(advisories, "SPACING", {advisories.SA_HOST: 0.0, advisories.GH_HOST: 0.0})

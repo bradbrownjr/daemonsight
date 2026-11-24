@@ -125,15 +125,21 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   with CISA's known-exploited list and EPSS, and shows "Fixes N CVEs (K known
   exploited)" on the Updates card with the release and the changelog line for
   each. The finding gains the count and the worst CVEs, and is High when one is
-  exploited or has a high exploit score. The changelog names some fixes only as
-  a FreeBSD or GitHub advisory with no CVE id; those are counted and listed, not
-  ranked, so treat the CVE count as a floor.
+  exploited or has a high exploit score. The changelog names many fixes only as
+  a FreeBSD or GitHub security advisory. The hub looks each one up once and the
+  CVE ids it lists join the ranking, with "via FreeBSD-SA-26:74.ktls" as the
+  evidence. An advisory that lists none (or has not been looked up yet) is
+  listed as "no CVE published", counted in the title ("fixes 27 CVEs and 2
+  other security advisories"), and makes the finding at least Medium, or High
+  when GitHub rates it High or Critical. Errata notices and plugin notes are not
+  counted. Treat the CVE count as a floor.
 - **A release the firewall has not seen.** The hub reads the changelog for every
   OPNsense firewall, not only one with an update pending. When it lists a
   newer release or hotfix in the firewall's series than the firewall runs or
   last saw, and the firewall has not checked for updates in 2 days or more (or
   its check time is missing), it raises a finding such as "26.7.10 is out
-  (fixes 3 CVEs); the firewall hasn't checked since Nov 18". It names the CVEs
+  (fixes 25 CVEs and 2 other security advisories); the firewall hasn't checked
+  since Nov 18". It names the CVEs
   with the same ranking, tells you how to check now and how to add the
   firmware check to cron, and clears when the firewall checks. The Updates card
   shows the same sentence and CVE table. A major upgrade alone (a newer series)

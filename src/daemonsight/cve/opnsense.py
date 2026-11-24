@@ -25,8 +25,11 @@ File format (README, and every file read)
 What counts as a fix here (conservative; a miss is better than a false "fixed")
     * a bullet that has a CVE id in its own text, or one of its footnotes is a `CVE:` (or cve.mitre.org) reference;
     * the CVE ids in a lead line that ends in `:` apply to the bullets under it (the out-of-band PHP hotfix);
-    * a bullet with a `GHSA:` or `FREEBSD-SA:` footnote and no CVE id is counted as an advisory without a CVE id: it is
-      not matched against KEV or EPSS, only counted and listed.
+    * a bullet with a `GHSA:` or `FREEBSD-SA:` footnote and no CVE id is kept as an advisory (`kind` adv). The hub asks the
+      advisory's publisher for its CVE ids once (advisories.py); the ones it names join the release's CVE set and are ranked
+      by KEV and EPSS like any other. An advisory that names none, or has not been resolved yet, stays an advisory: counted,
+      listed and rated (remote/opnsense_cves.py `summary`). `FREEBSD-EN:` errata, `PLUGINS:` and the version footnotes
+      (`PHP8:`, `NSS:`, `CURL:` ...) are not security references here and are never kept.
     * CVE ids that appear only in the prose before the patch notes are NOT counted. Some say a CVE is not fixed ("resurfacing
     CVE-2024-6640" in 24.7.3, "does not affect" CVE-2020-15078 in 21.1.6, "We are aware of ... CVE-2023-5678" in 23.7.8);
     others list fixes (21.7.2's "Today the following CVEs are being addressed"). Telling them apart needs reading
@@ -315,13 +318,38 @@ def releases_between(conn, installed: str, offered: str) -> list[dict]:
     return out
 
 
+def advisories_between(conn, installed: str, offered: str) -> list[dict]:
+    """The security advisories (FreeBSD and GitHub) the changelog names with no CVE id in installed < version <= offered, once
+    each (at the highest section that names it), oldest first, with what `opn_adv` kept: "cves" (resolved ids), "severity"
+    and "score" (the GHSA rating), "title", and "state": "ok" (asked; "cves" may be empty), "error" or "pending" (never asked)."""
+    from . import advisories
+    seen: dict[str, dict] = {}
+    for r in fixes_between(conn, installed, offered, "adv"):
+        seen[r["ref"]] = r                       # oldest first: the last one written is the highest
+    kept = advisories.cached(conn, set(seen))
+    out = []
+    for ref, r in seen.items():
+        k = kept.get(ref)
+        ok = bool(k) and k["status"] == "ok"
+        out.append({"ref": ref, "version": r["version"], "line": r["line"], "cves": k["cves"] if ok else [],
+                    "severity": k["severity"] if ok else None, "score": k["score"] if ok else None,
+                    "title": (k or {}).get("title") or "", "state": k["status"] if k else "pending",
+                    "error": (k or {}).get("detail") or ""})
+    out.sort(key=lambda a: (opnver.key(a["version"]), a["ref"]))
+    return out
+
+
 def match_host(conn, host: str, p: dict, gen: str) -> dict:
     """Replace the firewall's rows in `match` (cve/match.py's table: `source` is `opnsense`, `state` is `fix`, `installed` is
     the running version and `fixed` the highest section of the range that names the CVE) and its `matched` row. `p` is a
-    `plan`. Returns {"releases", "cves", "note"}."""
+    `plan`. A CVE is named by a changelog line, by a resolved advisory (`advisories_between`), or both: one row, at the
+    highest section. Returns {"releases", "cves", "note"}."""
     by_cve: dict[str, str] = {}
-    for r in fixes_between(conn, p["installed"], p["offered"], "cve"):
-        by_cve[r["ref"]] = r["version"]          # oldest first, so the last one written is the highest
+    named = [(r["version"], r["ref"]) for r in fixes_between(conn, p["installed"], p["offered"], "cve")]
+    named += [(a["version"], c) for a in advisories_between(conn, p["installed"], p["offered"]) for c in a["cves"]]
+    for version, cve in named:
+        if cve not in by_cve or opnver.compare(version, by_cve[cve]) > 0:
+            by_cve[cve] = version
     rels = releases_between(conn, p["installed"], p["offered"])
     base = p["offered"].split("_")[0]
     note = ""
