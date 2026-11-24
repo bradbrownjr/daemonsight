@@ -83,6 +83,7 @@ capabilities each source needs is listed under "To verify".
 | Debian security tracker | `https://security-tracker.debian.org/tracker/data/json` | hub, 24 h | Read by the hub, a CVE at a time. Fields kept: status, fixed version, urgency, nodsa reason, a short description. [24][25] |
 | EPSS | `https://epss.empiricalsecurity.com/epss_scores-current.csv.gz` | hub, 24 h | All scores. Free, no registration; FIRST asks for attribution. [26][27] |
 | CISA KEV | `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` | hub, 24 h | CC0 1.0. [28] |
+| CISA's SSVC rating (Automatable, Technical Impact) | `https://cveawg.mitre.org/api/cve/<CVE-ID>` | hub, a CVE at a time, again after 7 days | The CVE Services record of each CVE the hub has matched; its "CISA-ADP" container has the rating, and the record's CVSS is kept for display. No key. [86][87] |
 
 Not used: Trivy. Two of its releases were compromised (GHSA-69fq-xp46-6x23
 and GHSA-mcj4-mphf-j9ff), and a scanner binary on every host is the
@@ -111,7 +112,7 @@ DaemonSight knows when it first appeared and when it cleared.
 | `pkg.restart` | needrestart lists services using old libraries | Low |
 | `pkg.lists_stale` | The package lists are over 3 days old (age is the newest list file, which apt dates by the repository's publish time). Names an unset `APT::Periodic::Update-Package-Lists`, the usual cause when apt-daily.timer runs but does nothing. When `pkg.auto_updates_off` also fires it points there for the fix instead of repeating it | Low |
 | `pkg.auto_updates_off` | Nothing installs updates on its own: apt, unattended-upgrades missing, switched off (`Unattended-Upgrade` is `0` or unset) or its `apt-daily-upgrade.timer` disabled; Fedora, `dnf5-plugin-automatic` missing, its timer not enabled, or `apply_updates` off. Not raised for `role = "workstation"` (desktops update through the software centre) or when the collector couldn't read the settings | Low |
-| `cve.package` | One per source package on the hub: an open or fixable CVE is on CISA's KEV list, or a fixable one has an EPSS score of 0.10 or more (`[cve] epss_high`): High. Otherwise a fix is available: Medium. Unfixed CVEs that aren't on KEV, and "won't fix or minor" ones, make no finding. | High or Medium |
+| `cve.package` | One per source package on the hub: a CVE an update fixes, or one on CISA's KEV list that has no fix yet. The severity is the worst of its CVEs by CISA BOD 26-04's Table 1 (see "Prioritisation"): 3 days is Critical, 14 days High, 60 days Medium, "fix on system upgrade" Low. Unfixed CVEs that aren't on KEV make no finding. | Critical, High, Medium or Low |
 | `cve.feed_stale` | A feed has had no successful fetch (a 200 or a 304) for over 3 days. Opened on every host with a package list | Low |
 | `os.lts` | A Debian release is past regular support and inside LTS, or an Ubuntu release is past standard support and inside ESM | Low; Medium within 180 days of the end of LTS or ESM |
 | `os.eol_soon` | A Fedora release is within 60 days of its EOL date | Low |
@@ -381,7 +382,7 @@ reason: a mistake there could lock the administrator out of the page needed to
 fix it.
 
 Editable on a hub: `outside.enabled`, `outside.source` (a choice of two, kind `choice`), `outside.addresses`,
-`outside.refresh_hours`, `cve.enabled`, `cve.refresh_hours`, `cve.epss_high`,
+`outside.refresh_hours`, `cve.enabled`, `cve.refresh_hours`, `cve.epss_automatable`,
 all three `retention.*`, `backup.interval_hours` (blank is automatic, stored
 as null), `backup.keep`, and `remote.enabled`. `backup.dir` is read-only: it
 decides where files holding secrets are written. `outside.key_file` (the Shodan key's path) is read-only for the same reason.
@@ -400,7 +401,7 @@ table and runs the chores, so a saved change is visible to the next read.
 
 | Consumer | When it reads |
 |---|---|
-| `cve.run.Chore` | start of every `run_once` (each minute). Off: closes `cve.*` findings and returns. A new `epss_high` or turning it on again recomputes the findings |
+| `cve.run.Chore` | start of every `run_once` (each minute). Off: closes `cve.*` findings and returns. A new `epss_automatable` or turning it on again recomputes the findings |
 | `outside.Chore` | start of every `run_once`. Off: closes `outside.*` findings and returns 0. Addresses and `refresh_hours` are used from that pass |
 | `remote.poll.loop` | every 5 seconds, before it reads the systems |
 | `_hub_chores` (retention, backups) | every minute; pruning stays hourly, with the values read at that pass |
@@ -599,7 +600,7 @@ supports ntfy and SMTP email. Daily digest optional.
    2c. The hub: collectors upload to one install that shows every host, with the container image and Unraid template, retention and backups, and updates from the hub. See "Hub". Done.
 3. Package and CVE checks.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
-   3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, ranks by EPSS and CISA's KEV list, and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian, Raspberry Pi OS and Ubuntu (see "CVE matching" and "CVE matching: Ubuntu"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
+   3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, rates each CVE with CISA BOD 26-04's table (see "Prioritisation"), and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian, Raspberry Pi OS and Ubuntu (see "CVE matching" and "CVE matching: Ubuntu"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
    3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases. Parts 1 to 3 are done: the reader reads each running image's package list, the Container images page shows each image's base OS and support status (`docker.eol_base`), Debian images are matched against the Debian tracker, Alpine images against Alpine's security database and Ubuntu images against Canonical's OVAL data (`docker.image_cves`). See "Docker reader", "Container images", "CVE matching: Alpine images" and "CVE matching: Ubuntu".
 4. Alerts, recent-changes feed, history charts with drill-down. See "History charts and drill-down (planned)".
 5. `.deb` package and docs.
@@ -872,8 +873,8 @@ It runs as uid 10001 with everything in `/data`: the config (written from
 secret, the database, `cve.db` and the saved feed files in `cve/` (about 60
 MB; not backed up, since the hub downloads them again), `backups/` and
 `daemonsight.log` (`log_file`, rotated at 5 MB, four files). The hub needs
-outbound HTTPS to `security-tracker.debian.org`, `epss.empiricalsecurity.com`
-and `www.cisa.gov`, plus `secdb.alpinelinux.org` for Alpine images and `codeload.github.com` for an OPNsense firewall with a release
+outbound HTTPS to `security-tracker.debian.org`, `epss.empiricalsecurity.com`,
+`www.cisa.gov` and `cveawg.mitre.org`, plus `secdb.alpinelinux.org` for Alpine images and `codeload.github.com` for an OPNsense firewall with a release
 update pending; it works without them, with `cve.feed_stale` after 3 days. The remote sources (OPNsense, Unraid)
 run in the hub, since they are API calls from the LAN.
 
@@ -896,6 +897,7 @@ package list, and the hub does the rest.
 collector ── dpkg-query ──► inventory ──(upload field)──► hub ── match ──► findings, page
                                                            ▲
           Debian tracker · Ubuntu OVAL · EPSS · CISA KEV ──┘  (HTTPS, 24 h, conditional)
+                          CVE Services (CISA's SSVC rating, a CVE at a time) ──┘
 ```
 
 ### What a host sends
@@ -981,7 +983,8 @@ the maintainers' own reader (`bin/tracker_data.py`) [25]:
 | `resolved`, V at or past the fixed version | Fixed already: not stored |
 | `resolved`, V older than the fixed version | **Fix available** (an update fixes it) |
 | `open` | **No fix yet** |
-| `open` or `resolved` with `nodsa` (minor issue, ignored, postponed), or urgency `unimportant` or `end-of-life` | **Won't fix or minor**: listed, never a finding |
+| `open` or `resolved` with `nodsa` (minor issue, ignored, postponed), or urgency `end-of-life` | **Won't fix or minor**: listed, never a finding |
+| urgency `unimportant` | The state above (fix available or no fix yet), and the vendor rule of "Prioritisation" can lower its urgency to Low |
 | `undetermined` | **Being assessed**: listed, never a finding |
 
 Raspberry Pi OS (`raspbian`) is looked up as Debian by its codename, as
@@ -1004,23 +1007,12 @@ of 155 real versions and 600 pairs is kept as a test.
 One `cve.package` finding per source package, keyed by the package and linked
 to its row on the Vulnerabilities page (`/vulnerabilities#cve-<package>`):
 
-- **High** if an open or fixable CVE in it is on CISA's KEV list, or a fixable one
-  has an EPSS score at or above `[cve] epss_high`.
-- **Medium** if a fix is available.
-- Otherwise none. An unfixed CVE that isn't on KEV, and any "won't fix or
-  minor" one, shows only on the page. A KEV CVE that Debian calls minor
-  (the tracker's `nodejs` and `openssh` rows for CVE-2026-111497 and
-  CVE-2026-123158 were such cases on this machine) is flagged on the page but
-  makes no finding.
-
-**The EPSS threshold.** FIRST's FAQ says "There is no universal threshold",
-that 0.10 (10%) "is commonly cited in the field but carries no special
-authority from EPSS", and that 0.10 "currently sits around the 95th
-percentile" [27]. A cut-off of 0.5 would flag almost nothing, so the default is
-0.10, and `[cve] epss_high` changes it. On the Debian 13 test host, with all 448
-unfixed and 141 fixable CVEs matched, none had an EPSS score of 0.10 or more,
-so the choice changed no finding there. The finding says "high exploit score"
-rather than calling anything critical, since FIRST says EPSS defines no such labels.
+- Its severity and deadline are those of the worst CVE the package has that an update fixes (or, on a host, a KEV CVE that has no
+  fix yet), by CISA BOD 26-04's Table 1: "Prioritisation (CISA BOD 26-04)" below. The title says the deadline ("brotli:
+  CVE-2026-111497 is being exploited (CISA KEV); fix within 14 days"), the detail starts with it, and the "What to do" panel names
+  the four inputs of the worst CVE.
+- Otherwise none. An unfixed CVE that isn't on KEV, and any "won't fix or minor" one, shows only on the page. A KEV CVE that Debian
+  calls minor is flagged on the page, and counts as a KEV CVE for the table.
 
 **How it reads next to `pkg.security_updates`.** That rule says what apt will
 install (names from `apt-get -s dist-upgrade`) and that it matters; this one
@@ -1030,6 +1022,140 @@ it yet: run sudo apt update, and check the host's apt sources include the
 security archive", which is the case that `pkg.security_updates` can't see.
 Both give `sudo apt upgrade` as the fix.
 
+### Prioritisation (CISA BOD 26-04)
+
+Every update and CVE finding takes its severity from one model, `cve/priority.py`, so that a host package, a container image and
+an OPNsense update with the same CVE are rated the same way. The model is CISA's Binding Operational Directive 26-04,
+"Prioritizing Security Updates Based on Risk", of June 10, 2026 [83][84]. It binds federal agencies only. DaemonSight borrows its
+timelines as a published, risk-based default that an administrator can read and check, and adds nothing of its own to the table.
+
+**Why this and not CVSS.** The directive's implementation guidance says that "CVSS scores such as 'critical' or 'high' do not
+prescribe specific actions" [84], and FIRST's CVSS v4.0 user guide says the base score "should not be used alone to assess risk"
+[89]. The table asks four questions about one CVE on one system, and answers with a number of days. The old rule (KEV, or an EPSS score of 0.10 and above, is High;
+any fix is Medium) was a local guess. CVSS is kept as information only: the record's CVSS is shown, with its source, and decides
+nothing.
+
+**The four inputs.**
+
+| Input | Where it comes from |
+|---|---|
+| Publicly exposed | Per system, see "Exposure per system" below. |
+| In the KEV catalog | CISA's catalog, the `kev` table loaded from the feed. |
+| Automatable by an adversary | The "Automatable" decision point of CISA's SSVC rating, in the CVE record's "CISA-ADP" container (`cve/records.py`) [86][87]. Where CISA has not rated the CVE: estimated, see "When CISA has not rated a CVE". |
+| Technical impact | SSVC's "Technical Impact", total or partial, from the same container. Estimated as partial where CISA has not rated the CVE. |
+
+**Table 1.** Written out from the directive's table image [85] and kept as data (see "The table is a data file"). Days are calendar
+days; the severity is the one DaemonSight gives the timeline.
+
+| Row | Exposed | KEV | Automatable | Impact | Timeline | Severity |
+|---|---|---|---|---|---|---|
+| 1 | yes | yes | yes | total | 3 days and forensic triage | Critical |
+| 2 | yes | yes | yes | partial | 3 days | Critical |
+| 3 | yes | yes | no | total | 3 days and forensic triage | Critical |
+| 4 | yes | yes | no | partial | 14 days | High |
+| 5 | yes | no | yes | total | 3 days | Critical |
+| 6 | yes | no | yes | partial | 14 days | High |
+| 7 | yes | no | no | total | 14 days | High |
+| 8 | yes | no | no | partial | 60 days | Medium |
+| 9 | no | yes | yes | total | 3 days and forensic triage | Critical |
+| 10 | no | yes | yes | partial | 14 days | High |
+| 11 | no | yes | no | total | 14 days | High |
+| 12 | no | yes | no | partial | 14 days | High |
+| 13 | no | no | yes | total | 60 days | Medium |
+| 14 | no | no | yes | partial | 60 days | Medium |
+| 15 | no | no | no | total | fix on system upgrade | Low |
+| 16 | no | no | no | partial | fix on system upgrade | Low |
+
+The rows with forensic triage (1, 3 and 9) put the five triage steps of the directive in the finding's "What to do" panel: scope,
+preserve evidence, contain, analyse, decide. The severity follows the timeline and not the triage.
+
+**One finding takes the worst CVE it fixes.** A package, an image or a firewall update fixes several CVEs; each is rated, and the
+finding's severity, deadline and wording are those of the most urgent one: the shortest deadline, forensic triage before none, then
+the higher EPSS probability, then a KEV CVE, the table row, a fix over none and the CVE id. The old KEV and EPSS rules are gone.
+
+**When CISA has not rated a CVE.** CISA rates "new and recent CVEs" [87], so many older ones, and every CVE whose record has no
+CISA-ADP container, have no Automatable and Technical Impact. Then:
+
+- Automatable is "yes" when the CVE's EPSS probability is at least `[cve] epss_automatable` (default 0.04, a Settings field),
+  otherwise "no". FIRST says to use the probability and the percentile together, that a threshold is "a very localized effort",
+  and that about the 90th percentile, at the time a probability of roughly 0.04, matches the effort of patching every CVSS Critical
+  [88]. The default is that number. This is an estimate and it says so.
+- Technical Impact is "partial".
+- Every estimated value is labelled "estimated by DaemonSight" in the finding's "What to do" panel and on the page. A CVE with no
+  EPSS score at all counts as not automatable.
+
+**The vendor rule.** Debian's urgency `unimportant` and Ubuntu's priority `negligible` are the distribution's own statement that
+the issue is not worth a security update by itself. Such a CVE is rated Low ("fix on system upgrade") only when the system is not
+exposed and the CVE is not in the KEV catalog. An exposed system, or a KEV CVE, follows the table whatever the vendor says; the
+page says when the rule lowered a CVE. `end-of-life` and `nodsa` keep their old meaning ("won't fix or minor": listed, never a
+finding).
+
+**The interim rule for advisories (outside the table).** An OPNsense security advisory that names no CVE, whether not asked about
+yet, failed or naming none, cannot be put in the table. Until CISA's table covers such a case, an unresolved advisory makes an
+OPNsense update at least Medium, and High when GitHub rates it High or Critical (unchanged from before), and a CVE that ranks higher
+is never lowered by it. The finding's text says this rule is not CISA's.
+
+**Exposure per system** (`cve/exposure.py`). The deciding evidence is recorded and shown beside the first input.
+
+| System | Exposed when |
+|---|---|
+| A collector host | The same data as the Exposure page: a listener the host firewall lets through on a public address, or a port the hub sees forwarded to the host by an OPNsense port forward or Caddy site. A public address with no such listener is not exposed. A host with no exposure data counts as exposed when an address the hub knows is publicly routable. |
+| An OPNsense firewall | Always: it is the network's edge (the directive's network-device case [84]). |
+| A container image | A running container of the image publishes a port on all addresses (or the host's address) that an OPNsense port forward or Caddy site leads to on the Unraid host, matched by the Unraid system's address. With no firewall read, the Unraid system's address decides: exposed only when publicly routable. An image no container runs, or whose containers publish no port, is not exposed. |
+| Unknown | Exposed only when the address is publicly routable (IPv4 or IPv6; private, CGNAT, link-local and ULA are not). |
+
+Whether a port forward leads to a container is decided by the port and the Unraid host's address, not by the container: a forward
+to the Unraid host's port 8080 and a container that publishes 8080 are linked. A forward that goes to the host and a container
+that publishes nothing are not. That link is a conservative inference and the page's evidence line says which forward it used.
+
+**CVE Services** (`cve/records.py`). The hub asks `GET https://cveawg.mitre.org/api/cve/<CVE-ID>` for each CVE it has matched, one
+at a time, and keeps the result in `cve_record` (`cve.db`, schema 6): the SSVC values, the CVSS (the CNA's first, else CISA's, newest version first) with its
+source and the time read. No key is needed (the OpenAPI document calls the operation "accessible to all users") [86]. A kept record
+is asked for again after 7 days while the CVE is still matched, and at once when its KEV status has changed since. A CVE the service
+does not know (404) is asked again after a day; a failure after an hour. The pass is spread: at most 100 requests and 20 seconds a pass, the
+KEV and high-EPSS CVEs first. The `RateLimit-*` headers (the service's policy was `25000;w=60`) and a 429 or 5xx stop the pass until
+the time the service named. HTTPS only, the answer must come from `cveawg.mitre.org`, no redirect is followed, a body over 1 MB is
+refused, and only a few short fields are kept. The request carries the generic User-Agent `DaemonSight/<version>` and nothing else.
+A hub whose `cve.db` predates the table reads without it (every CVE is "not rated by CISA") until the chore migrates it.
+
+**Accepted findings stay accepted.** The basis of a finding is the package or image and its CVE ids, never its severity, deadline or
+rating, so a change of exposure, of CISA's rating or of KEV status changes the severity of an accepted finding and leaves it accepted. A new CVE in the package brings it back.
+
+**What the pages show.** Every finding says its deadline: "Fix within 3 days (CISA BOD 26-04 timeline)" or "Fix at the next
+upgrade". The (i) panel of a finding and of each card explains the four inputs for the worst CVE, with the evidence and the
+estimate marks. The CVE tables on the Vulnerabilities, Container images and OPNsense cards have a "Fix within" column and show EPSS
+as the probability with its percentile, "15.3% (92nd)", as FIRST recommends [88]. Rows sort by the table's urgency, then EPSS. The directive's name is
+read from the table file.
+
+#### The table is a data file
+
+The table is data, not code, so a successor to BOD 26-04 can be picked up by replacing a file, without a release. The bundled file
+is `src/daemonsight/data/priority/bod-26-04.json`, shipped in the package. `priority.load` reads it, or
+`<data_dir>/priority/override.json` when that file exists and is valid. Only the hub reads either. An invalid override is refused as a whole, the reason
+is logged once ("Ignoring ... Using the bundled bod-26-04.json table"), and the bundled table is used. The override is re-read when its
+modification time changes. Nothing in the file is executed, expanded or used as a template: it is parsed as JSON, checked and read as
+plain values. A file over 64 KB is refused.
+
+The format, checked strictly (exact keys at every level, no extras):
+
+| Key | Content |
+|---|---|
+| `version` | A whole number. |
+| `directive` | `name` ("CISA BOD 26-04", used in every finding's wording), `title`, `table_name` ("Table 1"), `url`, `guidance_url`, `table_url` (https addresses) and `date` (YYYY-MM-DD). |
+| `inputs` | The four inputs and their allowed values: `exposed`, `kev` and `automatable` are `yes` or `no`, `impact` is `total` or `partial`. Fixed: the program decides the inputs, the file only the answers. |
+| `rows` | Exactly 16 rows, one for each combination of the inputs, each with `row` (1 to 16), the four inputs, `timeline` (the directive's words), `days` (a whole number, or null for "fix on system upgrade") and `triage` (true or false). |
+| `severity` | Maps each timeline the rows use to a severity: a day count as a string, or `upgrade` for null, to `critical`, `high`, `medium` or `low`. It must list exactly the timelines the rows use. |
+| `triage_steps` | One to ten short texts, shown for the rows with `triage` true. |
+
+A file that is missing a row, repeats a combination, names an unknown severity, has a key that is not listed, or has a value of the wrong
+type, is refused. The tests cover each of these and that an override is preferred over the bundled file.
+
+**Sources of the classification.** The directive and its guidance [83][84], the table image [85], the CVE Services API and its
+terms [86], CISA's Vulnrichment (the SSVC fields in the ADP container) [87], FIRST on using EPSS and its percentiles [88] and FIRST's CVSS v4.0 user guide [89].
+What was not verified: the directive's table was read from its image, not from a text version, so row 3's "forensic triage" and the
+treatment of a CVE with no SSVC rating are DaemonSight's reading; the link between a container's published port and an OPNsense port
+forward is an inference from the host's address and the port.
+
 ### The Vulnerabilities page
 
 A nav item on a hub's host pages. A summary card (CVEs with a fix, on KEV, no
@@ -1037,8 +1163,8 @@ fix yet, minor; the release and how old the package list is), then a table
 of packages, one row each, with `id` from `findings.anchor("cve", name)`: package
 and its binaries, installed and fixed versions, CVE counts by state, the top
 CVE (a link to `https://security-tracker.debian.org/tracker/<CVE>`) with a KEV
-badge, its EPSS score and Debian urgency, and a `details` list of up to 30 CVEs
-with description, state, EPSS and fix. Every cell has `data-label`, so rows
+badge, its "Fix within" deadline, its EPSS probability with percentile and Debian urgency, and a `details` list of up to 30 CVEs
+with description, state, deadline, EPSS and fix. Every cell has `data-label`, so rows
 stack as cards on a phone. A "Data feeds" card shows each feed's state, the
 last check and success, rows and size, each with a source panel: the URL, the
 feed's documentation, its terms, and a `curl -I` to check it by hand. Feed text
@@ -1077,7 +1203,7 @@ reference titles with a pattern, because Fedora references are of type
 `bugzilla`: `--with-cve` and `--cves=` returned nothing on `fedora:44` for an
 advisory whose reference title names CVE-2026-92823. The collector sends each
 pending advisory's id, severity, CVE ids and the installed package names it
-updates. The hub ranks them with EPSS and KEV like any other CVE; each is "fix
+updates. The hub rates them like any other CVE (see "Prioritisation"); each is "fix
 available" (an update is pending), and the page links the advisory on
 bodhi.fedoraproject.org. **Fedora's unfixed CVEs are not available this way**,
 and the page says so.
@@ -1177,7 +1303,7 @@ with its pockets. Per CVE and source:
 | the same | older, the host has that Pro service on | **Fix available** |
 | any fixed row | at or past the highest fixed version | Fixed already: not stored |
 | "might be affected" only | | **No fix yet** |
-| any, and the CVE's priority is negligible | | **Won't fix or minor**: listed, never a finding |
+| any, and the CVE's priority is negligible | | The state above; the vendor rule of "Prioritisation" lowers it to Low when the host is not exposed and the CVE is not in KEV |
 
 When a package has a fix in the standard archive and a later one in ESM, the highest fixed version decides. A fix in an
 ESM pocket is "fix needs Ubuntu Pro" and not counted as `apt upgrade`-fixable unless the host has that service on. A container image has no Pro:
@@ -1193,9 +1319,8 @@ form's root requirement was not checked. Whether a file's presence means the ser
 not removed file) was not checked either.
 
 **Findings and the pages.** The same rules: `cve.package` for a host and `docker.image_cves` for an image, stored under the host id or
-the image's pseudo-host (`docker:<system>:<image id>`), so ranking by KEV and EPSS and the thresholds are unchanged: High when a fixable
-CVE is on KEV or at or above `[cve] epss_high`, or a KEV CVE has no fix yet (a host only), otherwise Medium. Titles say the release
-(`nginx:1.27 (Ubuntu 24.04): 2 fixable CVEs`). A host's finding for a package whose only fix is ESM is Medium with the title
+the image's pseudo-host (`docker:<system>:<image id>`), so the severity is the worst CVE's by CISA BOD 26-04 (see "Prioritisation"), including a KEV CVE that has no fix yet (a host only). Titles say the release
+(`nginx:1.27 (Ubuntu 24.04): 2 fixable CVEs`). A host's finding for a package whose only fix is ESM is rated the same way, with the title
 "... fixed only in Ubuntu Pro (ESM)", and its fix is `pro security-status`, `sudo pro enable esm-infra esm-apps`, `sudo apt update` and
 `sudo apt upgrade`. An ESM-only CVE does not raise a finding for an image. The Vulnerabilities page shows "Fix needs Ubuntu Pro" beside
 "Fix available", a "needs Pro" badge, "Priority" for Debian's "Urgency", links to `https://ubuntu.com/security/<CVE>`, a line saying whether Pro ESM is
@@ -1588,7 +1713,7 @@ table; nothing is hidden.
 
 | Rule | Severity | When |
 |------|----------|------|
-| `opnsense.updates` | Low; Medium at 5 packages or a new release; High at 20 packages or waiting more than 30 days. With CVEs the update fixes: at least Medium, and High when one is on CISA's KEV list or has an EPSS score at or above `[cve] epss_high`. Security advisories with no CVE: at least Medium, High when GitHub rates one High or Critical | The last firmware check found updates. "Waiting" counts from when the hub first saw them. The basis is the package names and versions, and with CVEs also the offered version and the CVE ids, so a new update, another offered version or a new CVE brings an accepted finding back. See "OPNsense updates and CVEs" |
+| `opnsense.updates` | Low; Medium at 5 packages or a new release; High at 20 packages or waiting more than 30 days. With CVEs the update fixes: the worst CVE's severity by CISA BOD 26-04 (a firewall is always exposed; see "Prioritisation"). Security advisories with no CVE: at least Medium, High when GitHub rates one High or Critical (an interim rule outside the table) | The last firmware check found updates. "Waiting" counts from when the hub first saw them. The basis is the package names and versions, and with CVEs also the offered version and the CVE ids, so a new update, another offered version or a new CVE brings an accepted finding back. See "OPNsense updates and CVEs" |
 | `opnsense.unseen_release` | `opnsense_cves.summary(...)["severity"]` of the CVEs and advisories the newest release fixes (the call `opnsense.updates` uses); Low with none | The changelog has a release or hotfix in the firewall's series above what it runs and above what its last check showed, and that check is 2 days or more old, missing or unreadable. Clears when the firewall checks. The basis is that version. See "OPNsense updates and CVEs" |
 | `opnsense.reboot` | Medium | The pending update needs a reboot |
 | `opnsense.gateway` | High down; Medium degraded | Gateway down, loss of 10% or more, or round trip of 300 ms or more |
@@ -1732,13 +1857,13 @@ downloading. When no enabled firewall is left, the file, rows and feed row are d
 the feed while it exists. `cve.db` is schema 5 (3 added `opn_release` and `opn_fix`, 5 adds `opn_adv`; an older hub refuses it, and `cve.db` can be deleted).
 
 **The finding** (`opnsense.updates`, in `remote/opnsense_rules.py`, reading `remote/opnsense_cves.py`). With CVEs it adds "; fixes N
-CVEs (K known exploited)" to the title and the count and the top four to the detail. Severity follows the Debian host rule
-(`cve/match.py` `package_findings`) and the image rule (`remote/docker_images.py` `cve_summary`): a fixable CVE on CISA's KEV list, or
-with an EPSS score at or above `[cve] epss_high`, is High; any other fixable CVE is Medium; the finding's own rule (packages, a new
+CVEs (K known exploited)" to the title and the count and the top four to the detail. Severity is the worst CVE's by CISA BOD 26-04, as for a host
+package and an image (`cve/priority.py`; a firewall is always exposed, so the exposure input is yes): the title says "fix within N days" and the detail starts
+with the deadline; the finding's own rule (packages, a new
 release, days waiting) can still make it higher. A security advisory of the changelog that names no CVE (see "Security advisories in the
 changelog") makes it at least Medium, and High when GitHub rates one High or Critical. The basis is the package list, the offered version, the CVE ids and the
 unresolved advisories, so an accepted
-finding comes back when the offered version or a CVE changes (a CVE newly added to KEV changes the severity, not the basis, as for a
+finding comes back when the offered version or a CVE changes (a CVE newly added to KEV, or a new CISA rating, changes the severity, not the basis, as for a
 host). "What to do": the card, the changelog link for the offered version, System, Firmware, Updates (`Menu.xml`: Status, Settings,
 Changelog, Updates, Plugins, Packages) [68].
 
@@ -2489,11 +2614,11 @@ the hub reads those rows (`load_cves`) and `docker.image_cves` is evaluated with
 One finding per image, key the image's name (the tag a container uses, else the image's first tag), linked to its row on the
 Container images page.
 
-- **High** if a fixable CVE is on CISA's KEV list or has an EPSS score at or above `[cve] epss_high`; **Medium** otherwise.
-  Title: `nginx:1.27 (Debian 12): 3 fixable CVEs, 1 known exploited`.
+- The severity is the worst fixable CVE's by CISA BOD 26-04 (see "Prioritisation"), the image's exposure being decided from the
+  published ports and the firewall's forwards. Title: `nginx:1.27 (Debian 12): 3 fixable CVEs, 1 known exploited; fix within 14 days`.
 - Only a CVE the tracker lists as fixed in a newer version counts (a host's `fix` state). CVEs with no fix yet are counted on
   the page as information and raise nothing, because updating the image cannot fix them; this differs from a host's
-  `cve.package`, which is High for an unfixed KEV CVE since a host's owner can mitigate it. "Minor" and "being assessed"
+  `cve.package`, which also counts an unfixed KEV CVE since a host's owner can mitigate it. "Minor" and "being assessed"
   rows are not counted.
 - The basis is the image repository and the sorted ids of the fixable CVEs: an accepted finding stays through a rebuilt image
   with the same CVEs and returns as Changed when the set changes.
@@ -2507,7 +2632,7 @@ Container images page.
 
 **The page.** Its own tab, Container images (`/images`), because the Docker storage page already lists up to 250 rows and this
 one has a row per image in use. Cards: Images in use (a sentence, then a table: image, base OS, support, packages, fixable CVEs
-with a KEV badge and the top EPSS score, status; the status label is the image's finding's, Accepted rows stay visible) and What
+with a KEV badge, the worst CVE's "Fix within" deadline and the top EPSS probability, status; the status label is the image's finding's, Accepted rows stay visible) and What
 is checked (counts: read, Debian matched, Ubuntu matched, Alpine, other OS, stopped, waiting, failed). Each row's (i) panel names the
 reader endpoint, the Docker call and the equivalent command: `docker cp -L <container>:/var/lib/dpkg/status - | tar -xO`.
 Registered in `web/sections.py`. The Overview's glance has a line for it.
@@ -2572,8 +2697,7 @@ subpackages differ, the lowest is used and the row says so ("1 origin has subpac
 lowest (openssl)"). A version apk cannot parse is skipped and counted. A CVE is "fixable" when secdb lists a fixed version for
 that origin and the installed version is lower; the highest fixed version of the CVE counts. The rows go into the same `match`
 table (`source` is the origin, `state` is `fix`, `fixed` the version), so KEV and EPSS ranking, `cve_summary` and
-`docker.image_cves` work unchanged. Severity is the Debian images' rule: High when a fixable CVE is on KEV or at or above
-`[cve] epss_high`, otherwise Medium. The finding's title says the release (`web (Alpine 3.23): 4 fixable CVEs, 1 known exploited`),
+`docker.image_cves` work unchanged. Severity is the Debian images' rule: the worst fixable CVE's by CISA BOD 26-04. The finding's title says the release (`web (Alpine 3.23): 4 fixable CVEs, 1 known exploited`),
 its detail says "Alpine's security database (secdb)", its fix says `apk upgrade` inside a container does not persist, and its
 basis stays the image repository and the sorted ids of the fixable CVEs. The matched rows are redone when any of the secdb files
 changed. CVE descriptions come from the Debian tracker's text, so an Alpine-only CVE has none.
@@ -2883,3 +3007,10 @@ The collector must stay light:
 80. FreeBSD security advisories, read 2026-11-24: https://www.freebsd.org/security/ (Security Advisory and Errata Notice as separate kinds), the index https://www.freebsd.org/security/advisories/, the feed https://www.freebsd.org/security/feed.xml, 21 advisories `https://www.freebsd.org/security/advisories/FreeBSD-SA-26:74.ktls.asc` to `26:94.tmpfs.asc` (`CVE Name:` in each; `security.freebsd.org/advisories/...` answers 301 to this address), `FreeBSD-EN-26:29.tzdata.asc` and `FreeBSD-EN-26:32.zfs.asc` (no CVE field), and VuXML https://vuxml.freebsd.org/freebsd/vuln.xml.bz2
 81. GitHub REST API, read and called 2026-11-24 with no token: `GET /advisories/{ghsa_id}` (global advisories, 404 for OPNsense's) https://docs.github.com/en/rest/security-advisories/global-advisories, and `GET /repos/opnsense/core/security-advisories/{ghsa_id}` (200; "Anyone can access any published security advisory on a public repository") https://docs.github.com/en/rest/security-advisories/repository-advisories#get-a-repository-security-advisory
 82. GitHub REST API rate limits: https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api ("The primary rate limit for unauthenticated requests is 60 requests per hour"; 403 or 429 when exceeded, `x-ratelimit-remaining` 0, "should not retry your request until after the time specified by the `x-ratelimit-reset` header"; `retry-after` for a secondary limit)
+83. CISA Binding Operational Directive 26-04, "Prioritizing Security Updates Based on Risk" (June 10, 2026; Table 1, the four variables and the timelines; it binds federal agencies): https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk
+84. CISA, BOD 26-04 implementation guidance ("CVSS scores such as 'critical' or 'high' do not prescribe specific actions"; longer timelines are acceptable where the issue is not in the KEV or has no CVE id; the directive's treatment of network devices): https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk
+85. Table 1 of the directive as an image (the 16 rows were written out from it by hand): https://www.cisa.gov/sites/default/files/styles/large/public/2026-06/BOD_26-04_Table_1_Remediation_Timelines_0.png
+86. CVE Services API, `GET /cve/{id}` (operation `cveGetSingle`, "accessible to all users", the `RateLimit-*` headers and the 429), read 2026-11-24: https://cveawg.mitre.org/api-docs/openapi.json ; the program's terms of use: https://www.cve.org/Legal/TermsOfUse
+87. CISA Vulnrichment, the SSVC decision points (Exploitation, Automatable, Technical Impact) that CISA adds to CVE records as the "CISA-ADP" container: https://github.com/cisagov/vulnrichment
+88. FIRST, using EPSS (the probability with its percentile, a threshold as "a very localized effort", about the 90th percentile and a probability near 0.04 matching the effort of patching CVSS Critical) and how the percentile is calculated: https://www.first.org/epss/using-epss and https://www.first.org/epss/articles/prob_percentile_bins
+89. FIRST, CVSS v4.0 user guide (a base score "should not be used alone to assess risk"): https://www.first.org/cvss/v4.0/user-guide

@@ -605,7 +605,7 @@ def test_the_vulnerabilities_page_for_an_ubuntu_host(hub_cfg, token, tmp_path, s
     c = seed_ubuntu_hub(hub_cfg, token, tmp_path)
     html = c.get("/h/testhost/vulnerabilities").text
     assert "phase 3b" not in html and "Ubuntu is planned" not in html
-    assert "Fix needs Ubuntu Pro" in html and "fixed only in the ESM archives" in html and "Ubuntu rates them negligible" in html
+    assert "Fix needs Ubuntu Pro" in html and "fixed only in the ESM archives" in html and "Ubuntu marks them as not needing a fix" in html
     assert 'id="cve-libxml-parser-perl"' in html and "https://ubuntu.com/security/CVE-2006-10002" in html and "security-tracker.debian.org/tracker/CVE-" not in html
     assert "needs Pro" in html and "priority medium" in html and ">Priority<" in html and "Ubuntu Pro ESM on this host: not known: this collector does not report it" in html
     assert "Ubuntu CVE data (noble)" in html and "https://security-metadata.canonical.com/oval/com.ubuntu.noble.cve.oval.xml.bz2" in html

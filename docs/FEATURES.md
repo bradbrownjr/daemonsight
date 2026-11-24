@@ -58,9 +58,12 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   says how to turn it on.
 - **CVE matching on the hub.** Hosts report which packages they have. The hub
   matches them against the Debian security tracker or Canonical's Ubuntu
-  OVAL data and ranks the hits with CISA's known-exploited list and EPSS
-  scores. One finding per package, and a Vulnerabilities page with the CVEs
-  behind it. Debian, Raspberry Pi OS and Ubuntu hosts get the full list;
+  OVAL data and rates each CVE with the timelines of CISA BOD 26-04: whether
+  the system is reachable from the internet, whether the CVE is on CISA's
+  known-exploited list, and CISA's rating of whether an attacker can automate
+  it and how bad the impact is. Every finding says its deadline ("Fix within 3
+  days", "Fix at the next upgrade") and which CVE sets it. One finding per
+  package, and a Vulnerabilities page with the CVEs behind it. Debian, Raspberry Pi OS and Ubuntu hosts get the full list;
   Fedora hosts report their pending security advisories. On Ubuntu, a fix that
   only Ubuntu Pro's ESM archives carry is shown as "Fix needs Ubuntu Pro" and
   is not counted as one `apt upgrade` takes unless the host has Pro on. Hosts
@@ -83,8 +86,9 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   (four fixed files, through Docker's container archive call). The Container
   images page shows each image's base OS and whether it still gets security
   updates (finding: images on an end-of-life base). Debian images' packages are
-  matched against Debian's security tracker and ranked by CISA KEV and EPSS
-  (finding: one per image, with the fixable CVEs). Alpine images are matched
+  matched against Debian's security tracker and rated like a host's packages
+  (finding: one per image, with the fixable CVEs and the deadline). An image
+  counts as exposed when a container publishes a port that the firewall forwards. Alpine images are matched
   against Alpine's security database and Ubuntu images against Canonical's
   OVAL data in the same way; an Ubuntu fix that needs Ubuntu Pro is shown, not
   raised, since an image has no Pro.
@@ -121,11 +125,11 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   Exposure page.
 - **CVEs a pending update fixes.** When the firewall offers a new OPNsense
   release, the hub reads the project's own changelog for every release and
-  hotfix between the installed and the offered version, ranks the CVE ids in it
-  with CISA's known-exploited list and EPSS, and shows "Fixes N CVEs (K known
+  hotfix between the installed and the offered version, rates the CVE ids in it
+  with CISA BOD 26-04's table (a firewall always counts as exposed), and shows "Fixes N CVEs (K known
   exploited)" on the Updates card with the release and the changelog line for
-  each. The finding gains the count and the worst CVEs, and is High when one is
-  exploited or has a high exploit score. The changelog names many fixes only as
+  each. The finding gains the count and the worst CVEs, and takes the deadline of the
+  worst one. The changelog names many fixes only as
   a FreeBSD or GitHub security advisory. The hub looks each one up once and the
   CVE ids it lists join the ranking, with "via FreeBSD-SA-26:74.ktls" as the
   evidence. An advisory that lists none (or has not been looked up yet) is

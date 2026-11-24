@@ -36,7 +36,7 @@ one list of what to fix, without a SIEM.
 
 - One place for findings across all your hosts, each with the command that fixes it.
 - What the internet can actually reach: listening ports, Caddy routes, port forwards and, if you turn it on, Shodan.
-- CVEs ranked by real-world exploitation (CISA KEV, EPSS), not just counted.
+- Every update finding gets a deadline from CISA BOD 26-04 (exposure, KEV, SSVC), not a CVSS score.
 - Read-only and least-privilege by design: a Viewer-only key for Unraid, GET-only calls to OPNsense.
 - No agent on Unraid or OPNsense; the hub reads their APIs.
 - Accepted findings stay visible with a label, and come back if what you accepted changes.
@@ -48,7 +48,7 @@ one list of what to fix, without a SIEM.
 | Host health and services | psutil, systemd over D-Bus |
 | Exposure | Listening ports, nftables rules, Caddy admin API, fail2ban |
 | Containers | Docker socket; on Unraid, a small read-only Docker reader |
-| Host package CVEs | Debian security tracker and Canonical's Ubuntu OVAL data, CISA KEV and EPSS; Fedora advisories |
+| Host package CVEs | Debian security tracker and Canonical's Ubuntu OVAL data, CISA KEV and SSVC ratings, EPSS; Fedora advisories |
 | Container image CVEs | Debian, Alpine and Ubuntu images |
 | Unraid | GraphQL API, Viewer-only key |
 | OPNsense and CrowdSec | REST API, GET only, and the project's changelog, with the FreeBSD and GitHub advisories it names, for the CVEs a pending update fixes; CrowdSec Local API, read-only key |
