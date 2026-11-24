@@ -19,7 +19,7 @@ from functools import partial
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import alpine, feeds, match, opnsense, store
+from . import alpine, feeds, match, opnsense, store, ubuntu
 
 log = logging.getLogger("daemonsight.cve")
 
@@ -39,7 +39,7 @@ def _inventories(conn) -> dict[str, dict]:
 
 
 def _image_inventories(conn) -> dict[str, dict]:
-    """pseudo-host -> inventory for every Debian and Alpine container image an Unraid system's Docker reader listed (see
+    """pseudo-host -> inventory for every Debian, Ubuntu and Alpine container image an Unraid system's Docker reader listed (see
     remote/docker_images.py). They are matched like hosts but never get findings here: poll.py raises
     `docker.image_cves` from the matches."""
     from ..remote import docker_images, docker_storage
@@ -124,17 +124,22 @@ class Chore:
             self._epss_high = self.cfg.cve.epss_high
             self.dirty = True          # the High threshold moved
         invs = _inventories(self.state)
-        # Debian and Alpine container images are matched like hosts, under pseudo-host ids, and their releases are loaded too.
+        # Debian, Ubuntu and Alpine container images are matched like hosts, under pseudo-host ids, and their releases are loaded too.
         imgs = _image_inventories(self.state)
         every = {**invs, **imgs}
         opn = _opnsense_plans(self.state)
         opn_series = sorted({x for p in opn.values() for x in p["series"]})
         releases = {i["codename"] for i in every.values() if match.release_of(i)}
         alpine_releases = {i["release"] for i in imgs.values() if i.get("backend") == "apk" and i.get("release")}
+        # Ubuntu: a file per release; kernel rows are kept only for the flavors the hub's own hosts run (see feeds.load_ubuntu).
+        ubuntu_releases = {ubuntu.release_of(i) for i in every.values()} - {None}
+        ubuntu_kernels = {r: {s for h, i in invs.items() if ubuntu.release_of(i) == r
+                              for s, _v, _b in i.get("sources", []) if s.startswith("linux")} for r in ubuntu_releases}
         conn = await asyncio.to_thread(self.factory)
         try:
             changed = await self._refresh(conn, releases, now)
             changed = await self._refresh_alpine(conn, alpine_releases, now) or changed
+            changed = await self._refresh_ubuntu(conn, ubuntu_kernels, now) or changed
             changed = await self._refresh_opnsense(conn, set(opn_series), now) or changed
             deb = conn.execute("SELECT changed_at FROM feed WHERE name = 'debian'").fetchone()
             gen = f"{match.MATCH_VERSION}:{(deb['changed_at'] if deb else None)}:{','.join(sorted(releases))}"
@@ -142,6 +147,10 @@ class Chore:
             apk_gen = f"{match.MATCH_VERSION}:apk:" + ",".join(
                 f"{r['name']}={r['changed_at']}" for r in conn.execute(
                     "SELECT name, changed_at FROM feed WHERE name LIKE ? ORDER BY name", (feeds.ALPINE_PREFIX + "%",)))
+            # An Ubuntu host or image is matched again when any of the OVAL files changed.
+            ubu_gen = f"{match.MATCH_VERSION}:ubu:" + ",".join(
+                f"{r['name']}={r['changed_at']}" for r in conn.execute(
+                    "SELECT name, changed_at FROM feed WHERE name LIKE ? ORDER BY name", (feeds.UBUNTU_PREFIX + "%",)))
             opn_row = conn.execute("SELECT changed_at FROM feed WHERE name = ?", (feeds.OPNSENSE_NAME,)).fetchone()
             opn_loaded = opnsense.loaded_series(conn)
             opn_gen = f"{match.MATCH_VERSION}:opn:{opn_row['changed_at'] if opn_row else None}:{','.join(sorted(opn_loaded))}"
@@ -149,7 +158,8 @@ class Chore:
             matched = {r["host"]: r for r in conn.execute("SELECT * FROM matched")}
         finally:
             conn.close()
-        gens = {h: apk_gen if inv.get("backend") == "apk" else gen for h, inv in every.items()}
+        gens = {h: apk_gen if inv.get("backend") == "apk" else ubu_gen if ubuntu.release_of(inv) or inv.get("os_id") == "ubuntu" else gen
+                for h, inv in every.items()}
         todo = [h for h, inv in every.items()
                 if h not in matched or matched[h]["inv_at"] != inv["taken_at"] or matched[h]["gen"] != gens[h]]
         if todo:
@@ -177,6 +187,26 @@ class Chore:
                     if await feeds.refresh(self.factory, self.cfg.data_dir, feed, set(), now, self.client):
                         any_changed = True
         if await asyncio.to_thread(feeds.drop_alpine, self.factory, self.cfg.data_dir, releases):
+            any_changed = True
+        return any_changed
+
+    async def _refresh_ubuntu(self, conn, kernels: dict[str, set[str]], now: float) -> bool:
+        """Canonical's CVE OVAL: one file for each Ubuntu release a host or image runs, asked again at most once per [cve]
+        refresh_hours (an hour after an error). A release nothing runs any more is forgotten. When a host reports a kernel flavor the
+        saved file was not loaded for, the saved file is read again without a download."""
+        any_changed = False
+        for release in sorted(kernels):
+            feed = feeds.ubuntu_feed(release)
+            if feeds.is_due(feeds.feed_row(conn, feed), now, self.cfg.cve.refresh_hours):
+                if await feeds.refresh(self.factory, self.cfg.data_dir, feed, kernels[release], now, self.client):
+                    any_changed = True
+                    continue
+            row = feeds.feed_row(conn, feed)
+            loaded = set(json.loads(store.get_meta(conn, f"ubu_kernels_{release}", "[]")))
+            if row["status"] in ("ok", "not modified") and loaded != kernels[release] and feeds.raw_path(self.cfg.data_dir, feed).exists():
+                if await asyncio.to_thread(feeds.reload_ubuntu, self.factory, self.cfg.data_dir, release, kernels[release]) is not None:
+                    any_changed = True
+        if await asyncio.to_thread(feeds.drop_ubuntu, self.factory, self.cfg.data_dir, set(kernels)):
             any_changed = True
         return any_changed
 
@@ -229,6 +259,8 @@ class Chore:
                         match.set_advisories(conn, host, inv, gens[host])
                     elif inv.get("backend") == "apk":
                         alpine.match_host(conn, host, inv, gens[host])
+                    elif inv.get("os_id") == "ubuntu":
+                        ubuntu.match_host(conn, host, inv, gens[host])
                     else:
                         match.match_host(conn, host, inv, gens[host])
                 except Exception:
@@ -255,6 +287,8 @@ class Chore:
             for name, _age in stale:
                 if name.startswith(feeds.ALPINE_PREFIX):
                     titles[name] = feeds.alpine_title(name)
+                elif name.startswith(feeds.UBUNTU_PREFIX):
+                    titles[name] = feeds.ubuntu_title(name)
         finally:
             conn.close()
         stale_f = match.stale_finding(stale, titles)
@@ -277,8 +311,9 @@ class Chore:
             for host, inv in invs.items():
                 bins = {s: b for s, _v, b in inv.get("sources", [])}
                 out[host] = match.package_findings(
-                    match.host_cves(conn, host, ("fix", "nofix")), bins, pending.get(host, set()),
-                    self.cfg.cve.epss_high, inv.get("backend", "apt"), host in rebooting)
+                    match.host_cves(conn, host, ("fix", "esm", "nofix")), bins, pending.get(host, set()),
+                    self.cfg.cve.epss_high, inv.get("backend", "apt"), host in rebooting,
+                    "ubuntu" if inv.get("os_id") == "ubuntu" else "debian")
         finally:
             conn.close()
         return out

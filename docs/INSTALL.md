@@ -563,8 +563,11 @@ Hosts send their package list (13 KB compressed for a desktop with 1,300
 packages) when it changes, and once a day. It needs no setting on the host.
 **Update the hub first, then the hosts.** An older hub ignores the list; an
 older host sends none, and its Vulnerabilities page says so. Debian and
-Raspberry Pi OS hosts are matched; on Fedora the page lists pending security
-advisories; Ubuntu isn't matched yet. If the hub can't reach a feed for 3
+Raspberry Pi OS hosts are matched against Debian's tracker and Ubuntu hosts
+against Canonical's OVAL data (the hub downloads one file of about 12 MB for each
+Ubuntu release it sees, once a day at most); on Fedora the page lists pending
+security advisories. A derivative with its own name (Linux Mint, Pop!_OS) isn't
+matched. If the hub can't reach a feed for 3
 days, a low "feed is stale" finding appears on each host.
 
 ### Outside checks

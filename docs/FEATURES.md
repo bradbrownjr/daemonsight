@@ -57,11 +57,14 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   (apt) or dnf5-automatic (Fedora) will install security updates. A low finding
   says how to turn it on.
 - **CVE matching on the hub.** Hosts report which packages they have. The hub
-  matches them against the Debian security tracker and ranks the hits with
-  CISA's known-exploited list and EPSS scores. One finding per package, and a
-  Vulnerabilities page with the CVEs behind it. Debian and Raspberry Pi OS hosts
-  get the full list; Fedora hosts report their pending security advisories.
-  Ubuntu is next. Hosts download nothing and run no scanner.
+  matches them against the Debian security tracker or Canonical's Ubuntu
+  OVAL data and ranks the hits with CISA's known-exploited list and EPSS
+  scores. One finding per package, and a Vulnerabilities page with the CVEs
+  behind it. Debian, Raspberry Pi OS and Ubuntu hosts get the full list;
+  Fedora hosts report their pending security advisories. On Ubuntu, a fix that
+  only Ubuntu Pro's ESM archives carry is shown as "Fix needs Ubuntu Pro" and
+  is not counted as one `apt upgrade` takes unless the host has Pro on. Hosts
+  download nothing and run no scanner.
 
 ## Containers
 
@@ -81,8 +84,10 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   images page shows each image's base OS and whether it still gets security
   updates (finding: images on an end-of-life base). Debian images' packages are
   matched against Debian's security tracker and ranked by CISA KEV and EPSS
-  (finding: one per image, with the fixable CVEs). Alpine and Ubuntu images are
-  next.
+  (finding: one per image, with the fixable CVEs). Alpine images are matched
+  against Alpine's security database and Ubuntu images against Canonical's
+  OVAL data in the same way; an Ubuntu fix that needs Ubuntu Pro is shown, not
+  raised, since an image has no Pro.
 
 ## Unraid
 

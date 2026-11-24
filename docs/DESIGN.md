@@ -1,6 +1,6 @@
 # DaemonSight design
 
-Status: phases 1, 2, 2c, 3a and 3b are built; phase 3c parts 1 and 2 (container images: end-of-life bases, Debian CVEs and Alpine CVEs) are built, and Ubuntu images are next. Updated 2026-11-24.
+Status: phases 1, 2, 2c, 3a and 3b are built (CVE matching for Debian, Raspberry Pi OS, Ubuntu and Fedora hosts); phase 3c parts 1 to 3 (container images: end-of-life bases, Debian, Alpine and Ubuntu CVEs) are built. Updated 2026-11-24.
 
 ## Goal
 
@@ -599,8 +599,8 @@ supports ntfy and SMTP email. Daily digest optional.
    2c. The hub: collectors upload to one install that shows every host, with the container image and Unraid template, retention and backups, and updates from the hub. See "Hub". Done.
 3. Package and CVE checks.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
-   3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, ranks by EPSS and CISA's KEV list, and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian and Raspberry Pi OS; Ubuntu is next (see "CVE matching"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
-   3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases. Parts 1 and 2 are done: the reader reads each running image's package list, the Container images page shows each image's base OS and support status (`docker.eol_base`), Debian images are matched against the Debian tracker and Alpine images against Alpine's security database (`docker.image_cves`). Ubuntu images (with phase 3b's Ubuntu matcher) are next. See "Docker reader", "Container images", "CVE matching: Alpine images".
+   3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, ranks by EPSS and CISA's KEV list, and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian, Raspberry Pi OS and Ubuntu (see "CVE matching" and "CVE matching: Ubuntu"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
+   3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases. Parts 1 to 3 are done: the reader reads each running image's package list, the Container images page shows each image's base OS and support status (`docker.eol_base`), Debian images are matched against the Debian tracker, Alpine images against Alpine's security database and Ubuntu images against Canonical's OVAL data (`docker.image_cves`). See "Docker reader", "Container images", "CVE matching: Alpine images" and "CVE matching: Ubuntu".
 4. Alerts, recent-changes feed, history charts with drill-down. See "History charts and drill-down (planned)".
 5. `.deb` package and docs.
 
@@ -894,7 +894,7 @@ package list, and the hub does the rest.
 ```
 collector ── dpkg-query ──► inventory ──(upload field)──► hub ── match ──► findings, page
                                                            ▲
-          Debian tracker · EPSS · CISA KEV ── HTTPS ───────┘  (24 h, conditional)
+          Debian tracker · Ubuntu OVAL · EPSS · CISA KEV ──┘  (HTTPS, 24 h, conditional)
 ```
 
 ### What a host sends
@@ -943,7 +943,8 @@ feed's own host, and a download is capped (400 MB decoded for the tracker,
 100 MB EPSS, 50 MB KEV). A feed that fails is retried an hour later; the last
 good data stays in use. Nothing here runs in a request. Alpine's security database is the exception to "three feeds": its files are
 fetched only for the Alpine releases the hub's container images run (see "CVE matching: Alpine images"). So is the OPNsense project's
-changelog, one tarball fetched only while a firewall has a release update pending (see "OPNsense updates and CVEs").
+changelog, one tarball fetched only while a firewall has a release update pending (see "OPNsense updates and CVEs"). Canonical's Ubuntu OVAL files are
+fetched only for the Ubuntu releases the hub's hosts and images run (see "CVE matching: Ubuntu").
 
 | Feed | Size as served | After decoding | Notes |
 |------|---------------|----------------|-------|
@@ -982,8 +983,8 @@ the maintainers' own reader (`bin/tracker_data.py`) [25]:
 | `undetermined` | **Being assessed**: listed, never a finding |
 
 Raspberry Pi OS (`raspbian`) is looked up as Debian by its codename, as
-`distro.py` does. Ubuntu and other derivatives aren't matched yet; the page
-says so.
+`distro.py` does. Ubuntu has its own matcher (see "CVE matching: Ubuntu"); other
+derivatives (Linux Mint, Pop!_OS) aren't matched, and the page says so.
 
 **Version order** is `cve/debver.py`, written from Debian Policy 5.6.12
 (`[epoch:]upstream[-revision]`, the revision after the last hyphen, runs of
@@ -1079,14 +1080,134 @@ available" (an update is pending), and the page links the advisory on
 bodhi.fedoraproject.org. **Fedora's unfixed CVEs are not available this way**,
 and the page says so.
 
-### Ubuntu (next)
+### CVE matching: Ubuntu
 
-Canonical publishes its CVE data as Ubuntu OVAL ("recommended", all supported
-releases; https://ubuntu.com/security/oval) and as a JSON API that it says
-is "still a work in progress and subject to change" and not for automations
-[30]. The next step is an OVAL reader with the same streaming approach,
-keyed by Ubuntu release (`VERSION_CODENAME`), and the same states. The Debian
-version comparison applies to Ubuntu versions unchanged.
+Ubuntu hosts (collectors) and Ubuntu-based container images are matched against Canonical's CVE OVAL files. The hub downloads
+them as it does the other feeds; the host and an image's reader send only the package list they already send (a host also says
+which Ubuntu Pro services are on).
+
+**The choice** (the three sources read on 2026-11-24).
+
+| | Ubuntu OVAL, CVE variant [71] | Ubuntu Security API [72] | OSV [73] |
+|---|---|---|---|
+| Shape | One `com.ubuntu.<codename>.cve.oval.xml.bz2` per release: 11.9 MB download and 284 MB of XML for noble, 8.6 MB and 191 MB for focal | JSON over HTTP, paged (`limit` and `offset`), filtered by release, package or status | One tarball, `osv-all.tar.xz`, 60.95 MB, every release and USN in it |
+| Fixed version per source package and release | Yes, in each criterion's comment, with the archive pocket | Yes, per package status | Yes (ranges with a `fixed` event), fixed only |
+| Needs fix, deferred, not affected | One unfixed state: "might be affected and may need fixing" (needed, needs-triage, pending, deferred and ignored all come out as this, see below). No "not affected" row: such a package is absent. | Every status (`needed`, `needs-triage`, `pending`, `deferred`, `ignored`, `not-affected`, `released`) per package and release | Fixes only; nothing for an unfixed CVE |
+| Priority | `advisory/cve/@priority` (negligible to critical) | `priority` | `severity` entry of type `Ubuntu` ("high") |
+| ESM (Pro) | Pocket named in the comment: `esm-infra/<release>`, `esm-apps/<release>`; the version carries `+esm` or `~esm` | Status per package and release (the pocket was not looked at) | `ecosystem_specific.availability` (seen: "No subscription required"); the Pro ecosystems were not looked at |
+| Conditional GET | Yes: `ETag` and `Last-Modified`, `If-None-Match` answers 304; `x-cache-status: HIT` (cached in front) | Not published | Tarball only; any change refetches 61 MB |
+| Stability | Canonical's "recommended" dataset | "Still a work in progress and subject to change. Please don't use it in production environments or automations." Seen: some queries answered HTTP 504 (the firefox, thunderbird and mysql ones), and a full pass over a release is many paged requests | Published by Canonical |
+| Licence | Creative Commons Attribution-ShareAlike 4.0 (`LICENSE` in the same directory) | None stated on the page | Same `LICENSE` |
+
+OVAL was chosen: it is the one source with fixes, the unfixed state and the priority in a file one conditional GET fetches
+per release, it is Canonical's recommended dataset, and the API asks not to be used from automations. OSV has no unfixed CVEs
+at all, so "no fix yet" could not be shown, and a 61 MB tarball for every release is a download for each release a hub does not
+run. The cost is the size of the XML (below) and one lump of status (below).
+
+**What the OVAL file holds** (read in the noble file, 37,611 `vulnerability` definitions, one per CVE, and the focal one).
+
+- A definition has the CVE id (`reference[@source='CVE']`), a description that ends with Canonical's "Update Instructions" text
+  (cut at that line), and `advisory/cve/@priority`.
+- Its `criteria` lists one `criterion` per affected source package. The comment names the source package, the pocket and the
+  status, and holds the fixed version. The test, object and state elements that follow work on binary names and are not needed:
+
+      libxmltok source package in esm-apps/noble, is affected and has been fixed (note: '1.2-4.1ubuntu2.24.0.4.1+esm3').
+      cadaver source package in noble, might be affected and may need fixing.
+
+  The pocket is the release name for the standard archives and `esm-infra/<release>` or `esm-apps/<release>` for Ubuntu Pro's.
+- A kernel is a pair per flavor: "Is kernel 'linux-aws' running?" and "'linux-aws' kernel in noble was vulnerable but has been
+  fixed (note: '6.8.0-1009.9')", or the running check alone when no fix exists. One kernel CVE lists every flavor, so a release's
+  kernel rows run to hundreds of thousands; the hub keeps them only for the flavors its hosts run (below).
+- **One status for everything unfixed.** Canonical's generator, `oval_lib.py` in the ubuntu-cve-tracker repository [74], turns the
+  tracker's `needed`, `needs-triage`, `pending`, `deferred` and `ignored` into the same internal status, and the file says "might be
+  affected and may need fixing" for it. The file does not say which one it was; the API does. This was checked on one CVE of each
+  status from the API against the OVAL file (`deferred`, `ignored`, `needed`, `needs-triage` and a `pending` one: all are "open"
+  in the file, or the package is absent for a kernel flavor the file does not list). So the page cannot show "deferred" or "ignored" apart from
+  "needed": every unfixed CVE is "no fix yet", and only the priority tells a negligible one from a real one. A package the tracker
+  marks `not-affected` or `DNE` is not in the definition.
+- The published OVAL page [71] describes the USN and OCI variants and does not mention the CVE or `pkg` ones, which the directory also
+  has for every release; what the CVE file holds here comes from reading it and the generator [74], not from Canonical's description.
+- Update rate: noble's file was last modified 2026-11-19 19:37 UTC and focal's 20:39, read five days later. No schedule is published.
+  The files change when the tracker does; the hub asks once a day.
+
+**The supported releases.** The hub downloads a file only for a release a host or an image runs (`VERSION_CODENAME`, or the
+release name for the `VERSION_ID` in the bundled distro-info data when an image's os-release lacks it [14]). The directory has
+files from `trusty` to `stonking` (26.10). The bundled distro-info data [14] gives, on 2026-11-24, standard support to 2027-06-01
+for 22.04, to 2029-05-31 for 24.04 and to 2031-05-29 for 26.04, with ESM (Ubuntu Pro) to 2032-04-21, 2034-04-25 and 2036-04-23. A release the directory has no file for answers 404 and is shown as "not in Canonical's OVAL data".
+
+**dpkg version order.** An Ubuntu version is a dpkg version: `[epoch:]upstream[-revision]` with `ubuntu`, `build` and `+esm`
+or `~esm` in the revision (Debian Policy 5.6.12 [29]). `cve/debver.py` is used unchanged. All 6,149 distinct fixed versions in the noble and
+focal files parse. 6,000 pairs among them (half random, half within one upstream version) were compared with `dpkg --compare-versions` (1.22.22, on
+this Debian 13 machine, not on Ubuntu) with no difference; `tests/fixtures/cve/ubuntu-versions.txt` keeps 150 of the versions
+and `tests/test_ubuntu.py` compares 600 pairs of them. The ordering that matters for ESM: `1.0-1ubuntu1+esm2` is above `1.0-1ubuntu1` and below
+`1.0-1ubuntu2`, and `1.0-1ubuntu1~esm5` is below `1.0-1ubuntu1`.
+
+**Source packages.** The OVAL file names source packages. A host's inventory already lists them from the dpkg `Source:` field and
+version (`source:Package` and `source:Version` [22]); an image's reader sends the same two fields. One exception, the kernel: Ubuntu
+builds signed kernels from `linux-signed-<flavor>` sources whose names the OVAL file does not use (it says `linux-aws`, `linux-hwe-6.8`).
+The collector lists only the running kernel's image (as for Debian, so a host's other installed kernels and a container's
+`linux-libc-dev` headers are not matched), under the unsigned source name (`linux-signed-aws` is `linux-aws`) and the image's own
+version, which is the kernel's. That naming was read from the archive's Packages index, not seen on a host with every kernel flavor.
+
+**Fetching** (`cve/feeds.py`, `cve/run.py`). For each release a host or an image runs, one file from
+`security-metadata.canonical.com` only, with `If-None-Match` and `If-Modified-Since`, at most once per `[cve] refresh_hours` (24)
+and an hour after an error. Redirects may not leave that host. A download is capped at 80 MB compressed and 1.5 GB decoded (the
+real files are 11.9 and 284 MB), must start with the bzip2 magic, and is kept under `<data_dir>/cve/ubuntu-<release>.oval.xml.bz2`.
+It is read as a stream (`xml.etree.ElementTree.iterparse`, clearing each definition, stopping at the end of `definitions`), 21 to 27 s
+for noble and 18 s for focal on the build machine, 67 MB of resident memory for the whole process. A bad file (not XML, not OVAL, over the
+caps) keeps the last copy and the Data feeds card shows "The last download failed (...)". HTTP 404 is an answer: the feed row says
+`absent`, nothing is matched and nothing is raised, and the page says "Ubuntu 22.04: not in Canonical's OVAL data". A release that no
+host or image runs any more is dropped with its rows, saved file and feed row. A release nothing has data for yet says "OVAL data not
+downloaded yet" and raises nothing. Rows go into the `ubu` table (release, source, pocket, kernel flag, state, fixed version, one row
+per source and pocket; CVE ids, priority and a 200-character description in `ubu` and `ubu_cve`), 45,419 rows for noble and 33,944
+for focal with `linux` and `linux-aws` kept; `cve.db` is schema 4 (3 before; an older hub refuses a newer file, which can be deleted
+and downloaded again). The kernel rows are filtered: only the flavors a host or image on that release reports are loaded, and the
+saved file is read again (no download) when a host reports a new flavor. Without that filter, one release would have about 500,000
+kernel rows. The CVE text is kept in `ubu_cve`, not in the Debian `cve` table, which the Debian loader empties.
+
+**Matching** (`cve/ubuntu.py`). One call per host or image, for its release: each source package (and its version) is looked up
+with its pockets. Per CVE and source:
+
+| Rows for the source | Installed vs the fixed version | State |
+|---|---|---|
+| fixed in the release's own archive | older | **Fix available** (`apt upgrade` takes it) |
+| fixed only in `esm-infra` or `esm-apps` (or the version has `+esm`) | older, the host has no such Pro service | **Fix needs Ubuntu Pro** |
+| the same | older, the host has that Pro service on | **Fix available** |
+| any fixed row | at or past the highest fixed version | Fixed already: not stored |
+| "might be affected" only | | **No fix yet** |
+| any, and the CVE's priority is negligible | | **Won't fix or minor**: listed, never a finding |
+
+When a package has a fix in the standard archive and a later one in ESM, the highest fixed version decides. A fix in an
+ESM pocket is "fix needs Ubuntu Pro" and not counted as `apt upgrade`-fixable unless the host has that service on. A container image has no Pro:
+its ESM fixes are always "needs Pro", shown on the page and never raised as a finding.
+
+**Ubuntu Pro on the host.** Pro writes an apt source file for each service it enables, `ubuntu-esm-infra` and `ubuntu-esm-apps`
+(`.sources` or `.list`, under `/etc/apt/sources.list.d/`); the Pro client's `esm.py` and `apt.py` [75] show the names and that
+`pro disable` removes them. The collector looks for those files (a glob, no command and no root) and sends `esm: ["infra", "apps"]`
+with the inventory (a collector that does not look sends nothing, and the page says "not known"). A hub with `esm` unknown treats
+every ESM fix as "needs Pro" and the match note says so. `pro security-status`, which prints what Pro covers, and `pro fix <CVE>
+--dry-run` (Pro's own check; nothing is changed) exist in the client's source [75]; the page names them in the (i) panel. The `-dry-run`
+form's root requirement was not checked. Whether a file's presence means the service is on (an expired subscription, a disabled but
+not removed file) was not checked either.
+
+**Findings and the pages.** The same rules: `cve.package` for a host and `docker.image_cves` for an image, stored under the host id or
+the image's pseudo-host (`docker:<system>:<image id>`), so ranking by KEV and EPSS and the thresholds are unchanged: High when a fixable
+CVE is on KEV or at or above `[cve] epss_high`, or a KEV CVE has no fix yet (a host only), otherwise Medium. Titles say the release
+(`nginx:1.27 (Ubuntu 24.04): 2 fixable CVEs`). A host's finding for a package whose only fix is ESM is Medium with the title
+"... fixed only in Ubuntu Pro (ESM)", and its fix is `pro security-status`, `sudo pro enable esm-infra esm-apps`, `sudo apt update` and
+`sudo apt upgrade`. An ESM-only CVE does not raise a finding for an image. The Vulnerabilities page shows "Fix needs Ubuntu Pro" beside
+"Fix available", a "needs Pro" badge, "Priority" for Debian's "Urgency", links to `https://ubuntu.com/security/<CVE>`, a line saying whether Pro ESM is
+on, and the Data feeds card lists each Ubuntu file with its URL, licence and a `curl -I`. The Container images page counts Ubuntu images and
+shows the "fixed only in Ubuntu Pro (ESM)" count beside "with no fix yet". The (i) panels give the equivalent checks:
+`pro security-status` and `apt list --upgradable` on a host, `docker exec <container> apt list --upgradable` for an image (which lists updates,
+not CVEs), and a `curl ... | bzcat | grep -F '<source> source package in'` lookup in the OVAL file.
+
+Not verified: the whole path on a live hub with a real Ubuntu host and container (tested against trimmed copies of the real noble and focal
+files, fakes of the server, and the parser on the full files on 2026-11-24); that a service's apt source file on a real host is
+named as read in the Pro client's source (and that its absence means off); the signed-kernel naming on a host with every flavor; that the
+unfixed statuses are lumped as read in the generator (checked on one example of each status, and from the generator's own mapping, not
+from its documentation, which words the statuses differently); the needed, pending and needs-triage mapping beyond that; `pro fix --dry-run`
+as an unprivileged user; and the parse time on a smaller machine (a hub with a slow disk will take longer than the 21 to 27 s measured here).
 
 ## The outside view
 
@@ -2226,15 +2347,16 @@ Container images page.
   with the same CVEs and returns as Changed when the set changes.
 - Fix: update the image (Unraid: Docker tab, Check for Updates, apply; or pull a newer tag). `apt upgrade` inside a container
   does not persist. If no newer image exists, the maintainer has not rebuilt it.
-- Ubuntu images count as "Ubuntu matching not built yet (phase 3b)"; that is not a finding. Alpine images are matched against Alpine's
-  security database (next subsection).
+- Ubuntu images are matched against Canonical's OVAL data (see "CVE matching: Ubuntu"): the same finding and ranking, "Ubuntu
+  priority" in the text, and a fix that exists only in Ubuntu Pro's ESM archives is counted and shown apart ("fixed only in Ubuntu Pro
+  (ESM)") and never raised, since an image has no Pro. Alpine images are matched against Alpine's security database (a later subsection).
 - A release the tracker no longer lists has no rows, so an end-of-life Debian image may show no CVEs; the end-of-life finding
   covers it.
 
 **The page.** Its own tab, Container images (`/images`), because the Docker storage page already lists up to 250 rows and this
 one has a row per image in use. Cards: Images in use (a sentence, then a table: image, base OS, support, packages, fixable CVEs
 with a KEV badge and the top EPSS score, status; the status label is the image's finding's, Accepted rows stay visible) and What
-is checked (counts: read, Debian matched, Ubuntu, Alpine, other OS, stopped, waiting, failed). Each row's (i) panel names the
+is checked (counts: read, Debian matched, Ubuntu matched, Alpine, other OS, stopped, waiting, failed). Each row's (i) panel names the
 reader endpoint, the Docker call and the equivalent command: `docker cp -L <container>:/var/lib/dpkg/status - | tar -xO`.
 Registered in `web/sections.py`. The Overview's glance has a line for it.
 
@@ -2510,6 +2632,7 @@ The collector must stay light:
 - fail2ban 1.0.2 on Debian 12.
 - Fedora: `dnf needs-restarting -C -s` output (the parser takes lines naming `*.service`; not captured, since a container has no D-Bus), the JSON for "no reboot needed", the whole collector on a real Fedora 44 KDE host, and `install.sh` under SELinux enforcing. dnf5 was tested in `fedora:44` containers only.
 - CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
+- Ubuntu CVE matching: see "CVE matching: Ubuntu" (not run on a live hub with a real Ubuntu host or container; the Pro service files, the signed-kernel names and `pro fix --dry-run` were read from the Pro client's and the archive's files, not seen on a host).
 - Alpine CVE matching: see "CVE matching: Alpine images" (not run on a live hub with a real Alpine container; edge images' `VERSION_ID` and `apk version -l '<'` output in a stock image were not seen).
 - OPNsense update CVEs: see "OPNsense updates and CVEs" (the changelog files are real and the parser was run on all 317 release files; the whole path was not run on a live hub with a real firewall; the offered version of a hotfix in a real firmware status, the placement of out-of-band hotfix lines, and the Business Edition files were not checked).
 - CrowdSec: the read path was checked on a live firewall on 2026-11-24 (see "CrowdSec bans on an OPNsense firewall"). Still read from the source only: `null` for no decisions, `limit`, the 403 for a wrong key and the `duration` format. That the pf bouncer drops the states of a banned address is the owner's account, not read from its source.
@@ -2555,7 +2678,7 @@ The collector must stay light:
 27. EPSS FAQ (probability meaning, "no universal threshold", 0.10 "commonly cited ... no special authority", about the 95th percentile, attribution requested): https://www.first.org/epss/faq
 28. CISA Known Exploited Vulnerabilities catalog and its JSON feed: https://www.cisa.gov/known-exploited-vulnerabilities-catalog; licence (CC0 1.0): https://www.cisa.gov/sites/default/files/licenses/kev/license.txt
 29. Debian Policy 5.6.12, Version: https://www.debian.org/doc/debian-policy/ch-controlfields.html#version; dpkg's `verrevcmp` in lib/dpkg/version.c
-30. Ubuntu CVE data (OVAL "recommended"; the JSON API "still a work in progress"): https://ubuntu.com/security/cves/about and https://ubuntu.com/security/oval
+30. Ubuntu CVE data (OVAL "recommended"; the JSON API "still a work in progress"): https://ubuntu.com/security/cves/about and https://ubuntu.com/security/oval (chosen in "CVE matching: Ubuntu": [71] to [73])
 31. Unraid API, using the GraphQL API (the `x-api-key` header, the `/graphql` endpoint on the server's web address): https://docs.unraid.net/API/how-to-use-the-api/
 32. Unraid API, API keys and roles (Settings → Management Access → API Keys): https://docs.unraid.net/API/programmatic-api-key-management/
 33. Unraid API source: `api/generated-schema.graphql` (all types and fields above, `enum Role`), `api/src/unraid-api/graph/user/user.resolver.ts` (`me`), `api/src/unraid-api/auth/auth.service.ts` (`validateApiKeyCasbin`), `api/src/unraid-api/graph/resolvers/disks/disks.service.ts` (`smartStatus`): https://github.com/unraid/api
@@ -2596,3 +2719,8 @@ The collector must stay light:
 68. OPNsense core (BSD 2-Clause), read 2026-11-24 at master: `src/opnsense/mvc/app/controllers/OPNsense/Core/Api/FirmwareController.php` (`statusAction`, `infoAction` skipping development changelog items), `src/opnsense/scripts/firmware/latest.php` and `product.php` (`product_latest` is the newest changelog version of the installed series, with `_N` cut), `check.sh` (`upgrade_major_version` from `opnsense-update -vR`), `changelog.sh` (the firewall's signed `changelog.txz` from `opnsense-update -X`), `security.sh` (`pkg audit -F`), `src/opnsense/mvc/app/models/OPNsense/Core/Menu/Menu.xml` (System, Firmware: Status, Settings, Changelog, Updates, Plugins, Packages) and `views/OPNsense/Core/firmware.volt` ("Run an audit", Security): https://github.com/opnsense/core
 69. OPNsense documentation, Community Edition releases: https://docs.opnsense.org/CE_releases.html (an index of series pages) and https://docs.opnsense.org/releases/CE_26.1.html (the same notes rendered, CVE footnotes linked to cve.org), read 2026-11-24
 70. The repository archive as served: `https://codeload.github.com/opnsense/changelog/tar.gz/refs/heads/master` answered 200 with an `ETag` (627,386 bytes) and 304 for `If-None-Match`, tried 2026-11-24
+71. Canonical's Ubuntu OVAL: https://ubuntu.com/security/oval (the "recommended" dataset; variants) and the files https://security-metadata.canonical.com/oval/ (`com.ubuntu.<codename>.cve.oval.xml.bz2`, `.pkg.`, `.usn.` and `noble.oci.` variants for `trusty` to `stonking`; `LICENSE`: Creative Commons Attribution-ShareAlike 4.0). Read 2026-11-24: noble 11,925,399 bytes (`last-modified` 2026-11-19 19:37:14 GMT, `etag` present, served by nginx behind a cache), focal 8,562,079 bytes; `If-None-Match` answers 304; the parser was run on both files in full
+72. Ubuntu Security API and its page: https://ubuntu.com/security/cves/about ("still a work in progress and subject to change. Please don't use it in production environments or automations"); endpoints under https://ubuntu.com/security/cves.json and https://ubuntu.com/security/notices.json, tried 2026-11-24: pages of 20 to 96 CVEs, some queries answered 504
+73. Ubuntu OSV data: https://security-metadata.canonical.com/osv/ (`osv-all.tar.xz`, 60.95 MB, modified 2026-11-24 06:14; the `LICENSE` is the same directory's); the OSV schema: https://ossf.github.io/osv-schema/
+74. Canonical's OVAL generator, `oval_lib.py` and `generate-oval` in the ubuntu-cve-tracker repository (status mapping, the "might be affected and may need fixing" wording, the kernel and ESM pocket handling): https://git.launchpad.net/ubuntu-cve-tracker (read 2026-11-24; the file the published OVAL header names)
+75. Ubuntu Pro client (GPL-3.0), `uaclient/apt.py`, `uaclient/entitlements/esm.py`, `enable.py` and `security.py`/`fix.py` (`--dry-run`, the repo file names and their removal on disable): https://github.com/canonical/ubuntu-pro-client ; its documentation of apt's ESM messages and `pro security-status`: https://documentation.ubuntu.com/pro-client/en/latest/ (read 2026-11-24 from the repository and the pages; not run on a host)

@@ -2,6 +2,7 @@
 findings, the chore, the upload shape and the Vulnerabilities page."""
 
 import asyncio
+import bz2
 import gzip
 import json
 import re
@@ -136,7 +137,7 @@ def test_classify(status, fixed, urgency, nodsa, installed, state):
 def test_release_of():
     assert match.release_of(inventory([])) == "trixie"
     assert match.release_of(inventory([], os_id="raspbian")) == "trixie"
-    assert match.release_of(inventory([], os_id="ubuntu", codename="noble")) is None
+    assert match.release_of(inventory([], os_id="ubuntu", codename="noble")) is None      # Ubuntu has its own matcher (cve/ubuntu.py)
     assert match.release_of({**inventory([]), "backend": "dnf"}) is None
 
 
@@ -261,9 +262,9 @@ def test_feed_is_due(tmp_path):
 # ---- download ---------------------------------------------------------------------------
 
 def serve(tmp_path, calls=None, etag='"v1"', override=None):
-    """A fake of the three feeds, of the OPNsense changelog tarball (the repository's archive), and of Alpine's secdb (main.json and community.json for v3.17 and v3.23 only; any other
-    release is a 404, as secdb answers for a release it has no directory for). Conditional requests get 304 when the etag
-    matches."""
+    """A fake of the three feeds, of the OPNsense changelog tarball (the repository's archive), of Alpine's secdb (main.json and community.json for v3.17 and v3.23 only; any other
+    release is a 404, as secdb answers for a release it has no directory for) and of Canonical's OVAL (the noble and focal
+    files only: trimmed copies; any other release is a 404). Conditional requests get 304 when the etag matches."""
     files = {"security-tracker.debian.org": (tracker_gz(tmp_path), True), "epss.empiricalsecurity.com": (epss_gz(tmp_path), False),
              "www.cisa.gov": (kev_gz(tmp_path), True)}
 
@@ -281,6 +282,14 @@ def serve(tmp_path, calls=None, etag='"v1"', override=None):
                 return httpx.Response(304)
             body = (FIX / f"alpine-{m.group(2)}.json").read_text().replace("RELEASE", m.group(1))
             return httpx.Response(200, content=body.encode(), headers={"etag": etag, "last-modified": "Tue, 24 Nov 2026 01:45:59 GMT"})
+        if request.url.host == feeds.ubuntu.OVAL_HOST:      # Canonical's OVAL: one bz2 file per release
+            m = re.fullmatch(r"/oval/com\.ubuntu\.(noble|focal)\.cve\.oval\.xml\.bz2", request.url.path)
+            if not m:
+                return httpx.Response(404)
+            if request.headers.get("if-none-match") == etag:
+                return httpx.Response(304)
+            return httpx.Response(200, content=bz2.compress((FIX / f"ubuntu-{m.group(1)}.oval.xml").read_bytes()),
+                                  headers={"etag": etag, "last-modified": "Thu, 19 Nov 2026 19:37:14 GMT"})
         if request.url.host == feeds.OPNSENSE_HOST:     # the OPNsense changelog repository's tarball
             if request.url.path != fake_changelog.PATH:
                 return httpx.Response(404)
@@ -647,7 +656,9 @@ def test_page_for_an_unmatched_release_and_a_standalone_host(hub_cfg, token, tmp
     c = page_client(hub_cfg, token)
     post(c, body(inventory=inventory([["c-ares", "1.0", []]], os_id="ubuntu", codename="noble")), token)
     store.connect(hub_cfg.cve_db_path).close()
-    assert "Ubuntu is planned" in c.get("/h/testhost/vulnerabilities").text
+    # An Ubuntu host with no codename in the inventory, and a derivative with its own id, are not matched.
+    post(c, body(inventory=inventory([["c-ares", "1.0", []]], os_id="linuxmint", codename="wilma")), token)
+    assert "derivative with its own name" in c.get("/h/testhost/vulnerabilities").text
     # A host with no hub: the page explains, and the nav has no such item.
     solo = TestClient(create_app(seeded), follow_redirects=False)
     solo.post("/login", data={"password": PASSWORD})

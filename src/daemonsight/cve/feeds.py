@@ -16,6 +16,9 @@ unchanged file costs one small request, by default every 24 hours:
   release a container image runs (alpine.py). Unlike the three feeds above these files are chosen by what the hub's
   images hold, so a Feed is made for each (`alpine_feed`) and the chore drops the ones no image needs any more.
 
+* Canonical's CVE OVAL, https://security-metadata.canonical.com/oval/com.ubuntu.<codename>.cve.oval.xml.bz2, one file per
+  Ubuntu release a host or container image runs (ubuntu.py); chosen by what the hub holds, like the Alpine files.
+
 * OPNsense's changelog, https://codeload.github.com/opnsense/changelog/tar.gz/refs/heads/master (the repository's tarball,
   about 0.6 MB, BSD 2-Clause), one file for all series: the chore asks for it only while an OPNsense system has a release
   update pending, and keeps the rows of the series those systems need (opnsense.py).
@@ -43,7 +46,7 @@ from pathlib import Path
 import httpx
 
 from .. import __version__
-from . import alpine, opnsense, store, tracker
+from . import alpine, opnsense, store, tracker, ubuntu
 
 log = logging.getLogger("daemonsight.cve")
 
@@ -66,6 +69,8 @@ class Feed:
     release: str = ""        # Alpine only: "v3.23"
     repo: str = ""           # Alpine only: "main" or "community"
     raw_ext: str = ""        # the saved file's extension when it is not csv or json (the OPNsense tarball)
+    kind: str = ""           # "alpine" or "ubuntu" for the files chosen by release; "" for the others
+    magic: bytes = b"\x1f\x8b"   # first bytes of a download that is kept as it came (gzip; bzip2 is b"BZh")
 
 
 FEEDS = {
@@ -98,7 +103,7 @@ def alpine_feed(release: str, repo: str) -> Feed:
                 ALPINE_MAX_BYTES, False,
                 "The site's licence file is Creative Commons Attribution-ShareAlike 4.0 (https://secdb.alpinelinux.org/license.txt). "
                 "DaemonSight reads the files, keeps what it needs to match and does not republish them. Source: Alpine Linux security database",
-                "https://secdb.alpinelinux.org/", release, repo)
+                "https://secdb.alpinelinux.org/", release, repo, kind="alpine")
 
 
 def alpine_title(name: str) -> str:
@@ -109,6 +114,25 @@ def alpine_title(name: str) -> str:
 
 def alpine_feeds(release: str) -> list[Feed]:
     return [alpine_feed(release, repo) for repo in ALPINE_REPOS]
+
+
+UBUNTU_PREFIX = "ubuntu-"
+UBUNTU_MAX_BYTES = 80 << 20      # the real files are 2 to 12 MB (noble: 11.9 MB)
+
+
+def ubuntu_feed(release: str) -> Feed:
+    """The feed for one release's CVE OVAL file. `release` is the codename ("noble")."""
+    url = ubuntu.OVAL_URL.format(release=release)
+    return Feed(f"{UBUNTU_PREFIX}{release}", f"Ubuntu CVE data ({release})", url, (ubuntu.OVAL_HOST,), UBUNTU_MAX_BYTES, True,
+                "Creative Commons Attribution-ShareAlike 4.0 (" + ubuntu.LICENCE_URL + "). DaemonSight reads the file, keeps "
+                "what it needs to match and does not republish it. Source: Canonical's Ubuntu OVAL",
+                ubuntu.OVAL_DOCS, release, raw_ext="oval.xml.bz2", kind="ubuntu", magic=b"BZh")
+
+
+def ubuntu_title(name: str) -> str:
+    """The title of an Ubuntu feed from its name ("ubuntu-noble"), for a row that has no Feed at hand."""
+    m = re.match(r"^" + UBUNTU_PREFIX + r"([a-z]{3,20})$", name)
+    return f"Ubuntu CVE data ({m.group(1)})" if m else name
 
 
 OPNSENSE_NAME = "opnsense-changelog"
@@ -218,8 +242,8 @@ async def download(feed: Feed, row, dest: Path, client: httpx.AsyncClient | None
                     out.write(chunk)
             if feed.gz_source:
                 with open(tmp, "rb") as fh:
-                    if fh.read(2) != b"\x1f\x8b":
-                        raise FetchError("expected a gzip file")
+                    if fh.read(len(feed.magic)) != feed.magic:
+                        raise FetchError("expected a " + ("bzip2" if feed.magic == b"BZh" else "gzip") + " file")
             info = {"etag": r.headers.get("etag"), "last_modified": r.headers.get("last-modified"), "size": size}
         os.replace(tmp, dest)
         return info
@@ -310,6 +334,39 @@ def load_alpine(conn: sqlite3.Connection, path: Path, feed: Feed) -> tuple[int, 
     return len(rows), f"{len({r[0] for r in rows})} packages with CVEs fixed"
 
 
+def load_ubuntu(conn: sqlite3.Connection, path: Path, feed: Feed, kernels: set[str]) -> tuple[int, str]:
+    """Replace one release's `ubu` rows (and the descriptions they need) with what the saved OVAL file holds. The old rows
+    stay when the file does not parse. Kernel rows are kept only for the kernel flavors in `kernels` (the source names of the
+    hub's Ubuntu hosts that begin with "linux"): the file has about 500,000 kernel criteria (a CVE for each of 30 flavors) and
+    a host runs one. Returns (rows kept, note)."""
+    release = feed.release
+    rows: list[tuple] = []
+    descs: dict[str, str] = {}
+    for cve, prio, descr, found in ubuntu.load_file(path, release):
+        kept = [(release, src, cve, pocket, kernel, state, fixed, prio) for src, pocket, kernel, state, fixed in found
+                if not kernel or src in kernels]
+        if not kept:
+            continue
+        rows.extend(kept)
+        descs[cve] = descr
+        if len(rows) > ubuntu.MAX_ROWS:
+            raise ubuntu.OvalError("the OVAL file has more entries than expected")
+    packages = len({r[1] for r in rows if not r[4]})
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM ubu WHERE release = ?", (release,))
+        for i in range(0, len(rows), 20_000):
+            conn.executemany("INSERT OR REPLACE INTO ubu VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows[i:i + 20_000])
+        conn.executemany("INSERT OR REPLACE INTO ubu_cve VALUES (?, ?)", list(descs.items()))
+        conn.execute("DELETE FROM ubu_cve WHERE cve NOT IN (SELECT cve FROM ubu)")   # CVEs no release holds any more
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    store.set_meta(conn, f"ubu_kernels_{release}", json.dumps(sorted(kernels)))
+    return len(rows), f"{len(descs)} CVEs, {packages} source packages"
+
+
 def load_epss(conn: sqlite3.Connection, path: Path) -> tuple[int, str]:
     """All scores. The file starts with `#model_version:...,score_date:...`, then
     a `cve,epss,percentile` header. Returns (rows, note about the model and date)."""
@@ -392,8 +449,10 @@ def load_one(conn, feed: Feed, path: Path, releases: set[str]) -> tuple[int, str
         rows, note = opnsense.load(conn, path, releases)
         store.set_meta(conn, "opn_series", json.dumps(sorted(releases)))
         return rows, note
-    if feed.release:
+    if feed.kind == "alpine":
         return load_alpine(conn, path, feed)
+    if feed.kind == "ubuntu":
+        return load_ubuntu(conn, path, feed, releases)
     return load_kev(conn, path)
 
 
@@ -410,16 +469,21 @@ async def refresh(conn_factory, data_dir: str, feed: Feed, releases: set[str], n
         try:
             info = await download(feed, row, dest, client)
         except NotFound:
-            if not feed.release:
+            if not feed.kind:
                 log.warning("CVE feed %s: HTTP 404", feed.name)
                 _record(conn, feed, checked_at=now, status="error", detail="HTTP 404")
                 return False
-            # secdb has no file for this release (too old, or not made yet): that is an answer, not a failure.
+            # The source has no file for this release (too old, or not made yet): that is an answer, not a failure.
             had = row["status"] != "absent"
-            conn.execute("DELETE FROM apk WHERE release = ? AND repo = ?", (feed.release, feed.repo))
+            if feed.kind == "alpine":
+                conn.execute("DELETE FROM apk WHERE release = ? AND repo = ?", (feed.release, feed.repo))
+                gone = "not in Alpine's security database"
+            else:
+                conn.execute("DELETE FROM ubu WHERE release = ?", (feed.release,))
+                gone = "not in Canonical's OVAL data"
             dest.unlink(missing_ok=True)
             _record(conn, feed, checked_at=now, ok_at=now, changed_at=now if had else row["changed_at"], status="absent",
-                    detail=None, etag=None, last_modified=None, size=None, rows=0, note="not in Alpine's security database")
+                    detail=None, etag=None, last_modified=None, size=None, rows=0, note=gone)
             return had
         except FetchError as exc:
             log.warning("CVE feed %s: %s", feed.name, exc)
@@ -465,6 +529,51 @@ def drop_alpine(conn_factory, data_dir: str, keep: set[str]) -> bool:
     finally:
         conn.close()
     return dropped
+
+
+def drop_ubuntu(conn_factory, data_dir: str, keep: set[str]) -> bool:
+    """Forget the OVAL files of Ubuntu releases nothing runs any more: feed rows, `ubu` rows and saved files. Returns True
+    when something was dropped."""
+    conn = conn_factory()
+    dropped = False
+    try:
+        for r in conn.execute("SELECT name FROM feed WHERE name LIKE ?", (UBUNTU_PREFIX + "%",)).fetchall():
+            m = re.match(r"^" + UBUNTU_PREFIX + r"([a-z]{3,20})$", r["name"])
+            if m and m.group(1) in keep:
+                continue
+            conn.execute("DELETE FROM feed WHERE name = ?", (r["name"],))
+            (cve_dir(data_dir) / f"{r['name']}.oval.xml.bz2").unlink(missing_ok=True)
+            if m:
+                conn.execute("DELETE FROM meta WHERE key = ?", (f"ubu_kernels_{m.group(1)}",))
+            dropped = True
+        for (rel,) in conn.execute("SELECT DISTINCT release FROM ubu").fetchall():
+            if rel not in keep:
+                conn.execute("DELETE FROM ubu WHERE release = ?", (rel,))
+                dropped = True
+        conn.execute("DELETE FROM ubu_cve WHERE cve NOT IN (SELECT cve FROM ubu)")
+    finally:
+        conn.close()
+    return dropped
+
+
+def reload_ubuntu(conn_factory, data_dir: str, release: str, kernels: set[str]) -> int | None:
+    """Parse the saved OVAL file again, for another set of kernel flavors (a host on a new kernel flavor reported). Returns
+    the rows kept, or None if there is no saved file or it does not parse (the old rows stay)."""
+    feed = ubuntu_feed(release)
+    path = raw_path(data_dir, feed)
+    if not path.exists():
+        return None
+    conn = conn_factory()
+    try:
+        try:
+            rows, note = load_ubuntu(conn, path, feed, kernels)
+        except Exception:
+            log.exception("The Ubuntu OVAL file for %s could not be read again", release)
+            return None
+        _record(conn, feed, rows=rows, note=note)
+        return rows
+    finally:
+        conn.close()
 
 
 def drop_opnsense(conn_factory, data_dir: str) -> bool:

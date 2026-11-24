@@ -389,22 +389,25 @@ def _image_findings(conn, host: str) -> dict[tuple[str, str], dict]:
 def _cve_cell(r: dict) -> dict:
     """The "Fixable CVEs" cell of one image: {"text", "kev", "top", "note", "v"}."""
     kind, c = r["kind"], r["cve"]
-    if kind in ("debian", "alpine") and c and c["state"] == "matched":
+    if kind in ("debian", "alpine", "ubuntu") and c and c["state"] == "matched":
         n = len(c["fixable"])
         top = c["fixable"][0] if c["fixable"] else None
         from ..cve import match
-        note = f"{c['unfixed']} with no fix yet" if c["unfixed"] else None      # Alpine's secdb has no such count
+        # Alpine's secdb has no count of CVEs without a fix; Ubuntu's data has fixes that exist only in Ubuntu Pro's ESM archives
+        bits = ([f"{c['unfixed']} with no fix yet"] if c["unfixed"] else []) + (
+            [f"{len(c['esm'])} fixed only in Ubuntu Pro (ESM)"] if c.get("esm") else [])
+        note = ", ".join(bits) or None
         return {"text": f"{n} fixable" if n else "None fixable", "kev": len(c["kev"]), "hot": len(c["hot"]),
                 "top": match.pct(top["epss"]) if top and top["epss"] is not None else None,
                 "note": note or c.get("note") or None, "v": n}
     if kind == "alpine" and c and c["state"] == "absent":
         return {"text": f"{c['label']}: not in Alpine's security database", "v": -1}
+    if kind == "ubuntu" and c and c["state"] == "absent":
+        return {"text": f"{c['label']}: not in Canonical's OVAL data", "v": -1}
     if kind == "alpine" and c and c["state"] == "unmapped":
         return {"text": "Release not named (edge?): not matched", "v": -1}
-    if kind in ("debian", "alpine"):
+    if kind in ("debian", "alpine", "ubuntu"):
         return {"text": "CVE matching is off" if c and c["state"] == "off" else "Waiting for the CVE matcher", "v": -1}
-    if kind == "ubuntu":
-        return {"text": "Ubuntu matching not built yet (phase 3b)", "v": -1}
     if kind == "other" and r["manager"]:
         return {"text": "Not matched for this OS", "v": -1}
     return {"text": "—", "v": -1}
@@ -416,6 +419,27 @@ def _packages_cell(r: dict) -> dict:
     reasons = {"stopped": "Not read: stopped", "waiting": "Waiting for its first read"}
     err = r["error"] or "not read"
     return {"text": reasons.get(r["state"]) or err[:1].upper() + err[1:], "note": None, "v": -1}
+
+
+def _ubuntu_lines(cves: dict | None, now: float) -> list[dict]:
+    """One line per Ubuntu release the system's images run, for the coverage card: how Canonical's OVAL data stands for it,
+    and the last failed download's reason when there was one ({"text", "error"})."""
+    from ..cve import ubuntu
+    out = []
+    for rel, st in sorted(((cves or {}).get("ubuntu") or {}).items()):
+        name = ubuntu.display(rel)
+        if st["state"] == "absent":
+            text = f"{name}: not in Canonical's OVAL data, so nothing is matched for it"
+        elif st["state"] == "ok":
+            text = f"{name}: OVAL data checked {fmt_ago(st['ok_at'], now)}"
+        else:
+            text = f"{name}: OVAL data not downloaded yet"
+        err = None
+        if st["error"]:
+            err = (f"The last download failed ({st['error']}); "
+                   + ("the copy from the earlier download is used" if st["state"] == "ok" else "there is no copy yet"))
+        out.append({"text": text, "error": err})
+    return out
 
 
 def _alpine_lines(cves: dict | None, now: float) -> list[dict]:
@@ -468,6 +492,7 @@ def images(conn, cfg: Config) -> dict:
                      "src": {**prov.docker_image_row(r), "finding": f, "anchor": r["anchor"]}})
     counts = (a or {}).get("counts") or {}
     alpine_lines = _alpine_lines(cves, now)
+    ubuntu_lines = _ubuntu_lines(cves, now)
     fixable = sum(1 for r in rows if r["cvec"]["v"] > 0)
     kev = sum(1 for r in rows if r["cvec"].get("kev"))
     return {
@@ -476,7 +501,7 @@ def images(conn, cfg: Config) -> dict:
         "has_data": bool(data), "old_reader": bool(data) and a is None,
         "rows": rows, "counts": counts, "eol": len((a or {}).get("eol", [])), "fixable": fixable, "kev": kev,
         "cve_off": bool(cves) and not cves["enabled"], "cve_missing": bool(cves) and cves["enabled"] and not cves["available"],
-        "feed_ago": fmt_ago(cves["feed_at"], now) if cves and cves.get("feed_at") else None, "alpine_lines": alpine_lines,
+        "feed_ago": fmt_ago(cves["feed_at"], now) if cves and cves.get("feed_at") else None, "alpine_lines": alpine_lines, "ubuntu_lines": ubuntu_lines,
         "src": {"images": prov.images_section(reader_url)},
     }
 

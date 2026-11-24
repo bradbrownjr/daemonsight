@@ -11,7 +11,7 @@ from dataclasses import replace
 from .. import db, distro, findings as rules, hub, outside as outside_mod, shodan as shodan_mod
 from ..collector.sources.caddy import is_local
 from .. import cve as _cve  # noqa: F401 (package)
-from ..cve import feeds as cve_feeds, match as cve_match, store as cve_store
+from ..cve import feeds as cve_feeds, match as cve_match, store as cve_store, ubuntu as cve_ubuntu
 from . import provenance as prov
 from ..config import Config, ExposureConfig
 
@@ -918,7 +918,9 @@ def packages(conn, cfg: Config) -> dict:
 # --- vulnerabilities -----------------------------------------------------------
 
 TRACKER = "https://security-tracker.debian.org/tracker/"
-STATE_LABEL = {"fix": ("Fix available", "bg-orange-lt"), "nofix": ("No fix yet", "bg-secondary-lt"),
+UBUNTU_TRACKER = "https://ubuntu.com/security/"
+STATE_LABEL = {"fix": ("Fix available", "bg-orange-lt"), "esm": ("Fix needs Ubuntu Pro", "bg-yellow-lt"),
+               "nofix": ("No fix yet", "bg-secondary-lt"),
                "minor": ("Won't fix or minor", "bg-secondary-lt"), "undetermined": ("Being assessed", "bg-secondary-lt")}
 CVES_SHOWN = 30      # CVEs listed per package; the tracker link has the rest
 BINARIES_SHOWN = 6
@@ -931,14 +933,14 @@ def _epss_text(score) -> str:
     return f"{score * 100:.0f}%" if score >= 0.01 else "<1%"
 
 
-def _cve_row(c: dict, backend: str) -> dict:
+def _cve_row(c: dict, backend: str, distro_id: str = "debian") -> dict:
     label, badge = STATE_LABEL[c["state"]]
     if backend == "dnf":
         url = f"https://bodhi.fedoraproject.org/updates/{c['fixed']}" if c.get("fixed") else None
         fix_url = url
         cve_url = f"https://nvd.nist.gov/vuln/detail/{c['cve']}"
     else:
-        cve_url = TRACKER + c["cve"]
+        cve_url = (UBUNTU_TRACKER if distro_id == "ubuntu" else TRACKER) + c["cve"]
         fix_url = None
     return {"cve": c["cve"], "url": cve_url, "state": c["state"], "label": label, "badge": badge,
             "kev": c["kev"], "kev_name": c.get("kev_name") or "", "ransomware": c.get("ransomware") == "Known",
@@ -957,22 +959,28 @@ def _feed_rows(cdb, now: float, refresh_hours: float) -> list[dict]:
         m = re.match(r"^" + cve_feeds.ALPINE_PREFIX + r"(v[0-9.]+)-(main|community)$", name)
         if m:
             alpine[name] = cve_feeds.alpine_feed(m.group(1), m.group(2))
+    # Canonical's OVAL files are listed the same way, one per Ubuntu release a host or an image runs.
+    ubuntu = {}
+    for name in sorted(have):
+        m = re.match(r"^" + cve_feeds.UBUNTU_PREFIX + r"([a-z]{3,20})$", name)
+        if m:
+            ubuntu[name] = cve_feeds.ubuntu_feed(m.group(1))
     # OPNsense's changelog is listed only while a firewall's pending update needs it (the chore drops it otherwise).
     opn = {cve_feeds.OPNSENSE_NAME: cve_feeds.OPNSENSE_FEED} if cve_feeds.OPNSENSE_NAME in have else {}
-    for name, feed in [*cve_feeds.FEEDS.items(), *alpine.items(), *opn.items()]:
+    for name, feed in [*cve_feeds.FEEDS.items(), *alpine.items(), *ubuntu.items(), *opn.items()]:
         r = have.get(name)
         ok_at = r["ok_at"] if r else None
         stale = bool(r) and (now - (ok_at if ok_at is not None else (r["first_try"] or now))) > FEED_STALE_DAYS * 86400
         if r is None or r["checked_at"] is None:
             state, cls = "Not fetched yet", "text-secondary"
         elif r["status"] == "absent":
-            state, cls = "Not in Alpine's security database", "text-secondary"
+            state, cls = ("Not in Canonical's OVAL data" if name in ubuntu else "Not in Alpine's security database"), "text-secondary"
         elif r["status"] == "error":
             state, cls = "Last try failed", "text-red"
         else:
             state, cls = "Up to date" if not stale else "Old", "text-green" if not stale else "text-orange"
         out.append({
-            "name": name, "alpine": name in alpine, "title": feed.title, "url": feed.url, "terms": feed.terms, "state": state, "cls": cls,
+            "name": name, "alpine": name in alpine, "ubuntu": name in ubuntu, "title": feed.title, "url": feed.url, "terms": feed.terms, "state": state, "cls": cls,
             "checked": fmt_ago(r["checked_at"]) if r and r["checked_at"] else "never",
             "ok": fmt_ago(ok_at) if ok_at else "never",
             "changed": fmt_ago(r["changed_at"]) if r and r["changed_at"] else "never",
@@ -989,10 +997,12 @@ def vulnerabilities(conn, cfg: Config) -> dict:
     now = time.time()
     inv_snap = snaps.get("inventory")
     inv = inv_snap.data if inv_snap and inv_snap.data else None
+    distro_id = "ubuntu" if inv and inv.get("os_id") == "ubuntu" else "debian"
     out = {"host": _host(cfg, snaps), "hub": cfg.hub.enabled, "enabled": cfg.cve.enabled, "inv": None,
            "message": None, "packages": [], "totals": None, "feeds": [], "epss_high": cfg.cve.epss_high,
-           "refresh_hours": cfg.cve.refresh_hours,
-           "src": {"packages": prov.cve_packages(), "inventory": prov.cve_inventory()}, "backend": "apt"}
+           "refresh_hours": cfg.cve.refresh_hours, "distro": distro_id, "esm": None,
+           "src": {"packages": prov.cve_packages(distro_id, (inv or {}).get("codename")), "inventory": prov.cve_inventory(distro_id)},
+           "backend": "apt"}
     if not cfg.hub.enabled:
         out["message"] = "CVE matching runs on a hub, which downloads the vulnerability data. This host has no hub."
         return out
@@ -1008,13 +1018,17 @@ def vulnerabilities(conn, cfg: Config) -> dict:
             return out
         backend = inv.get("backend") or "apt"
         out["backend"] = backend
-        release = cve_match.release_of(inv)
+        release = cve_match.release_of(inv) or cve_ubuntu.release_of(inv)
+        if distro_id == "ubuntu":
+            have = inv.get("esm")
+            out["esm"] = ("not known: this collector does not report it" if have is None else
+                          "on for " + " and ".join("esm-" + x for x in have) if have else "not on")
         ident = " ".join(x for x in (inv.get("os_id"), inv.get("version_id"), f"({inv['codename']})" if inv.get("codename") else "") if x)
         out["inv"] = {"ago": fmt_ago(inv_snap.taken_at), "count": len(inv.get("sources", [])) or len(inv.get("advisories", [])),
                       "release": ident or "unknown", "backend": backend}
         if backend == "apt" and release is None:
-            out["message"] = ("This host's release isn't matched yet. CVE matching covers Debian and Raspberry Pi OS; "
-                              "Ubuntu is planned (Ubuntu's own CVE data is the source to use).")
+            out["message"] = ("This host's release isn't matched. CVE matching covers Debian, Raspberry Pi OS and Ubuntu; "
+                              "a derivative with its own name (Linux Mint, Pop!_OS and the like) follows its vendor's data, which is not read here.")
             return out
         if cdb is None:
             out["message"] = "No vulnerability data has been downloaded yet. The hub fetches it shortly after it starts."
@@ -1035,26 +1049,30 @@ def vulnerabilities(conn, cfg: Config) -> dict:
     for c in cves:
         by_pkg.setdefault(c["source"], []).append(c)
     rows = []
-    totals = {"packages": 0, "fix": 0, "nofix": 0, "minor": 0, "undetermined": 0, "kev": 0}
+    totals = {"packages": 0, "fix": 0, "esm": 0, "nofix": 0, "minor": 0, "undetermined": 0, "kev": 0}
     for src, items in by_pkg.items():
         items.sort(key=cve_match.rank_key)
         counts = {k: sum(1 for c in items if c["state"] == k) for k in cve_match.STATES}
-        actionable = [c for c in items if c["state"] in ("fix", "nofix")]
+        actionable = [c for c in items if c["state"] in ("fix", "esm", "nofix")]
         top = (actionable or items)[0]
-        kev_n = sum(1 for c in items if c["kev"] and c["state"] in ("fix", "nofix"))
+        kev_n = sum(1 for c in items if c["kev"] and c["state"] in ("fix", "esm", "nofix"))
         fixed_v = cve_match._fixed_version([c for c in items if c["state"] == "fix"]) if backend == "apt" else None
+        if backend == "apt" and not fixed_v and counts["esm"]:
+            fixed_v = cve_match._fixed_version([c for c in items if c["state"] == "esm"], "esm")
+            fixed_v = f"{fixed_v} (Ubuntu Pro)" if fixed_v else None
         names = bins.get(src, [])
-        top_row = _cve_row(top, backend)
+        top_row = _cve_row(top, backend, distro_id)
         epss_max = max((c["epss"] or 0 for c in actionable), default=0)
         rows.append({
             "anchor": rules.anchor("cve", src), "name": src,
             "binaries": names[:BINARIES_SHOWN], "more_binaries": max(len(names) - BINARIES_SHOWN, 0),
             "installed": items[0]["installed"] or "—", "fixed": fixed_v or "—", "counts": counts,
             "total": len(items), "kev": kev_n, "top": top_row, "epss_max": epss_max,
-            "high": bool(kev_n or any(c["state"] == "fix" and (c["epss"] or 0) >= cfg.cve.epss_high for c in items)),
-            "cves": [_cve_row(c, backend) for c in items[:CVES_SHOWN]], "more": max(len(items) - CVES_SHOWN, 0),
-            "tracker": (TRACKER + "source-package/" + quote(src, safe="")) if backend == "apt" else None,
-            "sort": (-kev_n, -(counts["fix"] > 0), -epss_max, -counts["fix"], -counts["nofix"], src),
+            "high": bool(kev_n or any(c["state"] in ("fix", "esm") and (c["epss"] or 0) >= cfg.cve.epss_high for c in items)),
+            "cves": [_cve_row(c, backend, distro_id) for c in items[:CVES_SHOWN]], "more": max(len(items) - CVES_SHOWN, 0),
+            "tracker": (None if backend != "apt" else "https://ubuntu.com/security/cve?package=" + quote(src, safe="") if distro_id == "ubuntu"
+                        else TRACKER + "source-package/" + quote(src, safe="")),
+            "sort": (-kev_n, -(counts["fix"] > 0), -(counts["esm"] > 0), -epss_max, -counts["fix"], -counts["nofix"], src),
         })
         totals["packages"] += 1
         for k in cve_match.STATES:
