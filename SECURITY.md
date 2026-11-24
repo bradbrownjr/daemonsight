@@ -455,13 +455,26 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   changelog: one 0.6 MB tarball of its repository from `codeload.github.com`
   (`/opnsense/changelog/tar.gz/refs/heads/master`, BSD 2-Clause), read for the
   CVE ids in the release notes between the installed and the offered version.
-  Requests carry
+  Release notes that name only a security advisory are looked up, one request
+  each and only for the releases a firewall needs, on two more hosts:
+  `www.freebsd.org` (`/security/advisories/FreeBSD-SA-<id>.asc`, a FreeBSD
+  advisory, read for its `CVE Name:` line; `security.freebsd.org` redirects
+  there, so the hub asks `www.freebsd.org` directly) and `api.github.com`
+  (`/repos/opnsense/core/security-advisories/<GHSA id>`, OPNsense's own
+  advisory, read for its CVE id and rating; no token, so GitHub's limit of 60
+  requests an hour applies and the hub stops on a 403 or 429 until the time the
+  answer gives). Each answer is kept for good and never asked for twice (a
+  failed one is tried again after `refresh_hours`). Nothing about your hosts is
+  sent: the path names a public advisory. Requests carry
   the User-Agent `DaemonSight/<version>` and nothing about your hosts. A
   redirect may only stay on the feed's own host, each download has a size
   cap (the bzip2 files are also capped once decoded), files are written atomically and parsed with the standard library
   (no code is run from them). The changelog tarball is never extracted: it is
   read as a stream and only plain files named `community/<series>/<release>`
-  are read, each capped. A failed download keeps the last good data.
+  are read, each capped. A failed download keeps the last good data. An
+  advisory answer is HTTPS only, from the host asked, never redirected, capped
+  (128 KB FreeBSD, 512 KB GitHub), and only CVE ids, GitHub's rating and a
+  short title are kept.
 - **Outside checks send one thing to Shodan: an IP address.** Off by default
   (Settings page, or `[outside] enabled`). When on, the hub asks Shodan's InternetDB,
   `GET https://internetdb.shodan.io/<ip>`, for each public address of each

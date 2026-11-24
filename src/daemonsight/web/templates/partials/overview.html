@@ -116,7 +116,7 @@
             <td data-v="{{ c.epss_v }}" data-label="EPSS">{{ c.epss_text }}</td>
             <td data-v="{{ 0 if c.kev else 1 }}" data-label="KEV">{% if c.kev %}<span class="badge bg-red text-red-fg" title="{{ c.kev_name }}">KEV</span>{% else %}—{% endif %}</td>
             <td data-label="Fixed in"><a href="{{ c.changelog }}" target="_blank" rel="noopener noreferrer">{{ c.release }}</a>{% if c.date %}<div class="text-secondary small">{{ c.date }}</div>{% endif %}</td>
-            <td data-label="Changelog line" class="text-wrap">{{ c.line }}</td>
+            <td data-label="Changelog line" class="text-wrap">{{ c.line }}{% if c.via %}<div class="text-secondary small">via {% for v in c.via %}{% if v.url %}<a href="{{ v.url }}" target="_blank" rel="noopener noreferrer">{{ v.label }}</a>{% else %}{{ v.label }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}</td>
           </tr>{% endfor %}
         </tbody>
       </table>
@@ -125,8 +125,12 @@
     {% endif %}
     {% if cv.advisories %}
     <div class="card-body text-secondary small">
-      <details><summary>The changelog also names {{ cv.advisories|length }} security {{ 'advisory' if cv.advisories|length == 1 else 'advisories' }} with no CVE id. They are not ranked.</summary>
-        <ul class="list-unstyled mb-0 mt-1">{% for a in cv.advisories %}<li>{% if a.url %}<a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.kind }} {{ a.ref }}</a>{% else %}{{ a.kind }} {{ a.ref }}{% endif %}, in {{ a.version }}: {{ a.line }}</li>{% endfor %}</ul>
+      <details><summary>{{ cv.adv_total }} security {{ 'advisory' if cv.adv_total == 1 else 'advisories' }} in the changelog{% if cv.adv_open %}; {{ cv.adv_open }} with no CVE yet, not ranked{% endif %}.</summary>
+        <ul class="list-unstyled mb-0 mt-1">{% for a in cv.advisories %}<li>{% if a.url %}<a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.label }}</a>{% else %}{{ a.label }}{% endif %}, in {{ a.version }}:
+          {% if a.state == 'cves' %}{% for c in a.cves %}<a href="{{ c.url }}" target="_blank" rel="noopener noreferrer">{{ c.cve }}</a>{{ ', ' if not loop.last }}{% endfor %}
+          {% elif a.state == 'none' %}no CVE published
+          {% elif a.state == 'error' %}CVE lookup failed, tried again later
+          {% else %}CVE lookup pending{% endif %}{% if a.severity %} (GitHub rates it {{ a.severity }}{% if a.score is not none %}, CVSS {{ a.score }}{% endif %}){% endif %}. {{ a.line }}</li>{% endfor %}</ul>
       </details>
     </div>
     {% endif %}

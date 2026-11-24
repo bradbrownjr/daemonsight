@@ -20,7 +20,7 @@ from daemonsight.config import Config
 from daemonsight.cve import feeds, match, run, store, tracker
 from daemonsight.web.app import create_app
 
-from . import fake_changelog
+from . import fake_advisories, fake_changelog
 from .conftest import PASSWORD
 from .test_hub import body, hub_cfg, post, token  # noqa: F401 (fixtures)
 from .test_web import seeded  # noqa: F401 (fixture)
@@ -274,6 +274,9 @@ def serve(tmp_path, calls=None, etag='"v1"', override=None):
         assert request.headers["user-agent"] == feeds.USER_AGENT and request.headers["user-agent"].startswith("DaemonSight/")
         if request.url.host in (override or {}):
             return override[request.url.host](request)
+        adv = fake_advisories.handler(request)         # FreeBSD's advisory files and GitHub's repository advisory API
+        if adv is not None:
+            return adv
         if request.url.host == feeds.ALPINE_HOST:
             m = re.fullmatch(r"/(v3\.(?:17|23))/(main|community)\.json", request.url.path)
             if not m:

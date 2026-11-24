@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 -- One row per feed: when it was tried, when it last answered, and what it said.
@@ -94,6 +94,22 @@ CREATE TABLE IF NOT EXISTS opn_fix (
     ref     TEXT NOT NULL,
     line    TEXT NOT NULL,
     PRIMARY KEY (version, kind, ref)
+) WITHOUT ROWID;
+
+-- What each security advisory the changelog names says about CVEs (cve/advisories.py). `ref` is the changelog's own reference
+-- (`FREEBSD-SA:26:74.ktls`, `GHSA:GHSA-...`). `status` is `ok` (asked once; kept for good, advisories are immutable) or `error`
+-- (asked again after [cve] refresh_hours). `cves` is a JSON list, empty when the advisory names none; `severity` and `score` are
+-- GitHub's rating, null for FreeBSD's. Not dropped when no firewall needs the changelog: a kept answer is never asked for twice.
+CREATE TABLE IF NOT EXISTS opn_adv (
+    ref        TEXT PRIMARY KEY,
+    status     TEXT NOT NULL,
+    cves       TEXT NOT NULL,
+    severity   TEXT,
+    score      REAL,
+    title      TEXT,
+    fetched_at REAL,
+    tried_at   REAL,
+    detail     TEXT
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS cve (

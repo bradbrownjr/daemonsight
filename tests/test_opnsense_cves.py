@@ -19,7 +19,7 @@ from daemonsight.cve import feeds, opnsense as chg, opnver, run, store
 from daemonsight.remote import opnsense, opnsense_cves, opnsense_rules as rules, poll, store as remotes
 from daemonsight.web.app import create_app
 
-from . import fake_changelog
+from . import fake_advisories, fake_changelog
 from .conftest import PASSWORD
 from .fake_opnsense import FakeOpnsense, KEY, SECRET, load
 from .test_cve import DAY, serve
@@ -433,7 +433,7 @@ def test_a_pending_update_that_reaches_another_series_reads_the_saved_file_witho
     assert {r["series"] for r in cve_rows(cfg, "opn_release")} == {"26.1", "26.7"}
     assert "26.1, 26.7" in feed_row(cfg)["note"]
     got = opnsense_cves.load(cfg, conn, "fw1", crossing)
-    assert got["state"] == "ok" and len(got["cves"]) == 9
+    assert got["state"] == "ok" and len(got["cves"]) == 10               # 9 in the changelog lines, 1 through GHSA-2v2x-m4j7-76pv
     by = {c["cve"]: c["release"] for c in got["cves"]}
     assert by["CVE-2026-109618"] == "26.7.7" and by["CVE-2026-57154"] == "26.1.11"           # named in 26.1.11_10 and in 26.7.7: the later one
     # The firewall is back to a single series: only that one is kept.
@@ -494,11 +494,12 @@ def test_the_updates_finding_gains_the_cve_count_and_the_worst_ones(tmp_path):
     fw = firmware(to="26.1.11")
     cfg, conn, _c = chored(tmp_path, fw)
     cves = opnsense_cves.load(cfg, conn, "fw1", fw)
-    assert cves["state"] == "ok" and len(cves["cves"]) == 13 and cves["releases"] and cves["plan"]["offered"] == "26.1.11"
+    assert cves["state"] == "ok" and len(cves["cves"]) == 14 and cves["releases"] and cves["plan"]["offered"] == "26.1.11"
     f = updates(fw, cves)
-    assert f.severity == "medium" and "fixes 13 CVEs" in f.title and "known exploited" not in f.title
-    assert "Updating to 26.1.11 fixes 13 CVEs named in OPNsense's changelog" in f.detail and "Top CVEs:" in f.detail and "and 9 more" in f.detail
-    assert "advisories with no CVE id" in f.detail
+    assert f.severity == "medium" and "fixes 14 CVEs and 38 other security advisories" in f.title and "known exploited" not in f.title
+    assert "Updating to 26.1.11 fixes 14 CVEs named in OPNsense's changelog or in the FreeBSD and GitHub advisories it lists" in f.detail
+    assert "Top CVEs:" in f.detail and "and 10 more" in f.detail
+    assert "38 security advisories (FreeBSD and GitHub) name no CVE yet" in f.detail
     assert f.link == "/#firmware" and f.basis and "26.1.11" in f.basis
     # The how-to names System, Firmware, Updates and the changelog of the offered version.
     assert "System, Firmware, Updates" in f.howto and chg.changelog_url("26.1.11") in f.howto
@@ -704,8 +705,8 @@ def idle(version, latest=None, last_check=LC, **kw):
             "last_check": last_check, "major": "", "name": "OPNsense", "series": version[:4], "pending_since": None, **kw}
 
 
-def unseen_world(tmp_path, fw, extra=None):
-    override = {feeds.OPNSENSE_HOST: lambda r: httpx.Response(200, content=fake_changelog.tarball_bytes(extra=extra))} if extra else None
+def unseen_world(tmp_path, fw, extra=None, override=None):
+    override = {**(override or {}), **({feeds.OPNSENSE_HOST: lambda r: httpx.Response(200, content=fake_changelog.tarball_bytes(extra=extra))} if extra else {})} or None
     cfg, conn, c = make(tmp_path, fw, serve(tmp_path, override=override))
     asyncio.run(c.run_once(NOW))
     return cfg, conn, c
@@ -738,9 +739,11 @@ def test_a_newer_release_and_an_old_check_raise_the_finding_and_the_updates_find
     got, cves = unseen_findings(cfg, conn, fw, now)
     assert len(got) == 1 and cves["unseen"]["state"] == "ok"
     f = got[0]
-    assert f.title == "26.7.10 is out (fixes 2 CVEs); the firewall hasn't checked since Nov 18"
+    assert f.title == "26.7.10 is out (fixes 27 CVEs and 2 other security advisories); the firewall hasn't checked since Nov 18"
     assert f.basis == "26.7.10" and f.link == "/#firmware"
-    assert "Updating to 26.7.10 fixes 2 CVEs" in f.detail and "CVE-2026-109618" in f.detail and "last firmware check (Wed Nov 18" in f.detail
+    assert "Updating to 26.7.10 fixes 27 CVEs" in f.detail and "CVE-2026-101312" in f.detail and "last firmware check (Wed Nov 18" in f.detail
+    assert "via FreeBSD-SA-26:81.vfs" in f.detail and "2 security advisories (FreeBSD and GitHub) name no CVE yet" in f.detail
+    assert "GitHub rates 2 of them High or Critical" in f.detail and f.severity == "high"
     assert "nothing above 26.7.1" in f.detail
     assert "System, Firmware, Status, Check for updates" in f.howto and "'Firmware update check'" in f.howto and "System, Settings, Cron" in f.howto
     assert chg.changelog_url("26.7.10") in f.howto
@@ -791,7 +794,7 @@ def test_an_unreadable_last_check_counts_as_unknown_age(tmp_path):
         (tmp_path / str(i)).mkdir()
         cfg, conn, _c = unseen_world(tmp_path / str(i), fw)
         got, _ = unseen_findings(cfg, conn, fw, NOW)
-        assert len(got) == 1 and got[0].title == "26.7.10 is out (fixes 2 CVEs); the firewall's last check time is unknown"
+        assert len(got) == 1 and got[0].title == "26.7.10 is out (fixes 27 CVEs and 2 other security advisories); the firewall's last check time is unknown"
 
 
 NEW_SERIES = {"community/27.1/27.1": b"@ November 24, 2026\n\nHello!\n\no system: something\n\nStay safe,\n"}
@@ -817,18 +820,22 @@ def test_a_release_in_the_series_wins_over_a_newer_series_for_the_finding(tmp_pa
     assert len(got) == 1 and got[0].basis == "26.7.10" and cves["unseen"]["newer_series"] == "27.1"
 
 
-def test_with_no_cve_the_title_leaves_the_count_out_and_severity_is_low(tmp_path):
+def test_with_no_cve_the_title_counts_the_security_advisories_and_severity_is_medium(tmp_path):
+    """Nothing resolves (both sites answer 503): 26.7.10 names no CVE id in a line, so 23 security advisories are all there is."""
+    down = {fake_advisories.SA_HOST: lambda r: httpx.Response(503), fake_advisories.GH_HOST: lambda r: httpx.Response(503)}
     fw = idle("26.7.7", latest="26.7.7")
-    cfg, conn, _c = unseen_world(tmp_path, fw)
-    got, _ = unseen_findings(cfg, conn, fw, LC_TS + 3 * DAY)
-    assert got[0].title == "26.7.10 is out; the firewall hasn't checked since Nov 18" and got[0].severity == "low"
+    cfg, conn, _c = unseen_world(tmp_path, fw, override=down)
+    got, cves = unseen_findings(cfg, conn, fw, LC_TS + 3 * DAY)
+    assert got[0].title == "26.7.10 is out (fixes 23 security advisories); the firewall hasn't checked since Nov 18"
+    assert got[0].severity == "medium" and not cves["unseen"]["cves"] and len(cves["unseen"]["advisories"]) == 23
 
 
 def test_severity_comes_from_the_same_summary_call_as_the_updates_finding(tmp_path):
     """The two rules rank the same CVE set the same way, with no mapping of their own: a change to the shared scale moves both."""
     pend = firmware(to="26.7.10", frm="26.7.1", last_check=LC)
     idle_fw = idle("26.7.1", latest="26.7.1")
-    cfg, conn, c = unseen_world(tmp_path, pend)
+    unrated = {fake_advisories.GH_HOST: lambda r: httpx.Response(404)}        # GitHub's High rating would make every case High
+    cfg, conn, c = unseen_world(tmp_path, pend, override=unrated)
     now = LC_TS + 3 * DAY
     for mark in (None, "kev", "epss"):
         if mark == "kev":
@@ -845,7 +852,7 @@ def test_severity_comes_from_the_same_summary_call_as_the_updates_finding(tmp_pa
         asyncio.run(c.run_once(NOW + 30))
         cves = opnsense_cves.load(cfg, conn, "fw1", idle_fw)
         un = unseen_findings(cfg, conn, idle_fw, now)[0][0]
-        want = opnsense_cves.summary(cves["unseen"]["cves"], cves["epss_high"])["severity"]
+        want = opnsense_cves.summary(cves["unseen"]["cves"], cves["epss_high"], cves["unseen"]["advisories"])["severity"]
         assert un.severity == want == up.severity == ("medium" if mark is None else "high")
 
 
@@ -855,9 +862,9 @@ def test_the_card_has_the_same_sentence_and_the_cve_table_and_labels_the_release
     read_cves(cfg, conn, now=time.time())
     html = client.get("/h/fw1/").text
     card = html.split('id="firmware-unseen"')[1].split("</section>")[0]
-    assert "26.7.10 is out (fixes 2 CVEs); the firewall hasn&#39;t checked since Nov 18" in card
+    assert "26.7.10 is out (fixes 27 CVEs and 2 other security advisories); the firewall hasn&#39;t checked since Nov 18" in card
     assert "The firewall has not been offered 26.7.10 yet" in card and "nothing above 26.7.1" in card
-    assert 'data-table="opn-firmware-unseen-cves"' in card and "CVE-2026-109618" in card
+    assert 'data-table="opn-firmware-unseen-cves"' in card and "CVE-2026-101313" in card
     assert "Firmware release not yet seen" in html and "Pending firmware updates" not in html
     assert 'id="src-fw-unseen"' in html and "CVEs the newest release fixes" in html
     check_panels(html)

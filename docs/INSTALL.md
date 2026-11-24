@@ -543,6 +543,8 @@ tracker. It needs outbound HTTPS, nothing inbound, to:
 | `epss.empiricalsecurity.com` | EPSS scores, from FIRST | 3 MB |
 | `www.cisa.gov` | CISA's Known Exploited Vulnerabilities list | 0.2 MB |
 | `codeload.github.com` | The OPNsense project's changelog (a tarball of github.com/opnsense/changelog), only while an OPNsense firewall is enabled | 0.6 MB |
+| `www.freebsd.org` | The CVE ids of a FreeBSD security advisory the changelog names (one small file each, asked for once), only for a release a firewall needs | 6 KB each |
+| `api.github.com` | The CVE id and rating of an OPNsense security advisory the changelog names (one request each, asked for once; no token, 60 requests an hour allowed) | 20 KB each |
 
 It fetches each every 24 hours, asking only for what changed, keeps them in
 `/data/cve/` and loads them into `/data/cve.db` (about 60 MB on disk, not

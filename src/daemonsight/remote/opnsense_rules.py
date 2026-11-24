@@ -15,12 +15,14 @@ Thresholds, and where they come from. Where the number is DaemonSight's own choi
   hub first saw updates waiting (`pending_since`). 5 packages or a new release: Medium; 20 packages or 30 days: High.
   Own choice. When the CVE chore found CVEs that the offered release fixes (remote/opnsense_cves.py, from OPNsense's
   changelog), the finding names them and is at least Medium, and High when one is on CISA's KEV list or has an EPSS score
-  at or above `[cve] epss_high`: the rule for a Debian host's package (cve/match.py `package_findings`).
+  at or above `[cve] epss_high`: the rule for a Debian host's package (cve/match.py `package_findings`). A security advisory
+  of the changelog that names no CVE (not resolved, or none published) also makes it at least Medium, and High when GitHub
+  rates it High or Critical (`opnsense_cves.summary`; errata and plugin notes do not count). Own choice.
 * Unseen release (`opnsense.unseen_release`): the changelog has a release or hotfix in the firewall's series above what it
   runs and above what its last check showed (`latest`, `new_version`, the OPNsense package of a pending update), and that
   check is 2 days or more old, missing or unreadable. The age is DaemonSight's choice (the owner's). `last_check` is
   written by `scripts/firmware/check.sh` as `$(date)`; remote/opnsense.py `last_check_ts` reads it. The severity is
-  `opnsense_cves.summary(...)["severity"]`, the same call the updates finding uses, and Low with no CVE.
+  `opnsense_cves.summary(...)["severity"]`, the same call the updates finding uses, and Low with no CVE and no advisory.
 * Gateways: OPNsense's own alarm states (`status` is `down`, `loss`, `delay` or `delay+loss`, from
   `scripts/routes/gateway_status.php`) plus loss of 10% or more, or a round trip of 300 ms or more. Own choice.
 * WireGuard: no handshake for a day. WireGuard sends a handshake about every 2 minutes while a peer has traffic or a
@@ -95,18 +97,24 @@ def _worse(a: str, b: str | None) -> str:
 
 
 def _cve_text(cv: dict) -> tuple[dict, str]:
-    """The ranking of a pending update's CVEs, and the sentence about them for the finding's detail."""
-    s = opnsense_cves.summary(cv["cves"], cv["epss_high"])
-    n = len(s["fixable"])
-    top = ", ".join(opnsense_cves.describe(c) for c in s["fixable"][:opnsense_cves.SHOWN])
-    top += f" and {n - opnsense_cves.SHOWN} more" if n > opnsense_cves.SHOWN else ""
-    text = (f" Updating to {cv['plan']['offered']} fixes {n} {'CVE' if n == 1 else 'CVEs'} named in OPNsense's changelog"
-            + (f", {len(s['kev'])} on CISA's list of exploited vulnerabilities (KEV)" if s["kev"] else "")
-            + (f", {len(s['hot'])} with a high exploit score" if s["hot"] else "") + f". Top CVEs: {top}.")
-    if cv["advisories"]:
-        k = len(cv["advisories"])
-        text += (f" The changelog also names {k} security {'advisory' if k == 1 else 'advisories'} with no CVE id "
-                 "(FreeBSD and GitHub advisories); they are listed on the page and not ranked.")
+    """The ranking of a pending update's CVEs and advisories, and the sentence about them for the finding's detail."""
+    s = opnsense_cves.summary(cv["cves"], cv["epss_high"], cv.get("advisories"))
+    n, k = len(s["fixable"]), len(s["unresolved"])
+    if n:
+        top = ", ".join(opnsense_cves.describe(c) for c in s["fixable"][:opnsense_cves.SHOWN])
+        top += f" and {n - opnsense_cves.SHOWN} more" if n > opnsense_cves.SHOWN else ""
+        text = (f" Updating to {cv['plan']['offered']} fixes {n} {'CVE' if n == 1 else 'CVEs'} named in OPNsense's changelog or "
+                "in the FreeBSD and GitHub advisories it lists"
+                + (f", {len(s['kev'])} on CISA's list of exploited vulnerabilities (KEV)" if s["kev"] else "")
+                + (f", {len(s['hot'])} with a high exploit score" if s["hot"] else "") + f". Top CVEs: {top}.")
+    else:
+        text = f" Updating to {cv['plan']['offered']} fixes security advisories named in OPNsense's changelog."
+    if k:
+        high = sum(1 for a in s["unresolved"] if a.get("severity") in ("high", "critical"))
+        text += (f" {k} security {'advisory' if k == 1 else 'advisories'} (FreeBSD and GitHub) "
+                 f"{'names' if k == 1 else 'name'} no CVE yet, so {'it is' if k == 1 else 'they are'} not ranked; "
+                 f"{'it is' if k == 1 else 'they are'} listed on the page"
+                 + (f" and GitHub rates {high} of them High or Critical" if high else "") + ".")
     return s, text
 
 
@@ -122,13 +130,13 @@ def unseen_rules(fw: dict | None, now: float, cves: dict | None) -> list[Finding
     st = opnsense_cves.unseen_state(fw, cves, now)
     if not st or not st["ready"]:
         return []
-    s = opnsense_cves.summary(st["cves"], st["epss_high"])
+    s = opnsense_cves.summary(st["cves"], st["epss_high"], st["advisories"])
     sev = s["severity"] or "low"
     title = opnsense_cves.unseen_title(st, now)
     detail = (f"The firewall runs {fw.get('name') or 'OPNsense'} {st['plan']['installed']}. OPNsense's changelog lists "
               f"{st['version']}, which its last firmware check ({st['last_check'] or 'time unknown'}) did not show: that check "
               f"offered nothing above {st['plan']['seen']}.")
-    if s["fixable"]:
+    if s["fixable"] or s["unresolved"]:
         _s, text = _cve_text({"cves": st["cves"], "epss_high": st["epss_high"], "advisories": st["advisories"],
                               "plan": {"offered": st["version"]}})
         detail += text
@@ -164,12 +172,15 @@ def firmware_rules(fw: dict | None, now: float, cves: dict | None = None) -> lis
         # The CVEs the update fixes (the hub's CVE chore matched them against the changelog). Severity follows the Debian
         # host rule: KEV or a high EPSS score is High, any other fixable CVE Medium. The basis carries the offered version
         # and the CVE ids, so an accepted finding comes back when either changes.
-        if cves and cves.get("state") == "ok" and cves.get("cves"):
+        s = opnsense_cves.summary(cves["cves"], cves["epss_high"], cves.get("advisories")) if cves and cves.get("state") == "ok" else None
+        if s and (s["fixable"] or s["unresolved"]):
             s, text = _cve_text(cves)
             sev = _worse(sev, s["severity"])
-            title += "; " + opnsense_cves.headline(len(s["fixable"]), len(s["kev"]), lower=True)
+            title += "; " + opnsense_cves.headline(len(s["fixable"]), len(s["kev"]), lower=True, adv=len(s["unresolved"]))
             detail += text
-            basis = f"{basis}:{cves['plan']['offered']}:{digest(c['cve'] for c in s['fixable'])}"
+            # The CVE ids, and the advisories that name none: a CVE resolved later changes the basis, as a new CVE does.
+            ids = [c["cve"] for c in s["fixable"]] + [a["ref"] for a in s["unresolved"]]
+            basis = f"{basis}:{cves['plan']['offered']}:{digest(ids)}"
             howto = steps(*(x.format(url=opnsense.changelog_url(cves["plan"]["offered"])) for x in HOWTO_UPDATES_CVES))
         out.append(Finding("opnsense.updates", "updates", sev, title[:300], detail[:3900], "/#firmware", None, basis, howto))
     if fw.get("needs_reboot"):

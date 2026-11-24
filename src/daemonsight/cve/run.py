@@ -19,7 +19,7 @@ from functools import partial
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import alpine, feeds, match, opnsense, store, ubuntu
+from . import advisories, alpine, feeds, match, opnsense, store, ubuntu
 
 log = logging.getLogger("daemonsight.cve")
 
@@ -161,7 +161,6 @@ class Chore:
                     "SELECT name, changed_at FROM feed WHERE name LIKE ? ORDER BY name", (feeds.UBUNTU_PREFIX + "%",)))
             opn_row = conn.execute("SELECT changed_at FROM feed WHERE name = ?", (feeds.OPNSENSE_NAME,)).fetchone()
             opn_loaded = opnsense.loaded_series(conn)
-            opn_gen = f"{match.MATCH_VERSION}:opn:{opn_row['changed_at'] if opn_row else None}:{','.join(sorted(opn_loaded))}"
             opn_ready = bool(opn_loaded) and set(opn_series) <= opn_loaded
             # The newest release in a firewall's series that it has not been offered, matched like a pending update.
             unseen = {}
@@ -170,6 +169,10 @@ class Chore:
                     u = opnsense.unseen_plan(conn, fw)
                     if u["ok"]:
                         unseen[opnsense.unseen_host(h)] = u
+                # The CVE ids of the advisories those two ranges name, asked for once each (advisories.py).
+                await self._resolve_advisories(conn, [*opn.values(), *unseen.values()], now)
+            opn_gen = (f"{match.MATCH_VERSION}:opn:{opn_row['changed_at'] if opn_row else None}:{','.join(sorted(opn_loaded))}:"
+                       f"{advisories.generation(conn)}")
             matched = {r["host"]: r for r in conn.execute("SELECT * FROM matched")}
         finally:
             conn.close()
@@ -238,6 +241,20 @@ class Chore:
         if not changed and (opnsense.loaded_series(conn) != series or opnsense.versions_missing(conn)) and feeds.raw_path(self.cfg.data_dir, feed).exists():
             changed = await asyncio.to_thread(feeds.reload_opnsense, self.factory, self.cfg.data_dir, series) is not None
         return changed
+
+    async def _resolve_advisories(self, conn, plans: list[dict], now: float) -> None:
+        """Look up the CVE ids of the FreeBSD and GitHub advisories in the pending and unseen ranges. Only those: an advisory
+        in a release no firewall needs is not asked for. Answers are kept for good; a failure is asked again after
+        `[cve] refresh_hours`, and GitHub is not asked while its rate limit holds."""
+        refs: set[str] = set()
+        for p in plans:
+            refs.update(r["ref"] for r in opnsense.fixes_between(conn, p["installed"], p["offered"], "adv"))
+        if not refs:
+            return
+        try:
+            await advisories.resolve(conn, refs, now, self.cfg.cve.refresh_hours, self.client)
+        except Exception:
+            log.exception("OPNsense advisory lookup failed")
 
     def _match_opnsense(self, plans: dict[str, dict], gen: str) -> None:
         conn = self.factory()

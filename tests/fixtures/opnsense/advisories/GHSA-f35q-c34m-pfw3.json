@@ -1,0 +1,41 @@
+{
+ "ghsa_id": "GHSA-f35q-c34m-pfw3",
+ "cve_id": null,
+ "url": "https://api.github.com/repos/opnsense/core/security-advisories/GHSA-f35q-c34m-pfw3",
+ "html_url": "https://github.com/opnsense/core/security/advisories/GHSA-f35q-c34m-pfw3",
+ "summary": "Unquoted PPP password in mpd_*.conf allows root command execution (incomplete fix of CVE-2026-57154)",
+ "severity": "high",
+ "state": "published",
+ "published_at": "2026-11-11T13:48:06Z",
+ "vulnerabilities": [
+  {
+   "package": {
+    "ecosystem": "",
+    "name": ""
+   },
+   "vulnerable_version_range": "<= 26.7.8, 26.10",
+   "patched_versions": "26.7.9, 26.10.0p1",
+   "vulnerable_functions": []
+  }
+ ],
+ "cvss_severities": {
+  "cvss_v3": {
+   "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+   "score": 7.2
+  },
+  "cvss_v4": {
+   "vector_string": null,
+   "score": null
+  }
+ },
+ "cwe_ids": [
+  "CWE-74",
+  "CWE-78",
+  "CWE-269"
+ ],
+ "cvss": {
+  "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+  "score": 7.2
+ },
+ "description": "### Summary\n\nThe PPP password is not checked for line breaks. OPNsense writes it into the mpd5 configuration file /var/etc/mpd_<interface>.conf without quotes (src/etc/inc/interfaces.inc, line 1273) [cut]"
+}

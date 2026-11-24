@@ -751,7 +751,7 @@ def opnsense_section(source: str, url: str | None = None, interval: int = 60) ->
 
 def opnsense_cves(c: dict | None, unseen: bool = False) -> dict:
     """The panel of the CVE list on the firewall's updates card: where the data comes from and how to check it in OPNsense."""
-    from ..cve import opnsense
+    from ..cve import advisories, opnsense
     p = (c or {}).get("plan") or {}
     span = f"{p['installed']} to {p['offered']}" if p.get("ok") else "the pending update"
     entries = [url("Changelog data", opnsense.REPO, opnsense.REPO),
@@ -761,9 +761,13 @@ def opnsense_cves(c: dict | None, unseen: bool = False) -> dict:
                plain("Matched", f"Every changelog section above {p['installed']} and up to {p['offered']} (releases and the hotfixes "
                                 "under them), in OPNsense's own version order" if p.get("ok") else
                                 "Needs a new OPNsense release in the pending update"),
-               plain("What counts", "A CVE id written in a patch-note line, or in a footnote that line points to. Advisories named with no CVE "
-                                    "id (FreeBSD and GitHub) are counted and listed, not ranked. CVE ids mentioned only in a release's "
-                                    "introduction are not counted. Treat the number as a floor"),
+               plain("What counts", "A CVE id written in a patch-note line, or in a footnote that line points to. A line that names only a "
+                                    "FreeBSD or GitHub security advisory counts through the CVE ids that advisory lists, which the hub "
+                                    "asks for once (below). An advisory with none stays listed, not ranked, and makes the finding "
+                                    "at least Medium. Errata notices and plugin notes are not counted. CVE ids mentioned only in a "
+                                    "release's introduction are not counted. Treat the number as a floor"),
+               url("FreeBSD advisories", advisories.SA_DOCS, advisories.SA_URL.format(id="<year>:<n>.<module>")),
+               url("GitHub advisories", advisories.GH_DOCS, advisories.GH_URL.format(id="<GHSA id>")),
                plain("In OPNsense", f"System, Firmware, Changelog: open each release from {span} and read the lines that name a CVE"),
                plain("Audit of the installed packages", "System, Firmware, Status, Run an audit, Security runs pkg audit, FreeBSD's check of "
                                                          "what is installed against its vulnerability database. DaemonSight never runs it"),
