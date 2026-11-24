@@ -121,7 +121,9 @@
     <p>These are not editable in the browser. A wrong value could lock you out of this page, or stop the server
       from starting, and the page is what you would use to fix it. Edit <code>{{ v.config_path }}</code>
       and restart{% if v.can_edit %} the hub{% endif %}. The values below are what is running now.</p>
-    <div class="table-responsive">
+    <details class="ds-howto" id="config-file-values">
+      <summary class="subheader ds-howto-sum">Show the {{ v.read_only|length }} running values</summary>
+    <div class="table-responsive mt-2">
       <table class="table table-vcenter card-table ds-ro-table mb-0">
         <thead><tr><th>Setting</th><th>Running value</th><th>Why it stays in the file</th></tr></thead>
         <tbody>
@@ -135,6 +137,7 @@
         </tbody>
       </table>
     </div>
+    </details>
     <p class="text-secondary small mt-3 mb-0">Per-host settings (collector intervals, expected ports, thresholds) live in each host's own config
       file; the hub shows what each host last reported.</p>
   </div>

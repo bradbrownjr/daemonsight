@@ -181,7 +181,7 @@ findings then. Every change is listed under "Recent hub changes" on the Hosts
 page and the Settings page, for example "Setting changed: Outside view,
 enabled: off → on".
 
-**Config file only.** The page lists, without a form, what is never editable
+**Config file only.** The General tab lists, behind "Show the running values" and without a form, what is never editable
 in the browser: the web listen address and port, trusted proxies, cookie and
 session settings, the password and secret files, the data, database and backup
 folders, the log file, where the Shodan key file is kept (`[outside] key_file`),
