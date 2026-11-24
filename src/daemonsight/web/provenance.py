@@ -707,7 +707,7 @@ def opnsense_section(source: str, url: str | None = None, interval: int = 60) ->
     return {"title": src.title, "read": "OPNsense REST API, GET only: " + ", ".join(paths), "entries": entries}
 
 
-def opnsense_cves(c: dict | None) -> dict:
+def opnsense_cves(c: dict | None, unseen: bool = False) -> dict:
     """The panel of the CVE list on the firewall's updates card: where the data comes from and how to check it in OPNsense."""
     from ..cve import opnsense
     p = (c or {}).get("plan") or {}
@@ -728,7 +728,7 @@ def opnsense_cves(c: dict | None) -> dict:
                cmd("Check the download", f"curl -sI {q(opnsense.URL)}")]
     if p.get("ok"):
         entries.append(url("The offered version's changelog", opnsense.changelog_url(p["offered"]), opnsense.changelog_url(p["offered"])))
-    return {"title": "CVEs this update fixes", "read": "The hub downloads OPNsense's published changelog, keeps the sections the pending "
+    return {"title": "CVEs the newest release fixes" if unseen else "CVEs this update fixes", "read": "The hub downloads OPNsense's published changelog, keeps the sections the pending "
                                                        "update brings and ranks the CVE ids in them with CISA's KEV list and EPSS. "
                                                        "Nothing is sent to the firewall", "entries": entries}
 

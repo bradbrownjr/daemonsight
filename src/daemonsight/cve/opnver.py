@@ -94,3 +94,15 @@ def series_between(installed: str | None, offered: str | None) -> list[str] | No
             return None
         y, m = (y, 7) if m == 1 else (y + 1, 1)
     return out
+
+
+def next_series(series: str | None, count: int = 2) -> list[str]:
+    """The `count` community series after this one: ["27.1", "27.7"] after 26.7. [] when `series` is not a community series."""
+    if not is_community_series(series):
+        return []
+    y, m = (int(x) for x in series.split("."))
+    out = []
+    for _ in range(count):
+        y, m = (y, 7) if m == 1 else (y + 1, 1)
+        out.append(f"{y}.{m}")
+    return out

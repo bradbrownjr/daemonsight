@@ -105,27 +105,10 @@
     <div class="card-body text-secondary ds-status-empty">Nothing needs attention. Accepted findings are hidden by the filter above; choose All to list them.</div>
   </section>
 
-  {% if v.firmware %}
-  {{ src_panel("src-firmware", v.src.firmware) }}
-  <section class="card mt-4" id="firmware" aria-labelledby="firmware-title" data-section>
-    <div class="card-header">
-      <h2 class="card-title" id="firmware-title">Pending firmware updates</h2>{{ src_button("src-firmware", "Firmware") }}
-      <div class="card-actions text-secondary">{{ v.firmware.count }} waiting{% if v.firmware.new %} · to {{ v.firmware.new }}{% endif %}{% if v.firmware.reboot %} · <span class="text-orange">reboot needed</span>{% endif %}</div>
-    </div>
-    <div class="card-body text-secondary small">From the firewall's last firmware check ({{ v.firmware.last_check or 'time unknown' }}){% if v.firmware.since %}; the hub has seen updates waiting since {{ v.firmware.since }}{% endif %}. DaemonSight never starts a check.</div>
-    {% set cv = v.firmware.cves %}
-    {% if cv %}
-    {{ src_panel("src-fw-cves", v.src.cves) }}
-    <div class="card-body" id="firmware-cves">
-      {% if cv.headline %}<strong>{{ cv.headline }}</strong>{% if cv.kev %} <span class="badge bg-red text-red-fg" title="On CISA's Known Exploited Vulnerabilities list">{{ cv.kev }} exploited (KEV)</span>{% endif %}
-      {% else %}<span class="text-secondary">{{ cv.text }}</span>{% endif %}
-      {{ src_button("src-fw-cves", "CVEs this update fixes") }}
-      {% if cv.error %}<div class="text-red small mt-1">{{ cv.error }}</div>{% endif %}
-      {% if cv.note %}<div class="text-secondary small mt-1">{{ cv.note }}</div>{% endif %}
-    </div>
+  {% macro cve_rows(cv, table) %}
     {% if cv.rows %}
     <div class="table-responsive">
-      <table class="table table-vcenter card-table" data-table="opn-firmware-cves">
+      <table class="table table-vcenter card-table" data-table="{{ table }}">
         <thead><tr><th data-sort="text">CVE</th><th data-sort="num">EPSS</th><th data-sort="text">KEV</th><th data-sort="text">Fixed in</th><th data-sort="text">Changelog line</th></tr></thead>
         <tbody>
           {% for c in cv.rows %}<tr data-row>
@@ -147,7 +130,41 @@
       </details>
     </div>
     {% endif %}
+{% endmacro %}
+
+{% if v.firmware %}
+  {{ src_panel("src-firmware", v.src.firmware) }}
+  <section class="card mt-4" id="firmware" aria-labelledby="firmware-title" data-section>
+    <div class="card-header">
+      <h2 class="card-title" id="firmware-title">{{ 'Pending firmware updates' if v.firmware.count else 'Firmware release not yet seen' }}</h2>{{ src_button("src-firmware", "Firmware") }}
+      {% if v.firmware.count %}<div class="card-actions text-secondary">{{ v.firmware.count }} waiting{% if v.firmware.new %} · to {{ v.firmware.new }}{% endif %}{% if v.firmware.reboot %} · <span class="text-orange">reboot needed</span>{% endif %}</div>{% endif %}
+    </div>
+    <div class="card-body text-secondary small">From the firewall's last firmware check ({{ v.firmware.last_check or 'time unknown' }}){% if v.firmware.since %}; the hub has seen updates waiting since {{ v.firmware.since }}{% endif %}. DaemonSight never starts a check.</div>
+    {% set cv = v.firmware.cves %}
+    {% if cv %}
+    {{ src_panel("src-fw-cves", v.src.cves) }}
+    <div class="card-body" id="firmware-cves">
+      {% if cv.headline %}<strong>{{ cv.headline }}</strong>{% if cv.kev %} <span class="badge bg-red text-red-fg" title="On CISA's Known Exploited Vulnerabilities list">{{ cv.kev }} exploited (KEV)</span>{% endif %}
+      {% else %}<span class="text-secondary">{{ cv.text }}</span>{% endif %}
+      {{ src_button("src-fw-cves", "CVEs this update fixes") }}
+      {% if cv.error %}<div class="text-red small mt-1">{{ cv.error }}</div>{% endif %}
+      {% if cv.note %}<div class="text-secondary small mt-1">{{ cv.note }}</div>{% endif %}
+    </div>
+    {{ cve_rows(cv, "opn-firmware-cves") }}
     {% endif %}
+    {% set un = v.firmware.unseen %}
+    {% if un %}
+    {% if un.src %}{{ src_panel("src-fw-unseen", un.src) }}{% endif %}
+    <div class="card-body" id="firmware-unseen">
+      {% if un.title %}<strong>{{ un.title }}</strong>{{ src_button("src-fw-unseen", "CVEs the newest release fixes") if un.src }}
+      <div class="text-secondary small mt-1">The firewall has not been offered {{ un.version }} yet. These CVEs are fixed between {{ un.installed }} and {{ un.version }}; the firewall's last check showed nothing above {{ un.seen }}.{% if un.pending %} The hub reads OPNsense's changelog for them on its next CVE pass.{% endif %}</div>
+      {% if un.headline and not un.rows %}<div class="text-secondary small mt-1">{{ un.headline }}</div>{% endif %}
+      {% if un.note %}<div class="text-secondary small mt-1">{{ un.note }}</div>{% endif %}{% endif %}
+      {% if un.newer %}<div class="text-secondary small mt-1">{{ un.newer }}</div>{% endif %}
+    </div>
+    {{ cve_rows(un, "opn-firmware-unseen-cves") }}
+    {% endif %}
+    {% if v.firmware.count %}
     <div class="table-responsive">
       <table class="table table-vcenter card-table" data-table="opn-firmware">
         <thead><tr><th data-sort="text">Package</th><th data-sort="text">Now</th><th data-sort="text">New</th><th data-sort="text">What</th></tr></thead>
@@ -156,6 +173,7 @@
         </tbody>
       </table>
     </div>
+    {% endif %}
   </section>
   {% endif %}
 

@@ -77,6 +77,7 @@ LINE_MAX = 220
 
 SOURCE = "opnsense"               # `match.source` of a row, and the product
 PSEUDO = "opnsense:"              # pseudo-host prefix: opnsense:<system id>
+UNSEEN_PSEUDO = "opnsense-unseen:"  # the newest release the firewall has not seen: a separate match from the pending update
 URL = "https://codeload.github.com/opnsense/changelog/tar.gz/refs/heads/master"
 REPO = "https://github.com/opnsense/changelog"
 DOCS_URL = "https://docs.opnsense.org/CE_releases.html"
@@ -138,7 +139,8 @@ def _footnote(value: str) -> tuple[str, str] | None:
 
 def parse_release(release: str, text: str) -> dict:
     """{"date": ISO or None, "fixes": [{"version", "kind", "ref", "line"}]} for one release's file. `kind` is "cve" or
-    "adv" (an advisory without a CVE id). A row is made once per (version, kind, ref); the first bullet's text is kept."""
+    "adv" (an advisory without a CVE id). A row is made once per (version, kind, ref); the first bullet's text is kept.
+    "versions" lists the release and every hotfix version a section header names, whether or not it fixes a CVE."""
     lines = text.splitlines()
     foot: dict[str, str] = {}
     for ln in lines:
@@ -147,6 +149,7 @@ def parse_release(release: str, text: str) -> dict:
             foot[m.group(1)] = m.group(2)
     date = _date(lines[0]) if lines else None
     version = release
+    versions = [release]
     lead_text, lead_ids = "", []
     started = False
     bullets: list[tuple[str, str, str, list[str]]] = []      # (section version, text, lead text, lead ids)
@@ -174,6 +177,8 @@ def parse_release(release: str, text: str) -> dict:
         lead_text, lead_ids = "", []
         if hm and opnver.valid(hm.group(1)) and opnver.series_of(hm.group(1)) == opnver.series_of(release):
             version = hm.group(1)
+            if version not in versions:
+                versions.append(version)
         elif line.endswith(":") and CVE_FIND.search(line):
             lead_text, lead_ids = line.rstrip(":").strip(), list(dict.fromkeys(CVE_FIND.findall(line)))
     out: dict[tuple[str, str, str], str] = {}
@@ -194,7 +199,7 @@ def parse_release(release: str, text: str) -> dict:
             if kind == "cve" and not CVE_RE.match(ref):
                 continue
             out.setdefault((sect, kind, ref), shown)
-    return {"date": date, "fixes": [{"version": v, "kind": k, "ref": r, "line": ln} for (v, k, r), ln in out.items()]}
+    return {"date": date, "versions": versions, "fixes": [{"version": v, "kind": k, "ref": r, "line": ln} for (v, k, r), ln in out.items()]}
 
 
 # --- the repository's tarball ----------------------------------------------------------------------------------------------------
@@ -237,9 +242,10 @@ def load(conn, path, series: set[str]) -> tuple[int, str]:
     """Replace the `opn_release` and `opn_fix` rows with what the saved tarball holds for these series. The old rows stay when
     the file does not parse. Returns (rows kept, note)."""
     files = read_tarball(path, series)
-    releases, fixes = [], []
+    releases, fixes, versions = [], [], set()
     for release, (ser, text) in sorted(files.items()):
         parsed = parse_release(release, text)
+        versions.update(parsed["versions"])
         releases.append((release, ser, parsed["date"]))
         fixes += [(f["version"], release, f["kind"], f["ref"], f["line"]) for f in parsed["fixes"]]
         if len(fixes) > MAX_ROWS:
@@ -254,6 +260,8 @@ def load(conn, path, series: set[str]) -> tuple[int, str]:
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+    from . import store
+    store.set_meta(conn, "opn_versions", json.dumps(sorted(versions)))
     cves = len({f[3] for f in fixes if f[2] == "cve"})
     return len(fixes), f"series {', '.join(sorted(series))}: {len(releases)} releases, {cves} CVEs"
 
@@ -340,3 +348,80 @@ def loaded_series(conn) -> set[str]:
         return set(json.loads(store.get_meta(conn, "opn_series", "[]") or "[]"))
     except ValueError:
         return set()
+
+
+def versions_missing(conn) -> bool:
+    """The stored rows were loaded by a version that did not keep the list of release and hotfix versions."""
+    from . import store
+    return store.get_meta(conn, "opn_versions") is None
+
+
+# --- a release the firewall has not been offered ---------------------------------------------------------------------------------
+
+def watch_series(fw: dict | None) -> list[str]:
+    """The series to keep for a firewall that may have no update pending: the one it runs and the two after it (a newer
+    series is a major upgrade, which only gets a line on the card). [] when the version is not a community release."""
+    if not fw or fw.get("available") is False:
+        return []
+    ser = opnver.series_of(fw.get("version"))
+    return [ser, *opnver.next_series(ser)] if ser and opnver.is_community_series(ser) else []
+
+
+def _seen(fw: dict) -> str:
+    """The highest version in the installed series that the firewall's own status names: what it runs, what it calls the
+    latest, the new version, and the OPNsense package of a pending update (a hotfix appears there). A version from another
+    series (a major upgrade on offer) says nothing about this series."""
+    ser = opnver.series_of(fw["version"])
+    best = fw["version"]
+    cands = [fw.get("latest"), fw.get("new_version")]
+    cands += [p.get("new") for p in (fw.get("packages") or []) + (fw.get("sets") or []) if p.get("name") in CORE_PACKAGES]
+    for v in cands:
+        if opnver.valid(v) and opnver.series_of(v) == ser and opnver.compare(v, best) > 0:
+            best = v
+    return best
+
+
+def _ser_key(s: str) -> tuple[int, int]:
+    a, b = s.split(".")
+    return int(a), int(b)
+
+
+def known_versions(conn) -> set[str]:
+    """Every release and hotfix version the stored changelog names (hotfixes with no CVE included)."""
+    from . import store
+    out: set[str] = set()
+    try:
+        out.update(json.loads(store.get_meta(conn, "opn_versions", "[]") or "[]"))
+    except ValueError:
+        pass
+    out.update(r[0] for r in conn.execute("SELECT version FROM opn_release"))
+    out.update(r[0] for r in conn.execute("SELECT version FROM opn_fix"))
+    return {v for v in out if opnver.valid(v)}
+
+
+def unseen_host(system: str) -> str:
+    return UNSEEN_PSEUDO + system
+
+
+def unseen_plan(conn, fw: dict | None) -> dict:
+    """The newest changelog version in the firewall's own series that is above both what it runs and what its last firmware
+    check showed (`_seen`), as {"ok": True, "installed", "seen", "offered", "newer_series"} (`offered` is the newest, so the
+    plan is matched like a pending update's). Else {"ok": False, "why", "newer_series"}: `newer_series` is the newest later
+    series the changelog has ("27.1"), which the firewall would offer as a major upgrade, or ""."""
+    out = {"ok": False, "why": "version", "newer_series": ""}
+    if not fw or fw.get("available") is False or not opnver.valid(fw.get("version")):
+        return out
+    ser = opnver.series_of(fw["version"])
+    if not opnver.is_community_series(ser):
+        return out
+    seen = _seen(fw)
+    known = known_versions(conn)
+    newer = sorted({x for v in known if (x := opnver.series_of(v)) and opnver.is_community_series(x) and _ser_key(x) > _ser_key(ser)},
+                   key=_ser_key)
+    out["newer_series"] = newer[-1] if newer else ""
+    above = [v for v in known if opnver.series_of(v) == ser and opnver.compare(v, seen) > 0]
+    if not above:
+        out["why"] = "none"
+        return out
+    return {"ok": True, "why": "", "installed": fw["version"], "seen": seen, "offered": max(above, key=opnver.key),
+            "newer_series": out["newer_series"]}

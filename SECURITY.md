@@ -447,7 +447,7 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   security tracker, FIRST's EPSS scores and CISA's KEV list over HTTPS, and,
   when a container image on an Unraid server is Alpine, that release's
   `main.json` and `community.json` from `secdb.alpinelinux.org`, and, while an
-  OPNsense firewall has a release update pending, the OPNsense project's
+  OPNsense firewall is enabled, the OPNsense project's
   changelog: one 0.6 MB tarball of its repository from `codeload.github.com`
   (`/opnsense/changelog/tar.gz/refs/heads/master`, BSD 2-Clause), read for the
   CVE ids in the release notes between the installed and the offered version.

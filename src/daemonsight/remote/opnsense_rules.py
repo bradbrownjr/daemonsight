@@ -16,6 +16,11 @@ Thresholds, and where they come from. Where the number is DaemonSight's own choi
   Own choice. When the CVE chore found CVEs that the offered release fixes (remote/opnsense_cves.py, from OPNsense's
   changelog), the finding names them and is at least Medium, and High when one is on CISA's KEV list or has an EPSS score
   at or above `[cve] epss_high`: the rule for a Debian host's package (cve/match.py `package_findings`).
+* Unseen release (`opnsense.unseen_release`): the changelog has a release or hotfix in the firewall's series above what it
+  runs and above what its last check showed (`latest`, `new_version`, the OPNsense package of a pending update), and that
+  check is 2 days or more old, missing or unreadable. The age is DaemonSight's choice (the owner's). `last_check` is
+  written by `scripts/firmware/check.sh` as `$(date)`; remote/opnsense.py `last_check_ts` reads it. The severity is
+  `opnsense_cves.summary(...)["severity"]`, the same call the updates finding uses, and Low with no CVE.
 * Gateways: OPNsense's own alarm states (`status` is `down`, `loss`, `delay` or `delay+loss`, from
   `scripts/routes/gateway_status.php`) plus loss of 10% or more, or a round trip of 300 ms or more. Own choice.
 * WireGuard: no handshake for a day. WireGuard sends a handshake about every 2 minutes while a peer has traffic or a
@@ -105,10 +110,37 @@ def _cve_text(cv: dict) -> tuple[dict, str]:
     return s, text
 
 
-def firmware_rules(fw: dict | None, now: float, cves: dict | None = None) -> list[Finding]:
-    if not fw or not (fw.get("count") or fw.get("needs_reboot")):
+HOWTO_UNSEEN = (
+    "Check now: System, Firmware, Status, Check for updates. DaemonSight only reads; it never starts a check or an update",
+    "So it checks on its own: System, Settings, Cron, add a job with the command 'Firmware update check' and run it daily",
+    "Read what changed: {url}")
+
+
+def unseen_rules(fw: dict | None, now: float, cves: dict | None) -> list[Finding]:
+    """`opnsense.unseen_release`: a newer release in the firewall's series than it runs and than its last check showed, with
+    that check two days or more old. Clears when the check shows the release (then `opnsense.updates` is the finding)."""
+    st = opnsense_cves.unseen_state(fw, cves, now)
+    if not st or not st["ready"]:
         return []
-    out = []
+    s = opnsense_cves.summary(st["cves"], st["epss_high"])
+    sev = s["severity"] or "low"
+    title = opnsense_cves.unseen_title(st, now)
+    detail = (f"The firewall runs {fw.get('name') or 'OPNsense'} {st['plan']['installed']}. OPNsense's changelog lists "
+              f"{st['version']}, which its last firmware check ({st['last_check'] or 'time unknown'}) did not show: that check "
+              f"offered nothing above {st['plan']['seen']}.")
+    if s["fixable"]:
+        _s, text = _cve_text({"cves": st["cves"], "epss_high": st["epss_high"], "advisories": st["advisories"],
+                              "plan": {"offered": st["version"]}})
+        detail += text
+    url = opnsense.changelog_url(st["version"])
+    return [Finding("opnsense.unseen_release", "unseen", sev, title[:300], detail[:3900], "/#firmware", None, st["version"],
+                    steps(*(x.format(url=url) for x in HOWTO_UNSEEN)))]
+
+
+def firmware_rules(fw: dict | None, now: float, cves: dict | None = None) -> list[Finding]:
+    out = unseen_rules(fw, now, cves)
+    if not fw or not (fw.get("count") or fw.get("needs_reboot")):
+        return out
     n, sets = fw.get("count_packages") or 0, fw.get("count_sets") or 0
     since = fw.get("pending_since")
     behind = (now - since) if since else 0

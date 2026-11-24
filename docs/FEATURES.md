@@ -123,6 +123,16 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   exploited or has a high exploit score. The changelog names some fixes only as
   a FreeBSD or GitHub advisory with no CVE id; those are counted and listed, not
   ranked, so treat the CVE count as a floor.
+- **A release the firewall has not seen.** The hub reads the changelog for every
+  OPNsense firewall, not only one with an update pending. When it lists a
+  newer release or hotfix in the firewall's series than the firewall runs or
+  last saw, and the firewall has not checked for updates in 2 days or more (or
+  its check time is missing), it raises a finding such as "26.7.10 is out
+  (fixes 3 CVEs); the firewall hasn't checked since Nov 18". It names the CVEs
+  with the same ranking, tells you how to check now and how to add the
+  firmware check to cron, and clears when the firewall checks. The Updates card
+  shows the same sentence and CVE table. A major upgrade alone (a newer series)
+  gets one line on the card, no finding.
 - **Findings.** Pending firmware, a gateway down or lossy, a WireGuard peer that
   has not connected for a day or an instance with no peer, any-to-any and
   floating pass rules, forwards with no port, forwards and Caddy sites pointing
