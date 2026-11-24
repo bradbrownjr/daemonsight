@@ -47,7 +47,13 @@ The `--users`/`--tokens`/`--roles` spelling is from `pveum acl modify` and is un
 
 `GET /nodes/{node}/apt/update` ("List available updates") requires `Sys.Modify` on `/nodes/{node}`, which PVEAuditor does not have (PVE API viewer data, https://pve.proxmox.com/pve-docs/api-viewer/apidoc.js). The same path with POST runs `apt-get update`, so Sys.Modify here is the privilege that guards a write on the same path. `GET /nodes/{node}/apt/versions` needs only Sys.Audit but lists the important Proxmox packages (installed version, running kernel), not the pending list.
 
-Proposal, two tiers, chosen on the add form:
+**Decided (owner, 2026-11-24): updates and their CVEs are a key feature, and the token stays PVEAuditor.**
+PVE nodes run Debian, so the collector installed on each node reports pending updates and the hub matches them
+against Debian's security tracker, as for any Debian host. The custom role below is not built. Proxmox's own
+packages (`pve-*`, `proxmox-*`) are not in Debian's tracker; whether Proxmox publishes advisories for them is
+unverified and must be researched before building.
+
+The rejected alternative, kept for the record: two tiers, chosen on the add form:
 
 1. Default: PVEAuditor. Findings on installed versions only (see rules). No pending-update finding.
 2. Optional "Read pending updates": a custom role, PVEAuditor plus Sys.Modify:
@@ -431,7 +437,7 @@ Estimates assume the shared client work above is done. Everything here is resear
 
 ## Open questions (to settle before building)
 
-1. PVE updates (tier 2): accept a custom role with Sys.Modify for the "pending updates" finding, or keep PVEAuditor only and skip it?
+1. ~~PVE updates (tier 2)~~ Decided: the collector on each node reads updates; the token stays PVEAuditor.
 2. Confirm scope: PMG and PDM. My recommendation is skip PDM, defer PMG.
 3. Helper-scripts catalog: is an outbound daily call to community-scripts.org acceptable (Settings switch, default off)? The alternative is no app names or OS end-of-life, only the tag count.
 4. Does the owner run Xen Orchestra with XCP-ng? If not, XCP-ng is not worth building (XAPI direct needs root).

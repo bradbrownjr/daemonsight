@@ -9,6 +9,13 @@ containers, Unraid, OPNsense), what each system exposes, what is watching it,
 and what is out of date. DaemonSight also checks those facts against each other and
 reports the gaps between them as findings.
 
+**Core rule: every system shows its available updates and the CVEs each one
+fixes.** This is a key feature, not an extra. A new source isn't finished
+until it shows both, or the page says plainly why it can't (no advisory data
+from the vendor) and what is missing. Where an API can only list updates with a
+wider permission, read the update list some other way (a collector on the
+host, or a published advisory feed) rather than widen the key.
+
 Targets for v1:
 
 - Debian 12 VPS: Caddy, Docker, fail2ban, nftables, WireGuard. Python 3.11.
@@ -613,6 +620,22 @@ See "Hub" for the central view.
 Each source below is read over its own API with a dedicated least-privilege key, GET only, through the same
 client, certificate pin and finding pipeline as OPNsense and Unraid. The detail for each is in its subsection.
 
+#### Updates and CVEs on every source
+
+Per the core rule in "Goal", these gaps are on the roadmap:
+
+- **OPNsense:** firmware and package updates are shown, but not the CVEs they
+  fix. FreeBSD and OPNsense publish VuXML (the data behind `pkg audit`); the hub
+  can match the firewall's package list against it.
+- **Unraid:** OS updates are shown with no CVE data. Research whether Unraid
+  publishes security notes per release that can be matched.
+- **Proxmox VE and PBS:** they run on Debian, so a collector on the node gives
+  pending updates and Debian CVEs with no wider API role. Proxmox's own
+  packages (`pve-*`, `proxmox-*`) aren't in Debian's tracker; research whether
+  Proxmox publishes advisories for them before building.
+- **UniFi, FortiGate, Meraki, Aruba, XCP-ng:** each design lists where its
+  firmware or patch advisories come from, or says none exist.
+
 #### Next (in use by the owner)
 
 **UniFi.** Reads the UniFi Network Integration API (`X-API-KEY`): devices with state and firmware, Wi-Fi networks
@@ -624,11 +647,11 @@ for adoption; on a site with a gateway, port forwards and firewall policies as f
 #### Staged, built when someone needs it
 
 **Proxmox VE, with Proxmox Backup Server and the community Helper-Scripts.** Reads the PVE API with an API token
-under the built-in PVEAuditor role (a custom role with Sys.Modify only for the optional pending-updates finding)
-and the PBS API with the built-in Audit role. Findings: no recent backup for a guest, a failed backup, a
+under the built-in PVEAuditor role and the PBS API with the built-in Audit role. Findings: no recent backup for a guest, a failed backup, a
 datastore nearly full, a failed verify or garbage-collection job, a certificate expiring, an enterprise
-repository without a subscription, the firewall off at datacenter level, Ceph not healthy, HA problems,
-pending updates. Guests tagged `community-script` by the Helper-Scripts project are listed with a plain note
+repository without a subscription, the firewall off at datacenter level, Ceph not healthy, HA problems.
+Pending updates and their CVEs come from a collector on each node (see "Updates and CVEs on every source"),
+so the API token never needs Sys.Modify. Guests tagged `community-script` by the Helper-Scripts project are listed with a plain note
 on how their `update` command works. See [Proxmox VE](planned-sources.md#proxmox-ve), [Proxmox Helper-Scripts](planned-sources.md#proxmox-helper-scripts-community-overlay) and [Proxmox Backup Server](planned-sources.md#proxmox-backup-server).
 
 **Proxmox Mail Gateway and Datacenter Manager (only if worthwhile).** PMG has no confirmed API token, so it would
