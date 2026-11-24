@@ -22,7 +22,7 @@ from urllib.parse import quote
 
 from .findings import fingerprint
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Events that belong to no host (a setting changed on the hub) use this as their
 # host. No host id can be empty (hub.HOST_RE), so a row never shows up under a host.
@@ -115,7 +115,11 @@ CREATE TABLE IF NOT EXISTS hosts (
     update_asked REAL,
     update_state TEXT,      -- JSON: the host's last update result
     remote_update INTEGER,  -- 0 when the host turned hub updates off
-    kind         TEXT       -- NULL: a collector uploads for it. "unraid": the hub reads it over its API (see remotes)
+    kind         TEXT,      -- NULL: a collector uploads for it. "unraid": the hub reads it over its API (see remotes)
+    upload_interval REAL,   -- seconds between this host's uploads, as it reports them
+    uninstall_state  TEXT,  -- NULL, "pending" (waiting for the host's next upload), "refused" or "failed" (see hub.py)
+    uninstall_asked  REAL,
+    uninstall_detail TEXT   -- the host's one-line reason when it refused or failed
 );
 
 -- Hub: what Shodan's InternetDB last said about each public address (see
@@ -220,9 +224,11 @@ def migrate(conn: sqlite3.Connection) -> None:
         # Version 2 hosts rows have no update columns.
         have = {r[1] for r in conn.execute("PRAGMA table_info(hosts)")}
         for col, kind in (("update_to", "TEXT"), ("update_asked", "REAL"), ("update_state", "TEXT"),
-                          ("remote_update", "INTEGER"), ("kind", "TEXT")):
+                          ("remote_update", "INTEGER"), ("kind", "TEXT"), ("upload_interval", "REAL"),
+                          ("uninstall_state", "TEXT"), ("uninstall_asked", "REAL"), ("uninstall_detail", "TEXT")):
             if col not in have:
                 conn.execute(f"ALTER TABLE hosts ADD COLUMN {col} {kind}")
+        # Version 10 hosts rows have no upload_interval or uninstall_* (an uninstall asked from the hub, schema 11).
         # Version 4 databases have no remotes table (the script above created it) and no hosts.kind.
         # Version 3 findings have no fix or basis; old rows keep NULL until the next run rewrites them.
         have = {r[1] for r in conn.execute("PRAGMA table_info(findings)")}
@@ -365,6 +371,10 @@ def set_meta(conn, values: dict[str, object]) -> None:
     conn.executemany("INSERT INTO meta (key, value) VALUES (?, ?) "
                      "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
                      [(k, str(v)) for k, v in values.items()])
+
+
+def delete_meta(conn, *keys: str) -> None:
+    conn.executemany("DELETE FROM meta WHERE key = ?", [(k,) for k in keys])
 
 
 # --- reads (collector and web) --------------------------------------------

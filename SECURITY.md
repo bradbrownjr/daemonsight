@@ -35,8 +35,8 @@ socket, the fail2ban socket and the firewall needs it.
 - **No commands from anywhere.** The collector takes no input from the web UI
   or the network. Its one outbound connection is the upload to a hub, when
   `[upload]` is set, and it reads nothing from the reply but a sequence
-  number and an update commit (see "The hub"). Actions such as ban or restart
-  would need their own design.
+  number, an update commit and an uninstall request (see "The hub"). Actions
+  such as ban or restart would need their own design.
 - **fail2ban replies are unpickled safely.** fail2ban's socket speaks Python
   pickle. The collector's unpickler accepts builtin data types and exception
   names only, so a reply can't run code.
@@ -554,9 +554,10 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   built from a CVE id that matched a strict pattern. A bad feed can give wrong findings but can't run anything.
 - **Refusals are logged** as `Refused upload from <address>: <reason>`.
   The fail2ban filter counts only bad tokens.
-- **The hub can ask for one thing: an update.** Its reply carries the last
-  sequence number it accepted and, when you've asked from the Hosts page, a
-  commit for the host to install. Nothing else it says is acted on.
+- **The hub can ask for two things: an update, and an uninstall.** Its reply
+  carries the last sequence number it accepted and, when you've asked from the
+  Hosts page, a commit for the host to install, or `uninstall`. Nothing else it
+  says is acted on. The uninstall is described after the update.
   - The hub names a commit, never a source. The host fetches from the
     GitHub URL in its own `daemonsight-update` and installs the commit only
     if it is on `main` or in a `v*` release tag.
@@ -571,6 +572,39 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   - It's on by default, as with UniFi or FortiGate controllers. A host turns
     it off with `[upload] remote_update = false` in its own config; the hub
     can't change that.
+  - **Uninstall.** An admin who picks "Uninstall the collector first" on
+    Remove from hub makes the hub put `uninstall: true` in the reply to that
+    host's next upload. That removes DaemonSight from the host, as root:
+    `daemonsight uninstall` stops its services and deletes its units, program,
+    config, upload token, database and backups, the fail2ban jail and sudoers
+    rule if present, and the `daemonsight` user. Only DaemonSight's own files
+    are named in it; the hub names nothing, only the request.
+  - The collector acts only when all of these hold: the reply is a 2xx to an
+    upload it sent with its own token; it went to the URL in `[upload] url`,
+    over HTTPS with the certificate checked (or to this machine); the reply
+    names the sequence number of that upload; and `uninstall` is exactly
+    `true`. A 401, 403 or 404, a certificate error, an unreachable hub, a
+    redirect or any other reply never uninstalls anything. A refused token
+    only slows the collector to one try an hour.
+  - It sends the hub a last upload saying it started, then hands the work to
+    systemd: it writes `uninstall.request` (root, 0600) in its data folder,
+    and a path unit starts `daemonsight-uninstall.service`, which runs
+    `daemonsight uninstall --hub-request` as root. The collector's own
+    sandboxing is unchanged. The service does nothing without that file, and
+    re-reads `allow_remote_uninstall` from the host's own config first. The web
+    UI cannot write the file: it runs as `daemonsight`, and the data folder is
+    not writable by that group.
+  - **The lock.** `[collector] allow_remote_uninstall = false` in the host's
+    own config makes the collector answer "refused". The hub can't change it.
+    Besides moving hosts to another published version (above), the worst a
+    compromised hub can do with this switch on is delete DaemonSight, and with
+    it the monitoring, from each host that uploads to it. It can't touch the
+    host's other software or data, or run anything else. Lock a host where
+    that matters more than removing it from the hub.
+  - The hub sends `uninstall` only to a host an admin marked, and a host can
+    only answer for itself. Starting, cancelling and "Remove anyway" are
+    login-protected and refuse cross-site requests, like the other Manage
+    actions.
 - **The container runs as a non-root user** (uid 10001). Its config,
   password, session secret and database are in its `/data` volume.
 - **Silence is a finding.** A host that misses three of its longest

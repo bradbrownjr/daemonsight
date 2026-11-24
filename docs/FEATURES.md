@@ -169,7 +169,14 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   replaces its upload token, revokes it or removes it and its stored data,
   each behind a confirmation. Add a Linux host shows the token once with the
   command that installs it. The command line (`hub add-host`, `update`,
-  `revoke`) stays as an alternative.
+  `revoke`, `uninstall`) stays as an alternative.
+- **Uninstall from the hub.** Remove from hub can uninstall the collector on
+  the host first, like an RMM tool: the host is told with its next upload,
+  runs `daemonsight uninstall`, and the hub then removes it and its data. Cancel
+  or Remove anyway while it waits. A host can lock itself against this with
+  `allow_remote_uninstall = false`. `daemonsight uninstall --yes` does the
+  same by hand, and `daemonsight status` shows when the hub refuses a host's
+  token.
 - **Updates from the hub.** The Hosts page, or `daemonsight hub update`, moves
   hosts to the hub's own commit. A host can turn this off.
 - **Retention and backups.** Retention sets how long history stays. Scheduled

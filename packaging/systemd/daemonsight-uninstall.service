@@ -1,0 +1,10 @@
+[Unit]
+Description=Uninstall DaemonSight from this host, as the hub asked
+Documentation=https://github.com/bradbrownjr/daemonsight/blob/main/docs/INSTALL.md
+
+[Service]
+Type=oneshot
+# Root, unsandboxed: it stops and removes DaemonSight's units, files, folders and user. It re-checks
+# allow_remote_uninstall in this host's own config and does nothing without the request file.
+ExecStart=/opt/daemonsight/venv/bin/daemonsight uninstall --hub-request
+TimeoutStartSec=5min

@@ -131,6 +131,7 @@
 </header>
 <main class="container-xl py-4">
   {% if flash %}<div class="alert {{ 'alert-danger' if flash.error else 'alert-success' }} ds-noprint" role="{{ 'alert' if flash.error else 'status' }}">{{ flash.text }}</div>{% endif %}
+  {% if upload_problem %}<div class="alert alert-danger ds-noprint" role="alert" id="upload-problem">{{ upload_problem }}. This host's uploads are refused, and it asks again every hour. On the hub, Manage, Replace upload token; then run <code>sudo daemonsight set-upload-token</code> here and restart the collector.</div>{% endif %}
   {% if not v %}
   <div class="alert alert-warning">{% if hub %}No data yet.{% else %}No data yet. Start the collector: <code>systemctl start daemonsight-collector</code>{% endif %}</div>
   {% else %}

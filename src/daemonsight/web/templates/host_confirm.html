@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import info_button, info_panel %}
 {% set heading = {'token': 'Replace the upload token', 'revoke': 'Revoke', 'remove': 'Remove from hub'}[action] %}
 {% block title %}{{ heading }} · {{ h.id }} · DaemonSight{% endblock %}
 {% block content %}
@@ -14,6 +15,13 @@
     <p class="mb-0">The hub stops accepting uploads from {{ h.id }} and drops it from the Hosts list. Its stored history stays. To allow it again, add {{ h.id }} as a new Linux host.</p>
     {% else %}
     <p>This revokes {{ h.id }} and deletes the following from the hub. Other hosts are not touched.</p>
+    <div class="mb-3">
+      <div class="d-flex align-items-center gap-1">
+        <label class="form-check m-0"><input class="form-check-input" type="checkbox" id="uninstall" name="uninstall" value="1"{% if reporting %} checked{% else %} disabled{% endif %}><span class="form-check-label">Uninstall the collector first</span></label>{{ info_button("uninstall-info", "More about uninstalling the collector") }}
+      </div>
+      {% if not reporting %}<div class="form-hint">{{ h.id }} is not reporting, so it can't be asked. Remove it here, then uninstall by hand.</div>{% endif %}
+      {{ info_panel("uninstall-info", "Uninstalling the collector", "With this ticked, nothing is removed yet. The hub waits for " ~ h.id ~ " to check in with its next upload and tells it to uninstall DaemonSight: its services, files, config, token and data. When the collector says it started, the hub removes the host and deletes its stored data. While it waits you can cancel, or remove the host anyway. A host can refuse this with allow_remote_uninstall = false under [collector] in its config.") }}
+    </div>
     <table class="table table-sm" id="remove-list">
       <thead><tr><th>Stored for {{ h.id }}</th><th class="text-end">Rows</th></tr></thead>
       <tbody>

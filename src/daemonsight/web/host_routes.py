@@ -23,6 +23,8 @@ log = logging.getLogger("daemonsight.hosts")
 
 NAME_HINT = ("Letters, digits, '.', '_' and '-', starting with a letter or digit (63 at most); no spaces.")
 
+INSTALL_REMOVE = "https://github.com/bradbrownjr/daemonsight/blob/main/docs/INSTALL.md#remove"
+
 # The actions that have a confirmation page first.
 ACTIONS = ("token", "revoke", "remove")
 
@@ -99,6 +101,26 @@ def add_host_routes(app: FastAPI, cfg: Config, conn, *, render, require_login, f
         log.info("Host %s added from %s", name, client(request))
         return token_page(request, name, token, False)
 
+    def is_reporting(row) -> bool:
+        """The host has uploaded and isn't flagged silent: it will pick up an uninstall with its next upload."""
+        if row["last_seen"] is None:
+            return False
+        return conn.execute("SELECT 1 FROM findings WHERE host = ? AND rule = 'host.silent' "
+                            "AND resolved_at IS NULL", (row["id"],)).fetchone() is None
+
+    def uninstall_facts(row) -> dict | None:
+        """The "uninstall pending / refused / failed" box on the manage page, or None when nothing is asked."""
+        st = row["uninstall_state"]
+        if st not in hub.UNINSTALL_STATES:
+            return None
+        n = row["upload_interval"]
+        every = "its next upload" if not n else (
+            f"its next upload, about every {int(n)} seconds" if n < 90 else
+            f"its next upload, about every {round(n / 60)} minutes")
+        asked = views.fmt_ago(row["uninstall_asked"]) if row["uninstall_asked"] else ""
+        return {"state": st, "wait": every, "asked": asked, "detail": row["uninstall_detail"] or "",
+                "install_url": INSTALL_REMOVE}
+
     # --- Manage ---------------------------------------------------------------
     def update_facts(row, target: str | None) -> dict:
         """The Version card: what the host runs, what the hub runs, and whether Update now is on (and if not, why)."""
@@ -130,7 +152,7 @@ def add_host_routes(app: FastAPI, cfg: Config, conn, *, render, require_login, f
         return render(request, "host_manage.html", {
             "page": "hosts", "v": {"host": None}, "h": row, "state": state,
             "seen": views.fmt_ago(row["last_seen"]) if row["last_seen"] else "never",
-            "ver": update_facts(row, hub.hub_revision())})
+            "ver": update_facts(row, hub.hub_revision()), "un": uninstall_facts(row)})
 
     @app.post("/hosts/{host}/update")
     async def update(request: Request, host: str, action: str = Form("update")):
@@ -161,7 +183,7 @@ def add_host_routes(app: FastAPI, cfg: Config, conn, *, render, require_login, f
         row = collector_host(host)
         counts = hub.data_counts(conn, host, cfg.cve_db_path) if action == "remove" else []
         return render(request, "host_confirm.html", {"page": "hosts", "v": {"host": None}, "h": row, "action": action,
-                                                     "counts": counts})
+                                                     "counts": counts, "reporting": is_reporting(row)})
 
     @app.post("/hosts/{host}/token")
     async def replace_token(request: Request, host: str):
@@ -186,23 +208,49 @@ def add_host_routes(app: FastAPI, cfg: Config, conn, *, render, require_login, f
         flash(request, f"Revoked {host}: its token no longer works. Its history is kept.")
         return RedirectResponse("/", status_code=303)
 
+    def remove_now(request: Request, host: str, counts, what: str):
+        hub.remove_host(conn, host, data_dir=cfg.data_dir, cve_path=cfg.cve_db_path)
+        event(request, f"Host removed: {host}", what)
+        log.info("Host %s removed from %s (%s rows)", host, client(request), sum(n for _l, n in counts))
+
     @app.post("/hosts/{host}/remove")
-    async def remove(request: Request, host: str, confirm: str = Form("")):
+    async def remove(request: Request, host: str, confirm: str = Form(""), uninstall: str = Form("")):
         if (bad := refused(request)) is not None:
             return bad
-        collector_host(host)
+        row = collector_host(host)
         if confirm.strip() != host:
             flash(request, f"To remove {host}, type its name to confirm.", error=True)
             return RedirectResponse(f"/hosts/{host}/manage/remove", status_code=303)
-        counts = hub.data_counts(conn, host, cfg.cve_db_path)
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            hub.revoke_host(conn, host, purge=True, data_dir=cfg.data_dir, cve_path=cfg.cve_db_path)
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
-        event(request, f"Host removed: {host}", "its token and its stored data are deleted")
-        log.info("Host %s removed from %s (%s rows)", host, client(request), sum(n for _l, n in counts))
+        if uninstall == "1" and is_reporting(row):
+            # Not revoked yet: the host takes the request with its next upload, then reports back (hub.py).
+            hub.request_uninstall(conn, host, time.time())
+            event(request, f"Uninstall requested: {host}", "the host is removed once its collector says it started")
+            log.info("Uninstall of %s requested from %s", host, client(request))
+            flash(request, f"Asked {host} to uninstall its collector. The hub removes it when it says it started.")
+            return RedirectResponse(f"/hosts/{host}/manage", status_code=303)
+        remove_now(request, host, hub.data_counts(conn, host, cfg.cve_db_path),
+                   "its token and its stored data are deleted")
         flash(request, f"Removed {host}: its token and its stored data are deleted.")
         return RedirectResponse("/", status_code=303)
+
+    @app.post("/hosts/{host}/uninstall")
+    async def uninstall_choice(request: Request, host: str, action: str = Form("")):
+        """While an uninstall is waiting (or refused): withdraw it, or remove the host now."""
+        if (bad := refused(request)) is not None:
+            return bad
+        row = collector_host(host)
+        if row["uninstall_state"] not in hub.UNINSTALL_STATES:
+            flash(request, f"{host} has no uninstall waiting.", error=True)
+            return RedirectResponse(f"/hosts/{host}/manage", status_code=303)
+        if action == "cancel":
+            hub.cancel_uninstall(conn, host)
+            event(request, f"Uninstall cancelled: {host}")
+            flash(request, f"Cancelled the uninstall of {host}. It is still on the hub.")
+            return RedirectResponse(f"/hosts/{host}/manage", status_code=303)
+        if action != "now":
+            raise HTTPException(400, "unknown action")
+        remove_now(request, host, hub.data_counts(conn, host, cfg.cve_db_path),
+                   "its token and its stored data are deleted; its collector was not uninstalled")
+        response = render(request, "host_removed.html", {"page": "hosts", "v": {"host": None}, "name": host,
+                                                         "install_url": INSTALL_REMOVE})
+        return response

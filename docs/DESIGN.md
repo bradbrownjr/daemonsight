@@ -53,6 +53,7 @@ vulnerability data.
 | `daemonsight-collector.service` | root | Long-running asyncio loop. Each source has its own interval. Writes snapshots, computes findings, sends alerts. |
 | `daemonsight-web.service` | `daemonsight` | Serves the UI. Opens the database read-only. Never touches sockets, logs or tools. |
 | `daemonsight-update.path` + `.service` | root | Installs an update the hub asked for. See "Updates from the hub". |
+| `daemonsight-uninstall.path` + `.service` | root | Uninstalls DaemonSight when the hub asked. See "Uninstall from the hub". |
 
 The split exists because the collector needs privileges the web process must
 never have: the Docker socket (equivalent to root), the fail2ban socket, other
@@ -350,6 +351,7 @@ precedence").
 - `findings`: rule, key, severity, title, detail, link, fix, basis, howto (schema version 6), first_seen, last_seen, resolved_at.
 - `accepted`: host, rule, key, fingerprint, note, accepted_at, accepted_by. Written by the hub's web process (see "Accepting a finding"). Schema version 4.
 - `remotes` (schema version 5): id, kind (`unraid` or `opnsense`), url, enabled, tls (`verify` or `pin`), tls_pin (SHA-256 of the pinned certificate), tls_cert (its PEM), interval, created_at, last_ok, last_error, fails. A remote system is also a row in `hosts` with `hosts.kind` set (collector hosts have `kind` NULL) and a `token_hash` of `remote:<id>`, which no upload token can equal. Schema 9 added `reader_url` (an Unraid server's Docker reader) and schema 10 added `crowdsec_url` and `crowdsec_never` (an OPNsense firewall's CrowdSec Local API and its never-ban list). The secrets are not in the database: each is a file in `<data>/remotes/`, mode 0600 in a 0700 folder: `<id>.key` (the API key), `<id>.reader-token` (the Docker reader's token) and `<id>.crowdsec-key` (the CrowdSec bouncer key).
+- `hosts` (schema version 11 added `upload_interval`, `uninstall_state`, `uninstall_asked` and `uninstall_detail`): see "Uninstall from the hub".
 - `outside` (schema version 7): ip, first_try, checked_at, fetched_at, status (`ok`, `none` for a 404, `error`), data (the cleaned answer, JSON: an InternetDB answer as is; a Shodan API answer carries `source: "shodan"`, `services` and `last_update` as well), error. Hub only; see "The outside view".
 - `settings` (schema version 8): key, value (JSON), changed_at, changed_by. Hub only: what was saved on the Settings page, over the config file. See "Settings and configuration precedence".
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down. Events are per host (`host` is NOT NULL and every list filters by it). A change that belongs to no host, a setting changed on the hub, is stored with the reserved host `""` (`db.HUB_HOST`), which no host id can equal (`hub.HOST_RE` needs at least one character). They show under "Recent hub changes" on the hub's Hosts page and on the Settings page, never under a host. The same retention applies to them. This reuses the one events table and its pruning, instead of a second log with its own retention and display code.
@@ -877,8 +879,9 @@ collector hosts. It calls the functions behind the CLI (`hub.add_host`,
 
 ### Updates from the hub
 
-The hub can ask a host to update to the hub's own commit. It is the only
-thing the hub can make a host do. The pieces:
+The hub can ask a host to update to the hub's own commit. With "Uninstall from
+the hub" below, it is one of the two things the hub can make a host do. The
+pieces:
 
 - **Request.** From the Hosts page ("Update to <commit>" for one host,
   "Update N hosts" for all) or `daemonsight hub update NAME|--all`, the hub
@@ -929,6 +932,69 @@ thing the hub can make a host do. The pieces:
 - **Deploy order.** The target is the hub's own commit, so update the hub
   first, then the hosts. On a hub whose commit isn't known (an image built
   without a revision), there is nothing to offer.
+
+### Uninstall from the hub
+
+Remove from hub can first uninstall the collector on the host, the way an RMM
+tool removes its agent. The pieces:
+
+- **Request.** Remove from hub on a reporting host has the box "Uninstall the
+  collector first", ticked. With it ticked, the hub does not revoke. It sets
+  `hosts.uninstall_state = 'pending'` (and `uninstall_asked`) on the host's row,
+  so a restart of the hub keeps it, and records "Uninstall requested". The
+  host's page says "Waiting for NAME to check in" with the host's upload
+  interval, which the collector sends as the top-level upload field
+  `upload_interval` (top-level so an older hub, which ignores unknown
+  top-level fields, still takes the upload; `settings` is strict and must not
+  gain fields). `daemonsight hub uninstall NAME [--cancel]` does the same.
+- **Reply.** Only while a host is `pending`, the reply to its authenticated
+  upload carries `uninstall: true`, next to `last_seq`.
+- **Collector.** `Uploader._hub_uninstall` (`collector/upload.py`) acts only on
+  a 2xx reply to an upload sent with the host's token to `[upload] url`
+  (checked as for every upload: HTTPS, or this machine; certificates verified;
+  redirects not followed), whose `last_seq` is the number it sent and whose
+  `uninstall` is the boolean `true`. A 401, 403, 404, TLS error or unreachable
+  hub raises before any reply is read. It then checks
+  `[collector] allow_remote_uninstall` (default true, set only in the host's
+  own config) and that `daemonsight-uninstall.path` is installed. If either
+  fails it sends `uninstall: "refused"` with a fixed `uninstall_detail`
+  phrase in its next upload, until the hub stops asking.
+  Otherwise it logs a warning to the journal, sends a final upload with
+  `uninstall: "started"`, and then writes `uninstall.request`
+  (`collector/remote_uninstall.py`; 0600) in the data folder. If the final
+  upload can't be sent, the uninstall goes ahead anyway; the hub keeps showing
+  "Waiting" and the admin can Remove anyway. If the request can't be
+  written it answers `uninstall: "failed"`.
+- **Path and service.** `daemonsight-uninstall.path` starts
+  `daemonsight-uninstall.service` when the request exists. It runs
+  `daemonsight uninstall --hub-request` as root, unsandboxed, the same hand-off
+  as updates, because the collector's sandbox (read-only `/etc`) can't remove
+  its own units and removing itself would cut off the final upload. With
+  `--hub-request` the command does nothing without the request file, and
+  re-reads `allow_remote_uninstall` from the host's config.
+- **`daemonsight uninstall`** (`uninstall.py`, standard library only, because
+  it deletes the package it runs from). Without `--yes` it lists and changes
+  nothing. With it: stop and disable the collector, web and path units (never
+  the oneshot services, one of which is itself), delete the units, the two
+  commands in `/usr/local`, the fail2ban jail and filter, the sudoers rule,
+  `daemon-reload`, remove the `daemonsight` user when its home is the data
+  folder and its shell is `nologin` (the account `install.sh` makes), then
+  delete `/opt/daemonsight`, `/etc/daemonsight` and `/var/lib/daemonsight`.
+  The list is `install.sh`'s, plus the two optional files INSTALL.md names;
+  `tests/test_uninstall.py` compares it with `install.sh`. It is idempotent.
+- **Hub side.** `hub.handle_uninstall_ack` runs after an upload is stored. For
+  a host that is `pending`: `started` revokes and purges it (one transaction,
+  as Remove does) and records "Host uninstalled and removed"; `refused` or
+  `failed` stops the asking, keeps the host, and shows the reason with Cancel
+  uninstall and Remove anyway. For any other host the answer is ignored.
+  Remove anyway revokes and purges at once, records it, and the next page
+  links the manual steps in INSTALL.
+- **A refused token.** On 401 or 403 the uploader raises `TokenRejected`,
+  stores `upload.rejected_at` and `upload.rejected_status` in the collector's
+  `meta` table, and retries once an hour (`REJECTED_RETRY`) instead of backing
+  off to five minutes. `daemonsight status` and every page of the host's own
+  web UI show "the hub rejected this host's upload token". The marks clear on
+  the next accepted upload.
 
 ### Reverse proxy
 

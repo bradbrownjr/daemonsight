@@ -8,6 +8,26 @@
   <div class="text-secondary">{{ state }} · last upload {{ seen }}{% if h.address %} · from <span class="font-monospace">{{ h.address }}</span>{% endif %} · <a href="/h/{{ h.id }}/">Open its pages</a></div>
 </div>
 
+{% if un %}
+<section class="card mb-4" id="manage-uninstall" aria-labelledby="manage-uninstall-title">
+  <div class="card-header"><h2 class="card-title d-flex align-items-center gap-1" id="manage-uninstall-title">Uninstall{{ info_button("manage-uninstall-info", "More about this uninstall") }}</h2>
+    {{ info_panel("manage-uninstall-info", "Uninstalling from the hub", "The hub tells " ~ h.id ~ " to uninstall DaemonSight with a reply to its next upload, and removes the host when the collector says it started. Remove anyway deletes the host and its data on the hub now and leaves the collector installed, still trying to upload: uninstall it by hand with sudo daemonsight uninstall --yes.") }}</div>
+  <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+    {% if un.state == 'pending' %}
+    <div id="uninstall-state">Waiting for {{ h.id }} to check in ({{ un.wait }}).{% if un.asked %} Asked {{ un.asked }}.{% endif %}</div>
+    {% elif un.state == 'refused' %}
+    <div id="uninstall-state">{{ h.id }} refused to uninstall{% if un.detail %}: {{ un.detail }}{% endif %}.</div>
+    {% else %}
+    <div id="uninstall-state">{{ h.id }} could not start the uninstall{% if un.detail %}: {{ un.detail }}{% endif %}.</div>
+    {% endif %}
+    <div class="d-flex flex-wrap gap-2">
+      <form method="post" action="/hosts/{{ h.id }}/uninstall" class="m-0"><input type="hidden" name="action" value="cancel"><button class="btn" type="submit">Cancel uninstall</button></form>
+      <form method="post" action="/hosts/{{ h.id }}/uninstall" class="m-0"><input type="hidden" name="action" value="now"><button class="btn btn-outline-danger" type="submit">Remove anyway</button></form>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 <section class="card mb-4" id="manage-version" aria-labelledby="manage-version-title">
   <div class="card-header"><h2 class="card-title d-flex align-items-center gap-1" id="manage-version-title">Version{{ info_button("manage-version-info", "More about versions") }}</h2>
     {{ info_panel("manage-version-info", "Updating a host from the hub", "Update now asks the host to install the hub's version. The host picks the request up with its next upload and installs it only if the commit is on main or in a release tag. A host can turn this off with remote_update = false under [upload] in its config. The command line does the same with: daemonsight hub update " ~ h.id) }}</div>
@@ -46,7 +66,7 @@
 
 <section class="card mb-4" id="manage-remove" aria-labelledby="manage-remove-title">
   <div class="card-header"><h2 class="card-title d-flex align-items-center gap-1" id="manage-remove-title">Remove from hub{{ info_button("manage-remove-info", "More about removing") }}</h2>
-    {{ info_panel("manage-remove-info", "Removing a host", "Revokes the host and deletes its stored data. The next page lists exactly what goes. Nothing changes on the host itself: stop its collector there with sudo systemctl disable --now daemonsight-collector. The command line does the same with: daemonsight hub revoke " ~ h.id ~ " --purge") }}</div>
+    {{ info_panel("manage-remove-info", "Removing a host", "Revokes the host and deletes its stored data. The next page lists exactly what goes, and can uninstall the collector on the host first. Without that, nothing changes on the host: remove it there with sudo daemonsight uninstall --yes. The command line does the same with: daemonsight hub revoke " ~ h.id ~ " --purge, and daemonsight hub uninstall " ~ h.id ~ " for the uninstall.") }}</div>
   <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
     <div>Revoke this host and delete everything the hub stored for it.</div>
     <a class="btn btn-outline-danger" href="/hosts/{{ h.id }}/manage/remove">Remove from hub</a>

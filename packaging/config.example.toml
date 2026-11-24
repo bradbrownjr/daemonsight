@@ -61,6 +61,11 @@
 # Container log lines kept for the Logs view (secrets are masked).
 # log_tail_lines = 100
 # metrics_retention_hours = 48   # old name for [retention] metrics_hours; unset by default
+# Let the hub uninstall DaemonSight from this host when an admin picks "Uninstall the
+# collector first" on Remove from hub. It acts only on a reply to this host's own authenticated
+# upload, over HTTPS. false locks this host against it (the collector answers "refused"); the
+# hub can't change this. To uninstall by hand: sudo daemonsight uninstall --yes
+# allow_remote_uninstall = true
 
 [exposure]
 # Ports meant to be reachable from the internet. Any other port listening on
