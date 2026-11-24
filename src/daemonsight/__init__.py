@@ -1,4 +1,5 @@
-"""DaemonSight: what a Linux server exposes, what is watching it, and what is out of date."""
+"""DaemonSight: a self-hosted security dashboard for your whole stack (Linux servers, containers, Unraid,
+OPNsense): what each system exposes, what is watching it, and what is out of date."""
 
 __version__ = "0.1.0"
 

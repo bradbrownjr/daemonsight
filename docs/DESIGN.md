@@ -4,8 +4,9 @@ Status: phases 1, 2, 2c, 3a and 3b are built; phase 3c part 1 (container images:
 
 ## Goal
 
-One page that shows what a Linux server exposes, what is watching it, and
-what is out of date. DaemonSight also checks those facts against each other and
+One hub that shows, across your whole stack (Linux servers and their
+containers, Unraid, OPNsense), what each system exposes, what is watching it,
+and what is out of date. DaemonSight also checks those facts against each other and
 reports the gaps between them as findings.
 
 Targets for v1:
