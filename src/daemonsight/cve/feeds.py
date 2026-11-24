@@ -16,6 +16,10 @@ unchanged file costs one small request, by default every 24 hours:
   release a container image runs (alpine.py). Unlike the three feeds above these files are chosen by what the hub's
   images hold, so a Feed is made for each (`alpine_feed`) and the chore drops the ones no image needs any more.
 
+* OPNsense's changelog, https://codeload.github.com/opnsense/changelog/tar.gz/refs/heads/master (the repository's tarball,
+  about 0.6 MB, BSD 2-Clause), one file for all series: the chore asks for it only while an OPNsense system has a release
+  update pending, and keeps the rows of the series those systems need (opnsense.py).
+
 Requests carry only a generic User-Agent, "DaemonSight/<version>". Everything
 downloaded is untrusted text: it is size-capped, parsed with the standard
 library, stored as data, and escaped when shown. A download goes to a
@@ -39,7 +43,7 @@ from pathlib import Path
 import httpx
 
 from .. import __version__
-from . import alpine, store, tracker
+from . import alpine, opnsense, store, tracker
 
 log = logging.getLogger("daemonsight.cve")
 
@@ -61,6 +65,7 @@ class Feed:
     docs: str
     release: str = ""        # Alpine only: "v3.23"
     repo: str = ""           # Alpine only: "main" or "community"
+    raw_ext: str = ""        # the saved file's extension when it is not csv or json (the OPNsense tarball)
 
 
 FEEDS = {
@@ -106,11 +111,23 @@ def alpine_feeds(release: str) -> list[Feed]:
     return [alpine_feed(release, repo) for repo in ALPINE_REPOS]
 
 
+OPNSENSE_NAME = "opnsense-changelog"
+OPNSENSE_HOST = "codeload.github.com"
+OPNSENSE_MAX_BYTES = 20 << 20    # the real tarball is 0.6 MB
+OPNSENSE_FEED = Feed(OPNSENSE_NAME, "OPNsense changelog", opnsense.URL, (OPNSENSE_HOST,), OPNSENSE_MAX_BYTES, True,
+                     "BSD 2-Clause, https://github.com/opnsense/changelog/blob/master/LICENSE (Copyright Franco Fichtner). "
+                     "DaemonSight reads the files, keeps the lines that name a CVE and does not republish them. "
+                     "Source: the OPNsense project's changelog",
+                     opnsense.REPO, raw_ext="tar.gz")
+
+
 def cve_dir(data_dir: str) -> Path:
     return Path(data_dir) / "cve"
 
 
 def raw_path(data_dir: str, feed: Feed) -> Path:
+    if feed.raw_ext:
+        return cve_dir(data_dir) / f"{feed.name}.{feed.raw_ext}"
     return cve_dir(data_dir) / f"{feed.name}.{'csv' if feed.gz_source else 'json'}.gz"
 
 
@@ -371,6 +388,10 @@ def load_one(conn, feed: Feed, path: Path, releases: set[str]) -> tuple[int, str
         return rows, "releases: " + ", ".join(sorted(releases))
     if feed.name == "epss":
         return load_epss(conn, path)
+    if feed.name == OPNSENSE_NAME:
+        rows, note = opnsense.load(conn, path, releases)
+        store.set_meta(conn, "opn_series", json.dumps(sorted(releases)))
+        return rows, note
     if feed.release:
         return load_alpine(conn, path, feed)
     return load_kev(conn, path)
@@ -444,6 +465,42 @@ def drop_alpine(conn_factory, data_dir: str, keep: set[str]) -> bool:
     finally:
         conn.close()
     return dropped
+
+
+def drop_opnsense(conn_factory, data_dir: str) -> bool:
+    """Forget the OPNsense changelog when no firewall has a release update pending: its feed row, rows and saved file.
+    Returns True when something was dropped."""
+    conn = conn_factory()
+    try:
+        had = conn.execute("SELECT 1 FROM feed WHERE name = ?", (OPNSENSE_NAME,)).fetchone() is not None
+        had = had or conn.execute("SELECT 1 FROM opn_release LIMIT 1").fetchone() is not None
+        conn.execute("DELETE FROM feed WHERE name = ?", (OPNSENSE_NAME,))
+        conn.execute("DELETE FROM opn_fix")
+        conn.execute("DELETE FROM opn_release")
+        conn.execute("DELETE FROM meta WHERE key = 'opn_series'")
+    finally:
+        conn.close()
+    raw_path(data_dir, OPNSENSE_FEED).unlink(missing_ok=True)
+    return had
+
+
+def reload_opnsense(conn_factory, data_dir: str, series: set[str]) -> int | None:
+    """Parse the saved changelog tarball again, for another set of series (a firewall's pending update reaches a new
+    one). Returns the rows kept, or None if there is no saved file or it does not parse (the old rows stay)."""
+    path = raw_path(data_dir, OPNSENSE_FEED)
+    if not path.exists():
+        return None
+    conn = conn_factory()
+    try:
+        try:
+            rows, note = load_one(conn, OPNSENSE_FEED, path, series)
+        except Exception:
+            log.exception("OPNsense changelog could not be read again")
+            return None
+        _record(conn, OPNSENSE_FEED, rows=rows, note=note)
+        return rows
+    finally:
+        conn.close()
 
 
 def _load_in_thread(conn_factory, feed, path, releases):

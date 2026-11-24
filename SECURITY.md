@@ -446,11 +446,18 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
 - **CVE matching downloads public files.** The hub fetches the Debian
   security tracker, FIRST's EPSS scores and CISA's KEV list over HTTPS, and,
   when a container image on an Unraid server is Alpine, that release's
-  `main.json` and `community.json` from `secdb.alpinelinux.org`, with
+  `main.json` and `community.json` from `secdb.alpinelinux.org`, and, while an
+  OPNsense firewall has a release update pending, the OPNsense project's
+  changelog: one 0.6 MB tarball of its repository from `codeload.github.com`
+  (`/opnsense/changelog/tar.gz/refs/heads/master`, BSD 2-Clause), read for the
+  CVE ids in the release notes between the installed and the offered version.
+  Requests carry
   the User-Agent `DaemonSight/<version>` and nothing about your hosts. A
   redirect may only stay on the feed's own host, each download has a size
   cap, files are written atomically and parsed with the standard library
-  (no code is run from them). A failed download keeps the last good data.
+  (no code is run from them). The changelog tarball is never extracted: it is
+  read as a stream and only plain files named `community/<series>/<release>`
+  are read, each capped. A failed download keeps the last good data.
 - **Outside checks send one thing to Shodan: an IP address.** Off by default
   (Settings page, or `[outside] enabled`). When on, the hub asks Shodan's InternetDB,
   `GET https://internetdb.shodan.io/<ip>`, for each public address of each

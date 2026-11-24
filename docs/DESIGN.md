@@ -624,9 +624,11 @@ client, certificate pin and finding pipeline as OPNsense and Unraid. The detail 
 
 Per the core rule in "Goal", these gaps are on the roadmap:
 
-- **OPNsense:** firmware and package updates are shown, but not the CVEs they
-  fix. FreeBSD and OPNsense publish VuXML (the data behind `pkg audit`); the hub
-  can match the firewall's package list against it.
+- **OPNsense:** done for releases: the CVEs a pending release or hotfix fixes
+  come from the project's own changelog (see "OPNsense updates and CVEs"). Still
+  open: package updates outside a release, and advisories the changelog names
+  without a CVE id. FreeBSD's VuXML (the data behind `pkg audit`) is the next
+  source for both; not researched.
 - **Unraid:** OS updates are shown with no CVE data. Research whether Unraid
   publishes security notes per release that can be matched.
 - **Proxmox VE and PBS:** they run on Debian, so a collector on the node gives
@@ -870,7 +872,8 @@ secret, the database, `cve.db` and the saved feed files in `cve/` (about 60
 MB; not backed up, since the hub downloads them again), `backups/` and
 `daemonsight.log` (`log_file`, rotated at 5 MB, four files). The hub needs
 outbound HTTPS to `security-tracker.debian.org`, `epss.empiricalsecurity.com`
-and `www.cisa.gov`; it works without them, with `cve.feed_stale` after 3 days. The remote sources (OPNsense, Unraid)
+and `www.cisa.gov`, plus `secdb.alpinelinux.org` for Alpine images and `codeload.github.com` for an OPNsense firewall with a release
+update pending; it works without them, with `cve.feed_stale` after 3 days. The remote sources (OPNsense, Unraid)
 run in the hub, since they are API calls from the LAN.
 
 `deploy/unraid/daemonsight.xml` is an Unraid template for it: icon, web UI
@@ -939,7 +942,8 @@ nothing else about the hub or its hosts. A redirect may only stay on the
 feed's own host, and a download is capped (400 MB decoded for the tracker,
 100 MB EPSS, 50 MB KEV). A feed that fails is retried an hour later; the last
 good data stays in use. Nothing here runs in a request. Alpine's security database is the exception to "three feeds": its files are
-fetched only for the Alpine releases the hub's container images run (see "CVE matching: Alpine images").
+fetched only for the Alpine releases the hub's container images run (see "CVE matching: Alpine images"). So is the OPNsense project's
+changelog, one tarball fetched only while a firewall has a release update pending (see "OPNsense updates and CVEs").
 
 | Feed | Size as served | After decoding | Notes |
 |------|---------------|----------------|-------|
@@ -1461,7 +1465,7 @@ table; nothing is hidden.
 
 | Rule | Severity | When |
 |------|----------|------|
-| `opnsense.updates` | Low; Medium at 5 packages or a new release; High at 20 packages or waiting more than 30 days | The last firmware check found updates. "Waiting" counts from when the hub first saw them. The basis is the package names and versions, so a new update brings an accepted finding back |
+| `opnsense.updates` | Low; Medium at 5 packages or a new release; High at 20 packages or waiting more than 30 days. With CVEs the update fixes: at least Medium, and High when one is on CISA's KEV list or has an EPSS score at or above `[cve] epss_high` | The last firmware check found updates. "Waiting" counts from when the hub first saw them. The basis is the package names and versions, and with CVEs also the offered version and the CVE ids, so a new update, another offered version or a new CVE brings an accepted finding back. See "OPNsense updates and CVEs" |
 | `opnsense.reboot` | Medium | The pending update needs a reboot |
 | `opnsense.gateway` | High down; Medium degraded | Gateway down, loss of 10% or more, or round trip of 300 ms or more |
 | `opnsense.wg_no_peer` | High | An instance with no peer (an unlinked peer vanishes from the reply, so this is how it shows) |
@@ -1521,6 +1525,115 @@ users and privileges https://docs.opnsense.org/manual/how-tos/user-local.html;
 core source https://github.com/opnsense/core (ACL.xml, `Menu.xml`, the API
 controllers named above); plugin source https://github.com/opnsense/plugins
 (`www/caddy`, `security/tailscale`).
+
+### OPNsense updates and CVEs
+
+Per the core rule in "Goal": the firewall's pending firmware update shows the CVEs it fixes, ranked as a host's are. The source is
+the OPNsense project's own changelog [66], the repository the firewall's System, Firmware, Changelog tab is built from. Read on
+2026-11-24 (README, LICENSE, `Links/`, and all 357 files under `community/`).
+
+**What the changelog is.**
+
+- Layout: `community/<series>/<release>`, one plain-text file per release and no extension. `<series>` is `YY.1` or `YY.7`
+  (24 directories, `15.1` to `26.7`). `<release>` is `26.7` (the major release itself), `26.7.10`, a few four-part ones
+  (`15.1.6.1`), and `26.7.r1`, `26.1.b` for release candidates and betas. `business/<series>/` (`YY.4`, `YY.10`) is the Business
+  Edition. There is no file for a hotfix such as `26.1.11_3`.
+- Format (the README and the files): `@ July 21, 2026` first, prose, then `o ` bullets (a continuation line is indented), then a `--`
+  line and numbered footnotes. A footnote is `[n] KIND:ID` and a bullet points to it with `[n]`. The kinds that name a security
+  issue are `CVE:CVE-2026-57154` (23 footnotes), `GHSA:...` (an advisory in OPNsense's own code, no CVE id) and `FREEBSD-SA:26:74.ktls`
+  (a FreeBSD advisory; the file does not name its CVE ids). `Links/CVE` turns a CVE footnote into
+  `https://www.cve.org/cverecord?id=%s`. Many files, old and new, also type the id in the bullet, and the oldest give a cve.mitre.org URL as the footnote.
+- Hotfixes: a line `A hotfix release was issued as 26.1.11_3:` (126 times) starts the bullets of that hotfix inside the release's file.
+  `Out of band hotfix for PHP CVE-2026-109618 and CVE-2026-109619:` (26.1.11, 26.7.7) is a lead line that names the CVEs of the
+  bullet under it. The `_3` is pkg's package revision [67], not a release: the firewall's installed version is `26.1.11_3`.
+- Licence: BSD 2-Clause, `Copyright (c) 2015-2021 Franco Fichtner`. The terms are shown on the Vulnerabilities page and the
+  fixtures here keep the file. The text is not republished by DaemonSight: it keeps the CVE ids and the one bullet each came from.
+
+**Counting.** A CVE counts when a patch-note bullet has its id in the text or points to a `CVE:` footnote, or when the bullet sits
+under a lead line that names it. 50 distinct CVE ids came out of the 317 release files, in 32 of them (the 40 `.rN` and `.b` files are skipped, as the
+firewall's own changelog list skips them unless it runs a development version [68]). CVE ids that appear only in a release's
+introduction are not counted: 24.7.3 says CVE-2024-6640 "resurfaces" (not fixed), 23.7.8 says "we are aware of" CVE-2023-5678 and
+21.1.6 says CVE-2020-15078 "does not affect" the shipped version, while 21.7.2 lists four CVEs as addressed. Telling those apart needs
+reading sentences, so none is guessed. The count is a floor: many fixes appear only as a FreeBSD or GitHub advisory with no CVE id
+(267 distinct advisory references against the 50 CVE ids), and some may not be in the file at all. Advisories without a CVE id are counted and
+listed on the card ("The changelog also names N security advisories with no CVE id"), not ranked, since KEV and EPSS need an id.
+Mapping a FreeBSD advisory to its CVE ids needs the advisory text (FreeBSD's VuXML); that is the later option below.
+
+**What docs.opnsense.org adds.** Nothing for this. `CE_releases.html` [69] is an index that links one page per series
+(`releases/CE_26.1.html`), and those pages are the same repository rendered (the CVE set of 26.1 on the page equals the files'),
+with each footnote linked to cve.org. It also lags: on 2026-11-24 it said the latest version was 26.7.9 while the repository had
+26.7.10, dated that day. The repository is read, and the page's URL is shown as the human-readable copy.
+
+**Getting it without a request per file.** The GitHub contents and trees APIs list names, not text, so reading N releases takes N
+requests. The repository's archive, `https://codeload.github.com/opnsense/changelog/tar.gz/refs/heads/master`, is one request of
+0.6 MB (627,386 bytes on 2026-11-24, all series and the business edition), has an `ETag` and answers `If-None-Match` with 304
+(tried) [70]. The ETag is the archive's, so it should change with any commit to the repository (not tested), and a day's check can then cost the 0.6 MB; at one check per 24 hours that is small. The
+chore keeps the tarball under `<data_dir>/cve/opnsense-changelog.tar.gz`, reads only `community/<series>/<release>` files of the series
+it needs, and never extracts anything (`tarfile` in stream mode; only plain files with exactly that name; each file capped at 256 KB,
+the archive at 20 MB compressed and 400 MB as listed). The firewall itself downloads a signed `changelog.txz` from its mirror
+(`changelog.sh`, `opnsense-update -X` [68]); the file is at `pkg.opnsense.org/FreeBSD:14:amd64/26.1/sets/changelog.txz` (a HEAD
+request answered 200, 245 KB), but checking its signature needs OPNsense's fingerprints, and the mirror's path for each release is
+not documented, so it is not used. Unverified.
+
+**Version order.** Nothing in DaemonSight ordered OPNsense versions: `opnsense._version_base` copies the firewall's reduction (cut at
+`.0`, `p`, `_`, `-`) to compare with the changelog list, which drops `_N` and cannot order anything. `cve/opnver.py` defines the
+order from pkg's `libpkg/pkg_version.c` [67]: dotted numeric parts (missing parts are 0, so `26.7` equals `26.7.0`), then the
+`_N` revision as a number, so `26.1.11 < 26.1.11_3 < 26.1.11_10 < 26.1.12 < 26.7`. A release candidate, a beta or any other form is not
+a version and is never compared. The epoch (`,N`) is refused as unknown for OPNsense.
+
+**Which sections a pending update brings.** The installed version is the firmware status's `product_version` (`26.1.2_3`). The
+offered version is the `new` of the `opnsense` package in the pending list (`26.1.5`, or `26.1.11_10` for a hotfix), and for a major
+upgrade, which lists sets and no packages, the release in `upgrade_major_version` (`26.7`; `check.sh` fills it from `opnsense-update
+-vR`) [68]. A section is a release, or a hotfix under it. The CVEs fixed by the update are those in every section with
+installed < version <= offered. A CVE named in several of them is reported at the highest (the later mention finishes the fix, as for
+Alpine). The out-of-band hotfix lines carry no version of their own, so they are put under the hotfix version printed before them
+(26.1.11_10) or, with none, under the release (26.7.7). That placement is a reading of the files, not stated by them: unverified.
+Only the series from the installed one to the offered one are loaded (`26.1` and `26.7` for an upgrade from 26.1.11 to 26.7). A
+Business Edition version (`YY.4`, `YY.10`) is not read: the card says so and lists none. Whether the pending list's
+`new` has the `_N` hotfix suffix on a real firewall was not seen (the fixture's shape follows `check.sh` and the changelog's own
+wording): unverified.
+
+**Matching.** `cve/run.py` makes a firewall's CVEs under the pseudo-host `opnsense:<system id>` in `cve.db` (a host id has no colon,
+so it cannot clash; image CVEs use `docker:<host>:<image id>` the same way). `match` rows: source `opnsense`, state `fix`, `installed` the
+running version, `fixed` the section that names the CVE; `opn_fix` holds the changelog line as the evidence, `opn_release` each
+release's date. The KEV flag and EPSS score come from the same tables as for a host, so the ranking is the same. The rows are made again
+when the plan (installed and offered), the series loaded or the changelog data changes.
+
+**Fetching** (`cve/feeds.py`, `cve/run.py`). Only while at least one enabled OPNsense system has a release update pending. At most once
+per `[cve] refresh_hours` (24; an hour after an error) with `If-None-Match` and `If-Modified-Since`, one host (`codeload.github.com`,
+no other redirect target), generic User-Agent. A failure (HTTP error, not a tarball, no `community/` files, a file over the cap)
+keeps the last good rows, records the error on the feed's row and shows "The last try to read OPNsense's changelog failed: ... These are
+from the last good copy, N ago." on the card. A change in the series a firewall needs is read from the saved file without
+downloading. When no firewall has a release update pending, the file, rows and feed row are dropped. The Vulnerabilities page lists
+the feed while it exists. `cve.db` is schema 3 (adds `opn_release` and `opn_fix`; an older hub refuses it, and `cve.db` can be deleted).
+
+**The finding** (`opnsense.updates`, in `remote/opnsense_rules.py`, reading `remote/opnsense_cves.py`). With CVEs it adds "; fixes N
+CVEs (K known exploited)" to the title and the count and the top four to the detail. Severity follows the Debian host rule
+(`cve/match.py` `package_findings`) and the image rule (`remote/docker_images.py` `cve_summary`): a fixable CVE on CISA's KEV list, or
+with an EPSS score at or above `[cve] epss_high`, is High; any other fixable CVE is Medium; the finding's own rule (packages, a new
+release, days waiting) can still make it higher. The basis is the package list, the offered version and the CVE ids, so an accepted
+finding comes back when the offered version or a CVE changes (a CVE newly added to KEV changes the severity, not the basis, as for a
+host). "What to do": the card, the changelog link for the offered version, System, Firmware, Updates (`Menu.xml`: Status, Settings,
+Changelog, Updates, Plugins, Packages) [68].
+
+**The card** (Overview, "Pending firmware updates"). One line, "Fixes N CVEs (K known exploited)", then a table (CVE linked to
+cve.org, EPSS, KEV, the release with its date linked to the changelog file, the changelog line), the advisories folded under it, and an
+(i) panel in the style of the Container images page: the source URLs and terms, what counts, and the same check in the firewall
+(System, Firmware, Changelog, read each release from the installed version to the offered one; System, Firmware, Status, Run an audit,
+Security runs `pkg audit -F`, `scripts/firmware/security.sh` [68]). Without a result it says why in one sentence: CVE matching is off,
+the update has no new release (package updates only), the versions cannot be ordered, the series is not read, or the hub has not read
+the changelog yet.
+
+**Package updates outside a release.** The status lists plugin and third-party packages (`os-*`, `php`, `curl`) as pending too. The
+changelog covers a release's bundled ports and plugins only as bullets (`ports: php 8.5.13[37]`, `plugins: os-caddy 2.2.4[3]`) and names
+a CVE for few of them. A pending package with no new release gets no CVE list, and the card says so. Later option, not built: the
+firewall's own `pkg audit` (System, Firmware, Status, Run an audit, Security) uses FreeBSD's VuXML database of the installed packages;
+the hub could match the firewall's package list against the VuXML file. Not researched here.
+
+Not verified: that the hub's whole path ran against a live firewall (no live system was used; the firewall reply is the synthetic
+fixture and the changelog files are real); what `all_packages` shows for the `opnsense` package when a hotfix is offered on a real
+firewall; that `upgrade_major_version` names the series the next major upgrade lands on; the file layout before 15.1 (not in the
+repository); the Business Edition's `business/` files (different series, not parsed).
 
 ### CrowdSec bans on an OPNsense firewall
 
@@ -2170,7 +2283,7 @@ image's reader sends only the package list it already sends.
 3.23.2 is `v3.23`) it fetches `main.json` and `community.json` from `secdb.alpinelinux.org` only, with `If-None-Match` and
 `If-Modified-Since`, at most once per `[cve] refresh_hours` (24) per file and an hour after an error. A download is capped at 20 MB
 (the real files are 0.1 to 0.2 MB), kept under `<data_dir>/cve/alpine-<release>-<repo>.json.gz` and loaded into the `apk` table of
-`cve.db` (schema 2; an older hub refuses a version 2 `cve.db`, which can be deleted and downloaded again) in one transaction per
+`cve.db` (schema 2 then, 3 since the OPNsense changelog tables; an older hub refuses a newer `cve.db`, which can be deleted and downloaded again) in one transaction per
 file. A failure (HTTP error, bad file, a version that does not parse) keeps the last good rows and the page shows
 "The last download failed (...); the copy from the earlier download is used". A release that no image runs any more is dropped:
 its rows, saved files and feed rows. HTTP 404 is an answer, not an error: the feed row says "absent", the page says "Alpine 3.x: not in
@@ -2398,6 +2511,7 @@ The collector must stay light:
 - Fedora: `dnf needs-restarting -C -s` output (the parser takes lines naming `*.service`; not captured, since a container has no D-Bus), the JSON for "no reboot needed", the whole collector on a real Fedora 44 KDE host, and `install.sh` under SELinux enforcing. dnf5 was tested in `fedora:44` containers only.
 - CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
 - Alpine CVE matching: see "CVE matching: Alpine images" (not run on a live hub with a real Alpine container; edge images' `VERSION_ID` and `apk version -l '<'` output in a stock image were not seen).
+- OPNsense update CVEs: see "OPNsense updates and CVEs" (the changelog files are real and the parser was run on all 317 release files; the whole path was not run on a live hub with a real firewall; the offered version of a hotfix in a real firmware status, the placement of out-of-band hotfix lines, and the Business Edition files were not checked).
 - CrowdSec: the read path was checked on a live firewall on 2026-11-24 (see "CrowdSec bans on an OPNsense firewall"). Still read from the source only: `null` for no decisions, `limit`, the 403 for a wrong key and the `duration` format. That the pf bouncer drops the states of a banned address is the owner's account, not read from its source.
 - Whether the Docker source works against Podman's Docker-compatible socket.
 - The Docker source on a real Docker host other than Unraid's.
@@ -2477,3 +2591,8 @@ The collector must stay light:
 63. apk-tools (GPL-2.0-only): `src/version.c`, `src/blob.c` (`apk_blob_pull_uint`, `apk_blob_sort`), `src/ctype.c`, `test/unit/version.data` and `test/unit/version_test.c` at tag v3.0.9 (commit f419028ee18aabcfb405400f899572fb0a949331), https://gitlab.alpinelinux.org/alpine/apk-tools ; the apk-tools version of Alpine 3.23: https://gitlab.alpinelinux.org/alpine/aports/-/blob/3.23-stable/main/apk-tools/APKBUILD (`pkgver=3.0.9`)
 64. apk-version(8) (`--limit`/`-l` with `<`, `>`, `=`; `--test`/`-t`; `--check`/`-c`) and apk-list(8) (`--upgradable`/`-u`), `doc/apk-version.8.scd` and `doc/apk-list.8.scd` at apk-tools v3.0.9
 65. Alpine Security Tracker, one CVE: https://security.alpinelinux.org/vuln/CVE-2021-42375 (answers only when the request accepts `text/html`, `application/json` or `application/ld+json`; otherwise 406)
+66. OPNsense changelog repository (BSD 2-Clause): https://github.com/opnsense/changelog, its README (the file format), `LICENSE`, `Links/` (the URL of each footnote kind: `CVE`, `GHSA`, `FREEBSD-SA`), `Makefile`, and the files under `community/`, read 2026-11-24 (357 files, 24 series; contents API https://api.github.com/repos/opnsense/changelog/contents/community)
+67. FreeBSD pkg, `libpkg/pkg_version.c` (`split_version`, `get_component`, `pkg_version_cmp`: `${PORTVERSION}[_${PORTREVISION}][,${PORTEPOCH}]`; the epoch, then the dotted version, then the revision): https://github.com/freebsd/pkg/blob/master/libpkg/pkg_version.c, read 2026-11-24
+68. OPNsense core (BSD 2-Clause), read 2026-11-24 at master: `src/opnsense/mvc/app/controllers/OPNsense/Core/Api/FirmwareController.php` (`statusAction`, `infoAction` skipping development changelog items), `src/opnsense/scripts/firmware/latest.php` and `product.php` (`product_latest` is the newest changelog version of the installed series, with `_N` cut), `check.sh` (`upgrade_major_version` from `opnsense-update -vR`), `changelog.sh` (the firewall's signed `changelog.txz` from `opnsense-update -X`), `security.sh` (`pkg audit -F`), `src/opnsense/mvc/app/models/OPNsense/Core/Menu/Menu.xml` (System, Firmware: Status, Settings, Changelog, Updates, Plugins, Packages) and `views/OPNsense/Core/firmware.volt` ("Run an audit", Security): https://github.com/opnsense/core
+69. OPNsense documentation, Community Edition releases: https://docs.opnsense.org/CE_releases.html (an index of series pages) and https://docs.opnsense.org/releases/CE_26.1.html (the same notes rendered, CVE footnotes linked to cve.org), read 2026-11-24
+70. The repository archive as served: `https://codeload.github.com/opnsense/changelog/tar.gz/refs/heads/master` answered 200 with an `ETag` (627,386 bytes) and 304 for `If-None-Match`, tried 2026-11-24

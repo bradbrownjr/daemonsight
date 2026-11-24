@@ -114,6 +114,15 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   Interface roles (WAN, LAN, VPN, other) decide what is "internet-facing", and
   you can correct them. A forward that reaches a host also shows on that host's
   Exposure page.
+- **CVEs a pending update fixes.** When the firewall offers a new OPNsense
+  release, the hub reads the project's own changelog for every release and
+  hotfix between the installed and the offered version, ranks the CVE ids in it
+  with CISA's known-exploited list and EPSS, and shows "Fixes N CVEs (K known
+  exploited)" on the Updates card with the release and the changelog line for
+  each. The finding gains the count and the worst CVEs, and is High when one is
+  exploited or has a high exploit score. The changelog names some fixes only as
+  a FreeBSD or GitHub advisory with no CVE id; those are counted and listed, not
+  ranked, so treat the CVE count as a floor.
 - **Findings.** Pending firmware, a gateway down or lossy, a WireGuard peer that
   has not connected for a day or an instance with no peer, any-to-any and
   floating pass rules, forwards with no port, forwards and Caddy sites pointing

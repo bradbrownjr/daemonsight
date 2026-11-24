@@ -19,6 +19,7 @@ from daemonsight.config import Config
 from daemonsight.cve import feeds, match, run, store, tracker
 from daemonsight.web.app import create_app
 
+from . import fake_changelog
 from .conftest import PASSWORD
 from .test_hub import body, hub_cfg, post, token  # noqa: F401 (fixtures)
 from .test_web import seeded  # noqa: F401 (fixture)
@@ -260,7 +261,7 @@ def test_feed_is_due(tmp_path):
 # ---- download ---------------------------------------------------------------------------
 
 def serve(tmp_path, calls=None, etag='"v1"', override=None):
-    """A fake of the three feeds, and of Alpine's secdb (main.json and community.json for v3.17 and v3.23 only; any other
+    """A fake of the three feeds, of the OPNsense changelog tarball (the repository's archive), and of Alpine's secdb (main.json and community.json for v3.17 and v3.23 only; any other
     release is a 404, as secdb answers for a release it has no directory for). Conditional requests get 304 when the etag
     matches."""
     files = {"security-tracker.debian.org": (tracker_gz(tmp_path), True), "epss.empiricalsecurity.com": (epss_gz(tmp_path), False),
@@ -280,6 +281,13 @@ def serve(tmp_path, calls=None, etag='"v1"', override=None):
                 return httpx.Response(304)
             body = (FIX / f"alpine-{m.group(2)}.json").read_text().replace("RELEASE", m.group(1))
             return httpx.Response(200, content=body.encode(), headers={"etag": etag, "last-modified": "Tue, 24 Nov 2026 01:45:59 GMT"})
+        if request.url.host == feeds.OPNSENSE_HOST:     # the OPNsense changelog repository's tarball
+            if request.url.path != fake_changelog.PATH:
+                return httpx.Response(404)
+            if request.headers.get("if-none-match") == etag:
+                return httpx.Response(304)
+            return httpx.Response(200, content=fake_changelog.tarball_bytes(),
+                                  headers={"etag": etag, "last-modified": "Tue, 24 Nov 2026 10:56:27 GMT"})
         if request.headers.get("if-none-match") == etag:
             return httpx.Response(304)
         path, decode = files[request.url.host]

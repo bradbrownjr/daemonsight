@@ -467,7 +467,7 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
             changes = sorted(f"{k}: {v}" for k, v in overrides.items())
             db.add_event(conn, host, time.time(), "setting", "Interface roles changed",
                          detail=(f"by {by}: " + ("; ".join(changes) if changes else "all automatic")))
-            poll.reconcile(conn, host, "opnsense", time.time())
+            poll.reconcile(conn, host, "opnsense", time.time(), cfg)
             log.info("Interface roles of %s changed by %s from %s", host, by, client(request))
             flash(request, "Interface roles saved. The findings are re-checked.")
         else:

@@ -957,7 +957,9 @@ def _feed_rows(cdb, now: float, refresh_hours: float) -> list[dict]:
         m = re.match(r"^" + cve_feeds.ALPINE_PREFIX + r"(v[0-9.]+)-(main|community)$", name)
         if m:
             alpine[name] = cve_feeds.alpine_feed(m.group(1), m.group(2))
-    for name, feed in [*cve_feeds.FEEDS.items(), *alpine.items()]:
+    # OPNsense's changelog is listed only while a firewall's pending update needs it (the chore drops it otherwise).
+    opn = {cve_feeds.OPNSENSE_NAME: cve_feeds.OPNSENSE_FEED} if cve_feeds.OPNSENSE_NAME in have else {}
+    for name, feed in [*cve_feeds.FEEDS.items(), *alpine.items(), *opn.items()]:
         r = have.get(name)
         ok_at = r["ok_at"] if r else None
         stale = bool(r) and (now - (ok_at if ok_at is not None else (r["first_try"] or now))) > FEED_STALE_DAYS * 86400
