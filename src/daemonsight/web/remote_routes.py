@@ -288,6 +288,9 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                     return ctx, None
                 except RemoteError:
                     pass
+            # The message is already scrubbed of the key; the path says which call failed.
+            log.info("Test of %s (%s) failed: %s [%s] %s", form["name"] or "new system", kind, exc.kind,
+                     getattr(exc, "path", None) or "-", str(exc)[:200])
             problems.append(opnsense.error_text(exc, key, secret) if two else
                             unifi.error_text(exc, key) if kind == "unifi" else unraid.error_text(exc, key))
             return ctx, None

@@ -571,7 +571,8 @@ class Rest:
                                f" If you pinned a certificate and the {self._noun}'s has changed, test the connection "
                                "again and confirm the new fingerprint.", path)
         if isinstance(exc, httpx.TimeoutException):
-            return RemoteError("unreachable", f"The {self._noun} did not answer in time.", path)
+            # Name the call: a key or role can make one endpoint slow while the others answer at once.
+            return RemoteError("unreachable", f"The {self._noun} did not answer in time (reading {path.split('?')[0]}).", path)
         if isinstance(exc, httpx.ConnectError):
             return RemoteError("unreachable", "Could not connect: " + clip, path)
         return RemoteError("unreachable", f"{type(exc).__name__}: {clip}", path)

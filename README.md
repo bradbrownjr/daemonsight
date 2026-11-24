@@ -82,8 +82,9 @@ or Fedora host.
 
 - **Hub:** a container image (`ghcr.io/bradbrownjr/daemonsight`), with an Unraid template.
 - **Collector:** `sudo ./install.sh` on the host, then `sudo daemonsight set-password`. The UI listens on `127.0.0.1:8466`.
+- **Remove a collector:** `sudo daemonsight uninstall --yes` on the host, or **Remove from hub** with "Uninstall the collector first" in the hub's web UI.
 
-Steps, options, reverse proxies and updating: [docs/INSTALL.md](docs/INSTALL.md).
+Steps, options, reverse proxies, updating and removal: [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Documentation
 

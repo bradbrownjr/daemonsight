@@ -1180,6 +1180,10 @@ it is the account `install.sh` made (home `/var/lib/daemonsight`, no login).
 A data folder, token file or config you moved somewhere else is not touched.
 It is safe to run again: it removes nothing it cannot find.
 
+The list is kept in step with `install.sh`: a test
+(`tests/test_uninstall.py`, `test_the_removal_list_matches_install_sh_and_the_units_exist`) fails when
+`install.sh` installs something the uninstall would leave behind, so a new file can't be forgotten.
+
 If the command is not there (a damaged install), the same steps by hand:
 
 ```bash
