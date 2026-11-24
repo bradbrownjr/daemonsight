@@ -769,7 +769,9 @@ def test_it_clears_when_the_firewall_catches_up_and_the_updates_finding_takes_ov
     cfg, conn, c = unseen_world(tmp_path, fw)
     now = LC_TS + 3 * DAY
     assert both(cfg, conn, fw, now) == ["opnsense.unseen_release"]
-    caught = idle("26.7.1", latest="26.7.10")                                        # the check ran: it knows 26.7.10, nothing to install yet
+    # The check ran (so last_check is fresh): it knows 26.7.10, nothing to install yet. A name in `latest` with the old
+    # check time is not a check (see test_a_release_the_status_names_but_no_check_offered_is_still_unseen).
+    caught = idle("26.7.1", latest="26.7.10", last_check="Sat Nov 21 08:45:50 EST 2026")
     assert both(cfg, conn, caught, now) == []
     pending = firmware(to="26.7.10", frm="26.7.1", last_check=LC)                  # and when it offers the update
     put_firmware(conn, pending)
@@ -871,3 +873,14 @@ def test_the_card_has_the_same_sentence_and_the_cve_table_and_labels_the_release
     # A recent check: no card.
     put_firmware(conn, idle("26.7.1", latest="26.7.1", last_check=time.strftime("%a %b %e %H:%M:%S UTC %Y", time.gmtime())))
     assert 'id="firmware-unseen"' not in client.get("/h/fw1/").text
+
+
+def test_a_release_the_status_names_but_no_check_offered_is_still_unseen(tmp_path):
+    # Live 2026-11-24: the firewall's changelog download put 26.7.10 in `latest` and `new_version`, but no check had run
+    # since Nov 18, so `status` was "none" and `count` 0. Nothing was offered, so the finding must stay open.
+    fw = idle("26.7.1", latest="26.7.10", new_version="26.7.10")
+    cfg, conn, _c = unseen_world(tmp_path, fw)
+    now = LC_TS + 3 * DAY
+    got, _cves = unseen_findings(cfg, conn, fw, now)
+    assert len(got) == 1 and got[0].basis == "26.7.10"
+    assert both(cfg, conn, fw, now) == ["opnsense.unseen_release"]
