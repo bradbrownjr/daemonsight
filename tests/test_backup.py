@@ -118,3 +118,18 @@ def test_uploading_hosts_skip_scheduled_backups(cfg):
     cfg.backup.interval_hours = None
     cfg.hub.enabled = True
     assert cfg.backup_interval_hours == 24
+
+
+def test_a_channel_secret_is_backed_up_and_restored(live, tmp_path):
+    from daemonsight.notify import channels
+    cfg, conf, conn = live
+    channels.write_secret(cfg.data_dir, 3, "https://hooks.slack.com/services/T0/B0/xxxx")
+    path = backup.create(cfg, conf)
+    assert "notify/3.secret" in backup.inspect(path)["files"]
+    channels.delete_secret(cfg.data_dir, 3)
+    conn.close()
+    done = backup.restore(cfg, path, conf)
+    assert any(d.startswith("notify/3.secret") for d in done)
+    assert channels.read_secret(cfg.data_dir, 3) == "https://hooks.slack.com/services/T0/B0/xxxx"
+    p = channels.secret_path(cfg.data_dir, 3)
+    assert oct(p.stat().st_mode & 0o777) == "0o600" and oct(p.parent.stat().st_mode & 0o777) == "0o700"

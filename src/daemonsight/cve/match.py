@@ -334,7 +334,8 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
         # a change of exposure or of CISA's rating must not reopen a finding someone accepted.
         out.append(Finding("cve.package", src, top.severity, title[:300], " ".join(parts)[:3900],
                            f"/vulnerabilities#{anchor('cve', src)}", fix=fix,
-                           basis=f"cves:{digest(c['cve'] for c in items)}", howto="\n".join(howto)[:3900]))
+                           basis=f"cves:{digest(c['cve'] for c in items)}", howto="\n".join(howto)[:3900],
+                           deadline_days=top.days))
     out.sort(key=lambda f: (priority.SEV_ORDER.index(f.severity), f.title))
     return out[:MAX_FINDINGS]
 

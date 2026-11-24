@@ -24,7 +24,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from .. import config as config_mod, db, full_version, hub, settings, shodan
 from ..config import Config
 from ..remote.client import Net
-from . import opnsense_views, report, sections, unifi_views, unraid_views, views
+from ..notify import schedule
+from . import notify_routes, opnsense_views, report, sections, unifi_views, unraid_views, views
 from .auth import PasswordStore, RateLimiter
 
 log = logging.getLogger("daemonsight.auth")
@@ -64,10 +65,12 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
             from .. import outside as outside_chore
             from ..cve import run as cve_run
             from ..remote import poll as remote_poll
+            from ..notify import engine as notify_engine
             tasks.append(asyncio.create_task(_hub_chores(hub_conn, cfg, config_file)))
             tasks.append(asyncio.create_task(cve_run.loop(cfg, hub_conn, cve_client)))
             tasks.append(asyncio.create_task(outside_chore.loop(cfg, hub_conn, outside_client)))
             tasks.append(asyncio.create_task(remote_poll.loop(cfg, hub_conn, net)))
+            tasks.append(asyncio.create_task(notify_engine.loop(cfg, hub_conn, net)))
         yield
         for t in tasks:
             t.cancel()
@@ -229,7 +232,9 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
         ctx = {"groups": groups, "read_only": settings.read_only(live(conn) if conn is not None else cfg),
                "shodan": {"saved": shodan.key_saved(cfg), "path": str(cfg.shodan_key_path)},
                "can_edit": can_edit, "config_path": str(file_path), "errors": errors or {},
-               "posted": posted or {}, "problems": problems or [], "events": events, "no_filter": True, "host": None}
+               "posted": posted or {}, "problems": problems or [], "events": events, "no_filter": True, "host": None,
+               "notify": notify_routes.channel_rows(conn, cfg) if conn is not None and can_edit else [],
+               "tz": schedule.hub_zone()[1]}
         return render(request, "settings.html", {"page": "settings", "v": ctx}, status)
 
     @app.get("/settings", response_class=HTMLResponse)
@@ -488,6 +493,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                               response_class=HTMLResponse)
         from .remote_routes import add_remote_routes
         add_remote_routes(app, cfg, hub_conn, render=render, require_login=require_login, flash=flash, net=net)
+        notify_routes.add_notify_routes(app, cfg, hub_conn, render=render, require_login=require_login, flash=flash,
+                                        reader=reader, net=net)
         from .host_routes import add_host_routes
         add_host_routes(app, cfg, hub_conn, render=render, require_login=require_login, flash=flash)
 

@@ -126,7 +126,7 @@ database and its own config, and nothing else.
 Only on a hub, and only by someone logged in, these settings can be saved from
 the Settings page: the outside view (on or off, its source, extra addresses,
 refresh hours, and the Shodan API key, which is not a setting: see below), CVE checks (on or off, refresh hours, the EPSS probability that stands in for CISA's Automatable rating), retention,
-the backup interval and count, and whether remote systems are read. Each is a
+the backup interval and count, whether remote systems are read, and the address alert links use. Alert channels have their own pages (see "Alert channels"). Each is a
 row in the `settings` table of the hub's database, over the config file's
 value, and "Reset" deletes it. No code in the web process writes the config file.
 
@@ -444,6 +444,37 @@ an OPNsense firewall".
   about, capped in size and count, and shown escaped. A value that is not an address or a network is never put into a command.
 - **Your never-ban list** holds addresses and networks you choose, validated and limited to 50. The hub asks CrowdSec about each, so
   the list is sent to CrowdSec on the firewall only.
+
+## Alert channels
+
+The hub can send alerts and digests to Ntfy, Slack, Discord and email. These are the only places the hub sends findings to. They are
+off until an administrator adds a channel on the Settings page (Notifications), and only the hub sends: collectors never do.
+
+- **New outbound destinations.** Each channel is one address the hub connects to: the webhook URL (Slack only
+  `https://hooks.slack.com/`, Discord only `https://discord.com/api/webhooks/`), the Ntfy server the administrator names (any
+  `https://` address, or `http://` to this machine), or the SMTP server the administrator names (implicit TLS or STARTTLS only, with the
+  certificate and name checked; the password is sent only after encryption; there is no unencrypted option). The Ntfy and SMTP addresses
+  are the administrator's own choice, so someone with the login can make the hub contact any host on those ports, as the remote
+  systems' addresses already allow. No redirect is followed, a reply is read to at most 64 KB, and a request times out after 20 seconds.
+- **What is sent.** Finding titles, host names, severities, deadlines and links to the hub, which can name packages, containers, ports
+  and addresses. That is a map of your systems: send it only to channels you control. A public Ntfy server shows a topic's messages to
+  anyone who knows its name.
+- **Secrets.** A webhook URL, an Ntfy token or password and an SMTP password are stored like the remote systems' keys: a file
+  `<data>/notify/<channel id>.secret`, mode 0600 in a 0700 folder, written atomically, never in the database, a page, a log line, an
+  event or an error text (an error from a service is passed through a redaction of the channel's secrets first). The Settings page shows
+  only that one is saved, with a blank box to replace it. The backups include these files, so keep backups as private as the data
+  folder.
+- **What a leaked webhook or token allows.** Slack and Discord webhook URLs are the whole credential: whoever has one can post
+  messages to that one channel as the integration (fake alerts, links to a hostile site) but cannot read the channel, and no mentions
+  work in what DaemonSight sends. Delete the webhook in Slack or Discord and make a new one. An Ntfy token or password lets its holder
+  publish to, and read, whatever that account may; revoke the token on the Ntfy server. An SMTP password lets its holder send mail as
+  that account, which is the larger risk: use an app password or a mailbox that can only send, and change it if it leaks.
+- **Hostile text.** A finding's text can come from a package name, a container image or a remote system. Each message format
+  neutralises it (entities in Slack, backslashes in Discord, `html.escape` in email, plain text in Ntfy; Discord's `allowed_mentions`
+  names nobody; Slack's special mentions and links can't form), and links in a message are only ever the hub's own address.
+- **Who can change channels.** Anyone with the login, with the same protections as other settings (the cross-site check and the
+  strict cookie). Changes are listed under Recent hub changes without the secret. Someone with the login can read none of the saved
+  secrets back, but can point a channel at a destination they control by replacing its secret, and so receive alerts there.
 
 ## The hub
 

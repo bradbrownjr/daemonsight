@@ -44,6 +44,9 @@ class Finding:
     fix: str | None = None
     basis: str | None = None
     howto: str | None = None
+    # The remediation timeline in days (CISA BOD 26-04, see cve/priority.py), counted from first_seen; None for a finding with
+    # no deadline ("fix on system upgrade", or a rule that has none). The alert channels use it for deadline reminders.
+    deadline_days: int | None = None
 
 
 def held(prior: dict | None, rule: str, key: str) -> Finding | None:
@@ -53,7 +56,8 @@ def held(prior: dict | None, rule: str, key: str) -> Finding | None:
     row = (prior or {}).get((rule, key))
     if row is None:
         return None
-    return Finding(rule, key, row["severity"], row["title"], row["detail"], row["link"], row["fix"], row["basis"], row["howto"])
+    days = row["deadline_days"] if "deadline_days" in row.keys() else None
+    return Finding(rule, key, row["severity"], row["title"], row["detail"], row["link"], row["fix"], row["basis"], row["howto"], days)
 
 
 # Where a fix sits in the report's steps, by rule. Steps run in this order;

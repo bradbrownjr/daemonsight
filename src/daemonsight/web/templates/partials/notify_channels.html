@@ -1,0 +1,36 @@
+{# The alert channels, a card under the Notifications group. Each row has the same Edit and Send test, and a Remove link to its own
+   confirmation page (docs/UI.md, "Row actions and confirmations"). Nothing here holds a secret: a badge says whether one is saved. #}
+{% from "_macros.html" import info_button, info_panel %}
+<section class="card mb-4" id="notify-channels" aria-labelledby="notify-channels-title" data-section{% if not v.notify %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title d-flex align-items-center gap-1" id="notify-channels-title">Notification channels{{ info_button("notify-channels-info", "More about channels") }}</h2>
+    {{ info_panel("notify-channels-info", "About channels", "A channel is one place alerts go: an Ntfy topic, a Slack or Discord channel, or a list of email recipients. Each one chooses the severities it receives, whether they arrive at once, in a digest or both, and whether resolved findings and deadline reminders are included. A failed message is retried for a day, then given up and shown here. Times are in the hub's time zone, " ~ v.tz ~ ", which is set with the TZ environment variable.") }}
+    <div class="card-actions"><a class="btn btn-primary" href="/settings/notify/new">Add a channel</a></div>
+  </div>
+  {% if v.notify %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="notify-channels">
+      <thead><tr><th>Name</th><th>Type</th><th>Receives</th><th>Status</th><th class="text-end">Manage</th></tr></thead>
+      <tbody>
+        {% for c in v.notify %}
+        <tr data-row>
+          <td data-label="Name" class="fw-bold">{{ c.name }}</td>
+          <td data-label="Type">{{ c.kind }}</td>
+          <td data-label="Receives">{{ c.receives }}<div class="text-secondary small">{{ c.when }}{% if c.next_digest %}; next digest {{ c.next_digest }}{% endif %}</div></td>
+          <td data-label="Status">
+            {% if c.status.state == 'error' %}<span class="text-danger">{{ c.status.text }}</span>{% elif c.status.state == 'ok' %}<span class="text-green">{{ c.status.text }}</span>{% else %}<span class="text-secondary">{{ c.status.text }}</span>{% endif %}
+            {% if c.pending %}<div class="text-secondary small">{{ c.pending }} waiting to be sent</div>{% endif %}
+            {% if c.gave_up %}<div class="text-danger small">{{ c.gave_up }}</div>{% endif %}
+          </td>
+          <td data-label="Manage" class="text-end">
+            <a class="btn btn-sm" href="/settings/notify/{{ c.id }}">Manage</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-secondary">No channels yet. Add one to get alerts and digests.</div>
+  {% endif %}
+</section>

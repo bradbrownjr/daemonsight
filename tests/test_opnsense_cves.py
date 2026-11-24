@@ -530,6 +530,7 @@ def test_a_cve_on_the_kev_list_makes_the_finding_high_as_for_a_debian_host(tmp_p
     set_epss(cfg, "CVE-2026-30868", 0.5)
     hot = updates(fw, opnsense_cves.load(cfg, conn, "fw1", fw))
     assert hot.severity == "high" and "Fix within 14 days (CISA BOD 26-04 timeline)" in hot.detail and "EPSS 50.0% (50th)" in hot.detail
+    assert hot.deadline_days == 14 and base.deadline_days == 60
     assert "Publicly exposed: yes: a firewall is a network device" in hot.howto
     # The CVE never lowers what the packages already make High.
     many = copy.deepcopy(fw)

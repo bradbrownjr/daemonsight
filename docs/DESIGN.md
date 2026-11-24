@@ -1,6 +1,6 @@
 # DaemonSight design
 
-Status: phases 1, 2, 2c, 3a and 3b are built (CVE matching for Debian, Raspberry Pi OS, Ubuntu and Fedora hosts); phase 3c parts 1 to 3 (container images: end-of-life bases, Debian, Alpine and Ubuntu CVEs) are built. Updated 2026-11-24.
+Status: phases 1, 2, 2c, 3a and 3b are built (CVE matching for Debian, Raspberry Pi OS, Ubuntu and Fedora hosts); phase 3c parts 1 to 3 (container images: end-of-life bases, Debian, Alpine and Ubuntu CVEs) are built. Phase 4 part 1 (alert channels, alerts and digests) is built. Updated 2026-11-24.
 
 ## Goal
 
@@ -355,12 +355,14 @@ precedence").
 - `outside` (schema version 7): ip, first_try, checked_at, fetched_at, status (`ok`, `none` for a 404, `error`), data (the cleaned answer, JSON: an InternetDB answer as is; a Shodan API answer carries `source: "shodan"`, `services` and `last_update` as well), error. Hub only; see "The outside view".
 - `settings` (schema version 8): key, value (JSON), changed_at, changed_by. Hub only: what was saved on the Settings page, over the config file. See "Settings and configuration precedence".
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down. Events are per host (`host` is NOT NULL and every list filters by it). A change that belongs to no host, a setting changed on the hub, is stored with the reserved host `""` (`db.HUB_HOST`), which no host id can equal (`hub.HOST_RE` needs at least one character). They show under "Recent hub changes" on the hub's Hosts page and on the Settings page, never under a host. The same retention applies to them. This reuses the one events table and its pruning, instead of a second log with its own retention and display code.
+- `findings.deadline_days` (schema version 12): the remediation timeline in days (CISA BOD 26-04) of a `cve.package`, `docker.image_cves` or `opnsense.updates` finding, counted from `first_seen`; NULL when the finding has none. Used by the alert channels' deadline reminders and the digests' overdue list.
+- `notify_channels`, `notify_seen`, `notify_events` (schema version 12): the alert channels, what each has been told about each open finding, and the outbox. Hub only; see "Alerts, digests and reports (phase 4)". A channel's secret is a file, not a row: `<data>/notify/<id>.secret`, mode 0600 in a 0700 folder.
 - `metrics`: ts, name, value. Raw points for `[retention] metrics_hours`. Longer history as 5-minute averages is planned with the charts (phase 4).
 
 Backups (`backup.py`): one owner-only `.tar.gz` with a consistent copy of
 the database (SQLite's online backup API, so the writer keeps running), the
 config, the password hash, the session secret, any upload token, the Shodan
-key (`shodan.key`) and the remote systems' key files (`remotes/<id>.key`,
+key (`shodan.key`), the alert channels' secrets (`notify/<id>.secret`) and the remote systems' key files (`remotes/<id>.key`,
 `remotes/<id>.reader-token` and `remotes/<id>.crowdsec-key`, checked by name
 on restore and written back 0600), plus a manifest. The folder is 0700 and each archive 0600. The hub, and a collector that keeps its own data, make one every
 `[backup] interval_hours` (24) and keep `keep` (7). A collector that
@@ -386,7 +388,7 @@ fix it.
 Editable on a hub: `outside.enabled`, `outside.source` (a choice of two, kind `choice`), `outside.addresses`,
 `outside.refresh_hours`, `cve.enabled`, `cve.refresh_hours`, `cve.epss_automatable`,
 all three `retention.*`, `backup.interval_hours` (blank is automatic, stored
-as null), `backup.keep`, and `remote.enabled`. `backup.dir` is read-only: it
+as null), `backup.keep`, `remote.enabled` and `notify.hub_url` (the address alert links point at, kind `url`). The alert channels are not settings rows: they have their own pages (see "Alerts, digests and reports (phase 4)"). `backup.dir` is read-only: it
 decides where files holding secrets are written. `outside.key_file` (the Shodan key's path) is read-only for the same reason.
 
 `config.load` records which keys the file set (`Config.file_keys`), so the
@@ -580,36 +582,163 @@ Access: the web process binds to 127.0.0.1 (behind Caddy) or to the WireGuard
 address, never to a public address. It also has its own login (one admin
 password, argon2 hash, session cookie), so a Caddy mistake doesn't expose it.
 
-## Alerts, digests and reports (planned, phase 4)
+## Alerts, digests and reports (phase 4)
 
 The goal is a product other people use: administrators, stakeholders and executives get what
 they need from the hub without logging in. Owner decisions, 2026-11-24. Sent by the hub, not the
 collectors, since the hub has every finding.
 
-**Channels.** Configured on the Settings page; any number of each, each with its own "Send test".
+**Built (part 1):** channels, immediate alerts and scheduled digests, described below. **Planned (part 2):**
+scheduled reports, at the end of this section. Code: `src/daemonsight/notify/` (`channels.py` what a channel is and where its
+secret lives, `engine.py` the chore, `render.py` the four message formats, `send.py` the four senders, `schedule.py`
+digest times) and `web/notify_routes.py` (the Settings page's routes).
 
-| Channel | Settings | Notes |
+### Alert channels (built)
+
+Configured on the Settings page, under Notifications, "Notification channels": any number of channels, each of Ntfy, Slack,
+Discord or email, each added, edited, tested (Send test) and removed there. Each channel has:
+
+| Setting | Notes |
+|---|---|
+| Name | 1 to 40 characters, unique (ignoring case). Shown on the Settings page only |
+| Type-specific fields | Ntfy: server, topic, login (none, access token, or user name and password). Slack and Discord: the webhook URL. Email: server, connection, port, user name, From, recipients (up to 20) |
+| Severities | Which severities it receives. Default Critical and High |
+| Send | Immediately, in a digest, or both |
+| Resolved alerts | Off by default. Digests always list what resolved |
+| Deadline reminders | On by default |
+| Digest schedule | Daily, weekly (a weekday) or monthly (a day 1 to 28), at a time, in the hub's time zone. "Skip empty digests", on by default |
+
+Setting "Hub address for links" (`[notify] hub_url`, a Settings field) is the address every link points at. Blank, it is filled in
+with the address the administrator is using the first time a channel is saved. Every message names "DaemonSight <version>"
+(with the commit, as the pages do) and, when known, the hub's address in its footer; email also carries the logo, an inline image
+by Content-ID (`web/static/logo-256.png`, the same file as `assets/logo-256.png`; a test compares them), never a remote URL.
+
+**Allowed destinations.** Checked on the whole URL (a look-alike host, a user name before the host, a query string or a port is
+refused):
+
+| Type | Allowed |
+|---|---|
+| Slack | `https://hooks.slack.com/services/<a>/<b>/<c>` |
+| Discord | `https://discord.com/api/webhooks/<id>/<token>`. `discordapp.com` is not accepted: Discord's documentation names no host for webhooks other than `discord.com/api` [96][99], and forum reports say the old host answers 403 |
+| Ntfy | Any `https://` server (a path may follow), or `http://` to this machine (`localhost`, 127.0.0.0/8, `::1`) only |
+| Email | An SMTP server over implicit TLS (465) or STARTTLS (587). There is no unencrypted option |
+
+**Secrets.** A webhook URL is the credential (anyone who has it can post to that channel), so it is kept like a remote system's key:
+a file `<data>/notify/<channel id>.secret`, mode 0600 in a 0700 folder, written atomically, never in the database, a page, an
+event, a log line or an error text. The same holds for an Ntfy token or password and the SMTP password. The Settings page shows a
+badge ("A webhook URL is saved") and a blank password box: blank keeps the secret, a typed value replaces it. Backups carry the
+files (`notify/<id>.secret`, checked by name on restore). Removing a channel deletes its file. An error from a service is cut to its
+own short error word and passed through a redaction of the channel's secrets before it is stored.
+
+**Recent hub changes** records a channel being added ("Notification channel added: Ops (Slack)", with its severities and mode), changed
+(what changed, by name: "severities, webhook URL"; never the value) and removed, and "Gave up sending to <name>" (see below).
+
+#### What each service documents
+
+Read 2026-11-24 from each service's own documentation; mark in brackets is the source number below. Nothing was sent to any real
+service: the tests use fake servers that enforce these limits.
+
+| Service | Facts used | Where |
 |---|---|---|
-| Ntfy | Server URL, topic, optional access token | Priority and tags from severity |
-| Slack | Incoming webhook URL | Block Kit layout |
-| Discord | Webhook URL | Embeds coloured by severity |
-| Email (SMTP) | Server, port, implicit TLS (465) or STARTTLS (587), user, password, from, recipients | Plain text plus HTML; never unencrypted; the server's certificate is verified |
+| Ntfy | JSON publish: POST to the server's root URL with `topic`, `message`, `title`, `tags`, `priority` (1 to 5; 5 is max or urgent), `click`, `markdown` and others. Tags that match an emoji short code become an emoji. A message is "up to 4,096 bytes" (more becomes an attachment); the title is limited to 1 KB and all tags to 512 bytes (HTTP 400 beyond). Access tokens go as `Authorization: Bearer tk_...`; user name and password as Basic auth. Default rate limit: 60 requests at once, then one every 5 seconds per visitor (`visitor-request-limit-burst`, `visitor-request-limit-replenish`) | [90][91] |
+| Slack | Incoming webhook: POST JSON with `text` or `blocks`; the URL contains a secret. Errors `invalid_payload`, `no_text`, `action_prohibited`, `no_service`, `no_active_hooks`, `invalid_token`, `channel_not_found`, `channel_is_archived` (HTTP 400, 403, 404). Up to 50 blocks in a message; a section's text 1 to 3,000 characters; a header's text 150 characters (plain text); a context block 10 elements. `&`, `<` and `>` must be written as `&amp;`, `&lt;` and `&gt;`; mentions are written `<!channel>`, `<!here>`, `<!everyone>`. Incoming webhooks: "no more than one message per second per channel", short bursts allowed; HTTP 429 with a `Retry-After` header | [92][93][94][95] |
+| Discord | Execute Webhook: `POST /webhooks/{id}/{token}`; at least one of `content`, `embeds`, ...; `content` up to 2,000 characters; up to 10 embeds; `allowed_mentions` controls mentions (`parse` is a list of `roles`, `users`, `everyone`; empty mentions nobody); `flags` may be `SUPPRESS_EMBEDS`, `SUPPRESS_NOTIFICATIONS`. Embed limits: title 256, description 4,096, 25 fields, field name 256, field value 1,024, footer text 2,048, author name 256, and 6,000 for all of them together across a message. `color` is an integer. Rate limits: `X-RateLimit-Limit`, `-Remaining`, `-Reset`, `-Reset-After`, `-Bucket`; a 429 carries `Retry-After` and `retry_after` (seconds, a float) and `global`; 10,000 invalid requests (401, 403, 429) in 10 minutes brings an IP block. API clients "must provide a valid User Agent" (`DiscordBot ($url, $versionNumber)`), or may be blocked | [96][97][98][99] |
+| Email | `smtplib.SMTP_SSL(host, port, context=...)` for implicit TLS (default port 465) and `SMTP.starttls(context=...)` after `ehlo()`; `login()` tries the methods the server advertises; `ssl.create_default_context()` gives `CERT_REQUIRED` and, with `PROTOCOL_TLS_CLIENT`, host name checking. A message with an inline image: `make_msgid()`, `add_alternative(..., subtype='html')`, then `get_payload()[1].add_related(data, 'image', 'png', cid=...)`, with the HTML naming `cid:` and the id without its angle brackets | [100][101] |
+| Gmail | `smtp.gmail.com`, port 465 (SSL) or 587 (TLS); needs the Gmail or Workspace user name and an app password; an app password needs 2-Step Verification, is 16 characters, and is not offered for accounts with only security keys, for work or school accounts the organisation restricts, or with Advanced Protection | [102][103] |
+| Microsoft 365 | Client SMTP submission (SMTP AUTH): `smtp.office365.com`, port 587 (or 25), STARTTLS (TLS 1.2 or 1.3), a licensed mailbox with SMTP AUTH enabled for it (disabled by default for organisations made after January 2020); port 465 "doesn't support the required versions of TLS"; basic authentication for client submission "is scheduled for deprecation" and Microsoft recommends OAuth | [104] |
 
-Webhook URLs, tokens and passwords are credentials: stored like the other remote keys, masked
-after saving, never logged. Formats, size limits and rate limits come from each service's own
-documentation, researched and cited before building.
+#### What each message looks like
 
-**Alerts and digests.** Each channel chooses which severities it receives, and how:
+One layout, drawn four ways (`notify/render.py`). Each finding line has the severity, the title, the host, its deadline
+("due Thu 26 Nov 14:00 EST" or "overdue since ...") and a link to the finding on the hub (`<hub>/h/<host>` plus the finding's
+own link). What does not fit ends with "and N more", with a link to the hub.
 
-- Immediate: once when a finding opens or gets worse, once when it resolves (optional), and
-  when a deadline is near or passed. Never per poll: this relies on findings not flapping (see
-  "When these findings resolve").
-- Digest: daily, weekly or monthly at a chosen time (and weekday or day of month), in the hub's
-  time zone. It lists what opened, got worse or resolved since the last digest.
-- Or both, e.g. Critical immediately and the rest in the digest.
+| Channel | Layout | Limits kept to |
+|---|---|---|
+| Ntfy | JSON: `title`, plain-text `message`, `priority` and `tags` from the worst severity (critical 5 and `rotating_light`, high 4, medium 3, low 2, info 1; a digest or a test is 3), `click` is the finding's link when the message has one finding, else the hub. No `markdown` flag, so text is shown as text | message under 3,700 of the 4,096 bytes; title 250 characters |
+| Slack | A header, the summary and counts, one section block per chunk of up to 2,800 characters (`*Critical* <link\|title> · host · due ...`), "and N more", then a context block with the footer. Also a top-level `text` (what a notification shows) | at most 50 blocks, 3,000 characters a section, 150 in the header |
+| Discord | One embed: title, description (a `__section__` heading and `**Critical** [title](link) · host · due ...` lines), counts as inline fields for a digest, a footer, a timestamp, and a colour by severity (critical red, high orange, medium amber, low blue, only resolutions green, test teal); `allowed_mentions` with an empty `parse` | description under 3,800 of 4,096; all embed text under 6,000, checked before sending |
+| Email | `multipart/alternative`: plain text, then `multipart/related` with the HTML and the logo (`Content-ID`, `Content-Disposition: inline`). Tables, inline styles, no scripts, no remote images. Subject: the headline. `Auto-Submitted: auto-generated` | up to 100 findings a section, then "and N more" |
 
-**Scheduled reports.** A fuller document on its own schedule: daily, weekly, monthly,
-quarterly or annual. Two kinds, chosen per schedule, for different readers:
+**Neutralising.** A finding's text can hold anything a package name, a server's own message or a hostile host puts there. So:
+Ntfy gets plain text; Slack gets `&`, `<` and `>` as entities (so `<!channel>`, `<@U123>` and a pasted `<url|text>` can't form) and a
+zero-width space after `*`, `_`, `~`, a backquote and `@`; Discord gets a backslash before Markdown characters and `<`, a
+zero-width space after `@`, and `allowed_mentions: {"parse": []}`, which is Discord's own switch for mentioning nobody; email
+passes every value through `html.escape`, and a link is only ever the hub's own address (a finding's link must start with one
+slash, anything else is dropped). Control characters and line breaks become spaces in every title and header, so a finding can't
+add an email header. The tests feed each renderer `<!channel> @everyone <@U123> <https://evil.example|click> *bold* [a](https://evil.example)`.
+
+### Alerts (built)
+
+Which finding changes make a message, per channel (`notify/engine.py`):
+
+- **Opens** at a selected severity.
+- **Gets worse**: its severity rises into a selected one, or rises past what the channel was already told. A finding announced at
+  High that dips to Medium (not selected) and returns to High is not announced again; going on to Critical is.
+- **Resolves**, if the channel wants it (and the channel had been told about it).
+- **A deadline** (CISA BOD 26-04; see "Prioritisation"): once when it is about to pass, 1 day before for 14 and 60 day items and 12 hours
+  before for 3 day items; and once when it has passed. A finding found already past its deadline gets only the second. Findings
+  with no deadline ("fix on system upgrade") have none.
+
+The clock runs from the finding's `first_seen`, when DaemonSight first saw it. BOD 26-04's own clocks start from other events (for
+example when a CVE joins the KEV list), which DaemonSight does not track, so this is a stated simplification. The finding's
+`deadline_days` (schema 12; set by `cve.package`, `docker.image_cves` and `opnsense.updates` from the worst CVE's rating) carries the
+timeline; a raised severity can shorten it, and the clock does not restart.
+
+**Accepted findings never alert**: not on opening, not for their deadline, not on resolving. A finding accepted before it was announced
+is announced when the acceptance is revoked, or when it changes and so comes back (see "Accepting a finding").
+
+**A new channel does not announce what the hub already knew**: findings first seen at or before the channel was created are noted
+silently, including their deadlines that had already passed. Only what happens afterwards makes a message. It still reports one of
+them resolving, if it wants resolved alerts.
+
+**Durable state (the outbox).** Three tables in the hub's database (schema 12): `notify_channels`, `notify_seen` (what each channel has
+been told about each open finding: its last severity, the worst severity announced, whether it was accepted, whether the deadline
+reminders were sent) and `notify_events` (one row per change per channel, with its state `pending`, `sent`, `gave_up` or `none`,
+the attempts and the next try). A unique index on (channel, finding, kind, severity, first seen) means the same change can't be
+queued twice, even if `notify_seen` is lost; a finding that resolves and opens again has a new `first_seen` and is a new finding. A
+pass runs every 20 seconds and finds changes by comparing, not by hooking into where findings are written, so a change made by the
+poll loops, the CVE chore, an upload or the hub's own rules is seen the same way, and one that happened while the hub was down is
+sent after it starts.
+
+**Grouping.** Rows are sent when they are 15 seconds old, so what one poll found goes out together: ONE message per channel, however
+many findings, sections in the order Past deadline, Deadline soon, New, Worse, Resolved, each worst severity first. The headline counts
+them ("DaemonSight: 3 new, 1 worse").
+
+**Failures.** A failed send keeps its rows pending and tries again after 30 s, 1 min, 2, 5, 10, 20, 30 min, then every hour; after a 429, at
+least as long as the service asked (`Retry-After`, or Discord's `retry_after`). New changes join the retry. After 24 hours without a
+success the rows are given up: the channel row records the time and the count, the Settings page shows "Gave up on N messages", an event
+"Gave up sending to <name>" is written, and no more tries are made. A refusal that will not change (HTTP 400, 401, 403, 404, 410,
+413, a refused login or recipients, an untrusted certificate) is given up after 5 tries. The channel's last error is shown with its
+age, and cleared by the next success (including a test). Slack sends are at least 1.1 s apart per channel; a Discord bucket that is
+used up is waited out (`X-RateLimit-Remaining` 0, `X-RateLimit-Reset-After`). No redirect is followed, a response is read to at most
+64 KB, and a request times out after 20 s.
+
+**Send test** posts a one-line test message with the form as typed (a newly typed secret, else the saved one) and saves nothing. It
+shows the outcome in an alert box on the page.
+
+### Digests (built)
+
+A digest lists what **opened**, **got worse** or **resolved** since the channel's last digest, the **current open count by severity**
+(for the severities the channel receives) and anything **overdue** (past its deadline, as of the digest). A finding that opened and
+resolved between two digests is not reported. It is sent on schedule even when nothing changed, as "No changes; N open (critical,
+high)", unless the channel has "Skip empty digests" on, which is the default. "Empty" means no changes and nothing overdue: an overdue
+finding is worth a message. The window and the changes are recorded when the digest is queued and read when it is sent, so a digest
+that fails and is retried still carries them, and a digest given up leaves its changes for the next one. With "both", a change goes out at
+once and is also in the next digest.
+
+**Schedule.** Daily, weekly (a weekday) or monthly (day 1 to 28, so every month has one) at HH:MM in **the hub's time zone**, which it
+reads from the `TZ` environment variable (the container image and Unraid's template set it), else `/etc/timezone`, else the zone
+`/etc/localtime` points to, else UTC. The zone is shown on the Settings page. A wall-clock time is kept across clock changes: 08:00 is 08:00
+before and after, so the gap is 23 or 25 hours that day; a time that does not exist (02:30 when the clocks go forward) runs an hour later,
+at 03:30; one that happens twice (01:30 when they go back) runs at the first. The tests cover America/New_York in 2026 (forward 8 March, back
+1 November). The IANA database comes from the system, or from the `tzdata` package, which is a dependency for images that have none.
+After a digest the next time is computed from now, so a hub that was off sends one digest, not a backlog.
+
+### Scheduled reports (planned, part 2)
+
+A fuller document on its own schedule: daily, weekly, monthly, quarterly or annual. Two kinds, chosen per schedule, for different
+readers:
 
 - **Executive summary:** plain language, no commands. Risk at a glance (open findings by
   severity, overdue against the BOD 26-04 deadlines, the trend since the last report), what
@@ -624,14 +753,30 @@ The scope is the whole hub or a chosen set of hosts, so one hub can report separ
 different groups of systems. Reports are kept on the hub as pages under a Reports archive.
 Email carries the report, with a PDF attached; the other channels send the summary and a link.
 How the PDF is made (a library inside the hub image, or Chromium) is to be researched for image
-size and security before building.
+size and security before building. They will reuse the channels, schedules and history built here.
 
 **Identification.** Every report, digest and email footer names the product, its version and
 its logo ("DaemonSight 0.x.y"), with the hub's address, so any reader knows where it came from.
 The organisation's own name can head the report; the DaemonSight footer stays.
 
-**Order.** Channels, alerts and digests first, then scheduled reports, which reuse the channels,
-schedules and history.
+**What was not verified** (alert channels). No message was sent to a real Ntfy, Slack or Discord service, or a real mail server: the
+payloads were checked against each service's documentation and a fake that enforces its limits, and SMTP against a fake server over real
+TLS sockets with a throwaway certificate.
+
+- Ntfy: the topic's allowed characters (letters, digits, `-` and `_`, 64) are from Ntfy's behaviour as commonly described, not from the pages read; the
+  emoji short codes used as tags (`rotating_light`, `warning`, `large_orange_diamond`, `information_source`, `white_check_mark`, `bell`, `clipboard`)
+  were not checked against Ntfy's emoji list (an unknown one is shown as plain text under the notification).
+- Slack: the incoming-webhook page does not give a message-text length limit or a rate limit (the rate limit is from the Web API's page, which
+  names incoming webhooks); whether `*`, `_` and the like inside a link's label would format is not documented, so the zero-width space is a
+  precaution, not a tested fix; that every webhook URL has the form `/services/<a>/<b>/<c>` is from the page's example.
+- Discord: the webhook page does not name the host (`discord.com/api` is the API's base URL [99], and Discord's support article on webhooks
+  could not be fetched, HTTP 403); the colour is an integer per the embed object, and that Discord counts the characters as the limits say was not
+  tried.
+- Email: Gmail's two pages disagree (an app password is described, and the same page says Google Workspace accounts no longer support less secure
+  apps, "devices that ask for a username and password"): whether a given account may use an app password for SMTP could not be confirmed.
+  Microsoft says client submission with basic authentication is scheduled for deprecation and recommends OAuth, which DaemonSight does not
+  support (the login is PLAIN, LOGIN or CRAM-MD5, whatever the server advertises); the retirement date was not read. A relay by IP address (no
+  login) works with an empty user name.
 
 ## Install and deploy
 
@@ -652,7 +797,7 @@ schedules and history.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
    3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, rates each CVE with CISA BOD 26-04's table (see "Prioritisation"), and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian, Raspberry Pi OS and Ubuntu (see "CVE matching" and "CVE matching: Ubuntu"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
    3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases. Parts 1 to 3 are done: the reader reads each running image's package list, the Container images page shows each image's base OS and support status (`docker.eol_base`), Debian images are matched against the Debian tracker, Alpine images against Alpine's security database and Ubuntu images against Canonical's OVAL data (`docker.image_cves`). See "Docker reader", "Container images", "CVE matching: Alpine images" and "CVE matching: Ubuntu".
-4. Alerts (Ntfy, Slack, Discord, email), digests and scheduled reports, then history charts with drill-down. See "Alerts, digests and reports (planned, phase 4)" and "History charts and drill-down (planned)".
+4. Alerts (Ntfy, Slack, Discord, email) and digests: done. Then scheduled reports, then history charts with drill-down. See "Alerts, digests and reports (phase 4)" and "History charts and drill-down (planned)".
 5. `.deb` package and docs.
 
 Planned after phase 3, in this order: log collection and auditing, then a
@@ -3215,6 +3360,7 @@ The collector must stay light:
 - Unraid: the container statistics subscription ran against the real server with an Admin key, read-only (the handshake, the stream, the id format and its control-code prefix, `memUsage`). Not tried with a Viewer key: the source gives a Viewer `READ_ANY` on `DOCKER`, which the subscription needs, but no Viewer key was available. Run it once with a real Viewer key before relying on it. The cost on the Unraid side (`docker stats` started and stopped each sample) was not measured, and the figure for "no memory limit" assumes Docker reports the host's memory as the limit (seen here: 94.28 GiB on a server with that much RAM).
 - Outside view: the whole chore against the real InternetDB from a real hub with real hosts (tests use a fake server with the documented reply shape, and the requests were checked by hand against documentation addresses and public ones); what an HTTP 429 from InternetDB looks like and whether it sends `Retry-After`; whether Shodan scans IPv6 widely; and the tag values beyond the 31 in Shodan's banner schema [56].
 - Shodan API source: never run against the live API (no key was available; no request was sent to api.shodan.io). Unverified: the status code and body for a bad key, for an address Shodan has no information on, and for a free account's key (401, 403 and 404 are assumed from the official client's handling and from InternetDB); what a 429 looks like and whether it sends `Retry-After`; whether a full host lookup carries `product`, `version`, `cpe23` and `vulns` for every banner (the REST page's example shows none, the banner schema lists them as optional); whether the host reply has a top-level `vulns` (it is read if present, and banner `vulns` are read too); the biggest real reply (the cap is 4 MiB); whether the one-time Membership allows commercial use; and which plan name `api-info` returns for each plan. Run Test key and one real refresh with a real key before relying on it.
+- Alert channels: see "What was not verified" under "Alerts, digests and reports (phase 4)". Nothing was sent to a real Ntfy, Slack, Discord or mail server; the owner's own channels are the first live test.
 
 ## Sources
 
@@ -3307,3 +3453,18 @@ The collector must stay light:
 87. CISA Vulnrichment, the SSVC decision points (Exploitation, Automatable, Technical Impact) that CISA adds to CVE records as the "CISA-ADP" container: https://github.com/cisagov/vulnrichment
 88. FIRST, using EPSS (the probability with its percentile, a threshold as "a very localized effort", about the 90th percentile and a probability near 0.04 matching the effort of patching CVSS Critical) and how the percentile is calculated: https://www.first.org/epss/using-epss and https://www.first.org/epss/articles/prob_percentile_bins
 89. FIRST, CVSS v4.0 user guide (a base score "should not be used alone to assess risk"): https://www.first.org/cvss/v4.0/user-guide
+90. Ntfy, "Publishing" (JSON publish to the root URL and its fields; priority 1 to 5; tags and emoji short codes; `click`; `markdown`; message limit 4,096 bytes, title 1 KB, tags 512 bytes; Basic and Bearer (`tk_`) authentication; the default rate limit), read 2026-11-24: https://docs.ntfy.sh/publish/
+91. Ntfy, "Configuring the server" (`visitor-request-limit-burst` 60 and `visitor-request-limit-replenish` 5 s), read 2026-11-24: https://docs.ntfy.sh/config/
+92. Slack, incoming webhooks (the URL form, `text` and `blocks`, the error words), read 2026-11-24: https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/
+93. Slack, Block Kit (50 blocks a message): https://docs.slack.dev/reference/block-kit/blocks/ ; section block (text 3,000 characters, 10 fields of 2,000): https://docs.slack.dev/reference/block-kit/blocks/section-block/ ; header block (150 characters, plain text): https://docs.slack.dev/reference/block-kit/blocks/header-block/ ; context block (10 elements): https://docs.slack.dev/reference/block-kit/blocks/context-block/ ; text object (3,000 characters, `mrkdwn`, `verbatim`): https://docs.slack.dev/reference/block-kit/composition-objects/text-object/ ; all read 2026-11-24
+94. Slack, formatting message text (`&`, `<` and `>` as entities; `<!here>`, `<!channel>`, `<!everyone>`; link syntax), read 2026-11-24: https://docs.slack.dev/messaging/formatting-message-text/
+95. Slack, rate limits (incoming webhooks: one message a second per channel, short bursts; HTTP 429 and `Retry-After`), read 2026-11-24: https://docs.slack.dev/apis/web-api/rate-limits/
+96. Discord, webhook resource (Execute Webhook: `content` 2,000 characters, up to 10 embeds, `allowed_mentions`, `flags`; no host named), read 2026-11-24: https://docs.discord.com/developers/resources/webhook
+97. Discord, message resource (embed limits; the allowed mentions object), read 2026-11-24: https://docs.discord.com/developers/resources/message
+98. Discord, rate limits (the `X-RateLimit-*` headers, `Retry-After` and `retry_after`, `global`, 10,000 invalid requests in 10 minutes), read 2026-11-24: https://docs.discord.com/developers/topics/rate-limits
+99. Discord, API reference (the base URL `https://discord.com/api`; clients must send a valid User-Agent; `discordapp.com` appears only as the CDN host), read 2026-11-24: https://docs.discord.com/developers/reference
+100. Python, `smtplib` (`SMTP_SSL`, `starttls(context=...)`, `login`, the exceptions) https://docs.python.org/3/library/smtplib.html and `ssl` (`create_default_context`, `CERT_REQUIRED`, `check_hostname`) https://docs.python.org/3/library/ssl.html, read 2026-11-24
+101. Python, email examples (an HTML message with an inline image: `make_msgid`, `add_alternative`, `add_related(..., cid=...)`), read 2026-11-24: https://docs.python.org/3/library/email.examples.html
+102. Google, "Sign in with app passwords" (needs 2-Step Verification; 16 characters; not available with only security keys, with work or school accounts the organisation restricts, or with Advanced Protection), read 2026-11-24: https://support.google.com/mail/answer/185833
+103. Google Workspace, "Send email from a printer, scanner, or app" (`smtp.gmail.com`, port 465 SSL and 587 TLS, authentication, app password, the statement about less secure apps from 1 May 2025), read 2026-11-24: https://knowledge.workspace.google.com/admin/gmail/send-email-from-a-printer-scanner-or-app
+104. Microsoft, "How to set up a multifunction device or application to send email using Microsoft 365 or Office 365" (client SMTP submission: `smtp.office365.com`, port 587, TLS 1.2 or 1.3, SMTP AUTH per mailbox, port 465 unsupported; basic authentication scheduled for deprecation), read 2026-11-24: https://learn.microsoft.com/en-us/exchange/mail-flow-best-practices/how-to-set-up-a-multifunction-device-or-application-to-send-email-using-microsoft-365-or-office-365

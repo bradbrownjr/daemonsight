@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Remove {{ ch.name }} · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">Notification channel</div>
+  <h1 class="page-title">Remove {{ ch.name }}</h1>
+</div>
+{% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+<form method="post" action="/settings/notify/{{ ch.id }}/remove" class="card mb-4" autocomplete="off">
+  <div class="card-body">
+    <p>This deletes the following. Nothing else changes, and no message is sent to {{ ch.name }}.</p>
+    <table class="table table-sm" id="remove-list">
+      <thead><tr><th>Stored for {{ ch.name }} ({{ kind }})</th><th class="text-end">Count</th></tr></thead>
+      <tbody>
+        <tr><td>The channel and its settings</td><td class="text-end">1</td></tr>
+        <tr><td>{{ 'The saved ' ~ ('webhook URL' if ch.kind in ('slack', 'discord') else 'token or password') ~ ', which is removed from the data folder' if secret_saved else 'A saved secret' }}</td><td class="text-end">{{ 1 if secret_saved else 0 }}</td></tr>
+        <tr><td>Messages waiting to be sent, and the record of what it was told</td><td class="text-end">{{ pending }}</td></tr>
+      </tbody>
+    </table>
+    <div class="mb-0">
+      <label class="form-label" for="confirm">Type the name to confirm</label>
+      <input type="text" class="form-control" id="confirm" name="confirm" autocomplete="off" placeholder="{{ ch.name }}" required>
+    </div>
+  </div>
+  <div class="card-footer d-flex flex-wrap gap-2">
+    <button type="submit" class="btn btn-danger">Remove {{ ch.name }}</button>
+    <a class="btn btn-ghost-secondary ms-auto" href="/settings#notify-channels">Cancel</a>
+  </div>
+</form>
+{% endblock %}
