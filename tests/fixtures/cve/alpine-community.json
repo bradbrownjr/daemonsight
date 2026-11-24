@@ -1,0 +1,11 @@
+{
+ "apkurl": "{{urlprefix}}/{{distroversion}}/{{reponame}}/{{arch}}/{{pkg.name}}-{{pkg.ver}}.apk",
+ "archs": ["aarch64", "x86_64"],
+ "reponame": "community",
+ "urlprefix": "https://dl-cdn.alpinelinux.org/alpine",
+ "distroversion": "RELEASE",
+ "packages": [
+  {"pkg": {"name": "c-ares", "secfixes": {"1.28.1-r0": ["CVE-2008-4409"]}}},
+  {"pkg": {"name": "widget-server", "secfixes": {"2.0-r0": ["CVE-2026-6653"]}}}
+ ]
+}

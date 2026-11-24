@@ -260,7 +260,9 @@ def test_feed_is_due(tmp_path):
 # ---- download ---------------------------------------------------------------------------
 
 def serve(tmp_path, calls=None, etag='"v1"', override=None):
-    """A fake of the three feeds. Conditional requests get 304 when the etag matches."""
+    """A fake of the three feeds, and of Alpine's secdb (main.json and community.json for v3.17 and v3.23 only; any other
+    release is a 404, as secdb answers for a release it has no directory for). Conditional requests get 304 when the etag
+    matches."""
     files = {"security-tracker.debian.org": (tracker_gz(tmp_path), True), "epss.empiricalsecurity.com": (epss_gz(tmp_path), False),
              "www.cisa.gov": (kev_gz(tmp_path), True)}
 
@@ -270,6 +272,14 @@ def serve(tmp_path, calls=None, etag='"v1"', override=None):
         assert request.headers["user-agent"] == feeds.USER_AGENT and request.headers["user-agent"].startswith("DaemonSight/")
         if request.url.host in (override or {}):
             return override[request.url.host](request)
+        if request.url.host == feeds.ALPINE_HOST:
+            m = re.fullmatch(r"/(v3\.(?:17|23))/(main|community)\.json", request.url.path)
+            if not m:
+                return httpx.Response(404)
+            if request.headers.get("if-none-match") == etag:
+                return httpx.Response(304)
+            body = (FIX / f"alpine-{m.group(2)}.json").read_text().replace("RELEASE", m.group(1))
+            return httpx.Response(200, content=body.encode(), headers={"etag": etag, "last-modified": "Tue, 24 Nov 2026 01:45:59 GMT"})
         if request.headers.get("if-none-match") == etag:
             return httpx.Response(304)
         path, decode = files[request.url.host]
@@ -591,6 +601,21 @@ def test_vulnerabilities_page(hub_cfg, token, tmp_path):
     # The page's own links resolve: the finding link lands on a row id.
     assert re.search(r'<tr data-row id="cve-brotli">', html)
     assert c.get("/h/testhost/partials/vulnerabilities").status_code == 200
+
+
+def test_the_data_feeds_card_lists_alpine_secdb_files_only_when_images_need_them(hub_cfg, token, tmp_path):
+    c = seed_hub(hub_cfg, token, tmp_path)
+    assert "Alpine security database" not in c.get("/h/testhost/vulnerabilities").text
+    cdb = store.connect(hub_cfg.cve_db_path)
+    for name, status in (("v3.23", "ok"), ("v3.9", "absent")):
+        for f in feeds.alpine_feeds(name):
+            feeds.feed_row(cdb, f)
+            feeds._record(cdb, f, checked_at=time.time(), ok_at=time.time(), changed_at=time.time(), status=status, rows=3, size=1000)
+    cdb.close()
+    html = c.get("/h/testhost/vulnerabilities").text
+    assert "Alpine security database v3.23 main" in html and "Alpine security database v3.9 community" in html
+    assert "Not in Alpine&#39;s security database" in html and "https://secdb.alpinelinux.org/v3.23/main.json" in html
+    assert "downloaded only for the Alpine releases that container images run" in html and "Attribution-ShareAlike 4.0" in html
 
 
 def test_page_escapes_hostile_feed_text(hub_cfg, token, tmp_path):

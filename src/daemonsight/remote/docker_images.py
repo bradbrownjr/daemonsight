@@ -11,13 +11,13 @@ Per image the analysis gives:
 * `docker.eol_base` (medium): one aggregate finding for every image whose base has ended support (status "eol", or
   "ended": Debian past LTS, where only the paid ELTS covers it). An image on Debian LTS or Ubuntu ESM still gets some
   updates and is shown, not counted.
-* `docker.image_cves`: one finding per Debian image that has CVEs the tracker lists as fixed in a newer version of a
-  package the image holds. Severity as for a host (cve/match.py, `package_findings`): High when a fixable CVE is on
+* `docker.image_cves`: one finding per Debian or Alpine image that has CVEs the Debian tracker, or Alpine's secdb (cve/alpine.py),
+  lists as fixed in a newer version of a package the image holds. Severity as for a host (cve/match.py, `package_findings`): High when a fixable CVE is on
   CISA's KEV list or has an EPSS score at or above `[cve] epss_high`, otherwise Medium. CVEs with no fix yet are counted
   and shown as information; they do not raise the finding, because updating the image cannot fix them. (A host's
   `cve.package` also raises High for an unfixed KEV CVE, since the host's owner may mitigate it; an image has nothing
-  to apply.) Ubuntu images are counted "Ubuntu matching not built yet" and Alpine ones "Alpine matching next"; neither
-  is a finding.
+  to apply.) Alpine's secdb only records fixes, so an Alpine image has no unfixed count. Ubuntu images are counted "Ubuntu
+  matching not built yet"; that is not a finding.
 
 The CVE chore (cve/run.py) matches each image under the pseudo-host id `docker:<host>:<image id>`, which cannot clash
 with a real host (a host id has no colon). `load_cves` reads those matches; poll.py gives them to `evaluate` at each
@@ -27,8 +27,10 @@ poll, so a finding follows the chore's work within a poll interval.
 from __future__ import annotations
 
 from datetime import date
+from functools import cmp_to_key
 
 from .. import distro, findings as rules
+from ..cve import alpine, apkver
 from ..findings import Finding, digest
 from . import docker_storage as ds
 
@@ -42,6 +44,12 @@ HOWTO_EOL = "\n".join((
     "Update each image: on Unraid, open the Docker tab, press Check for Updates, then apply the update. Or pull a newer tag of the same app",
     "If the app's newest image is still on that base, its maintainer has not rebuilt it. Look for an alternative image of the same app, or ask the maintainer to rebuild on a supported base",
     "The Container images page lists each image with its base and when that base's support ends. DaemonSight only reads and changes nothing"))
+HOWTO_CVES_ALPINE = "\n".join((
+    "Update the image: on Unraid, open the Docker tab, press Check for Updates, then apply the update. Or pull a newer tag of the same app",
+    "Running apk upgrade inside the container does not help: the change is lost when the container is created again",
+    "If no newer image exists, the app's maintainer has not rebuilt it yet. Ask them to, or look for an alternative image",
+    "The CVEs are listed on the Container images page, each with its exploit score and whether it is on CISA's KEV list",
+    "The finding goes away when the image no longer holds the vulnerable package versions"))
 HOWTO_CVES = "\n".join((
     "Update the image: on Unraid, open the Docker tab, press Check for Updates, then apply the update. Or pull a newer tag of the same app",
     "Running apt upgrade inside the container does not help: the change is lost when the container is created again",
@@ -77,8 +85,9 @@ def debian_codename(os_info: dict | None) -> str | None:
 
 
 def match_kind(entry: dict) -> str:
-    """How the CVE matcher treats an image: "debian" (matched), "ubuntu" (not yet), "alpine" (next), "other" (an OS
-    without dpkg or apk, or a Debian derivative with its own tracker), "unread" (no package list)."""
+    """How the CVE matcher treats an image: "debian" (matched), "ubuntu" (not yet), "alpine" (matched against secdb
+    when its release has a name), "other" (an OS without dpkg or apk, or a Debian derivative with its own tracker),
+    "unread" (no package list)."""
     oi = entry.get("os") or {}
     if not entry.get("manager"):
         return "unread"
@@ -116,10 +125,54 @@ def pseudo_host(host: str, image_id: str) -> str:
     return f"docker:{host}:{image_id.removeprefix('sha256:')[:16]}"
 
 
+def alpine_release(os_info: dict | None) -> str | None:
+    """secdb's directory for an Alpine image ("v3.23" for 3.23.2), or None for any other OS or an unnamed release."""
+    if not os_info or os_info.get("id") != "alpine":
+        return None
+    return alpine.release_of(os_info.get("version_id"))
+
+
+def _alpine_inventory(entry: dict) -> dict | None:
+    """The inventory of an Alpine image: its packages grouped by origin, one version each. Subpackages of one origin are
+    built together and normally share a version; when they differ (an `apk add` of one subpackage from a newer index), the
+    lowest is used and the note says so. A version apk does not parse is left out and counted."""
+    release = alpine_release(entry["os"])
+    if not release:
+        return None
+    groups: dict[str, dict[str, list[str]]] = {}
+    skipped = 0
+    for name, origin, version, _src_version in entry["packages"]:
+        if not apkver.valid(version):
+            skipped += 1
+            continue
+        groups.setdefault(origin or name, {}).setdefault(version, []).append(name)
+    sources, mixed = [], []
+    for origin, versions in sorted(groups.items()):
+        lowest = min(versions, key=cmp_to_key(apkver.compare))
+        if len(versions) > 1:
+            mixed.append(origin)
+        sources.append([origin, lowest, sorted({n for names in versions.values() for n in names})[:30]])
+    notes = []
+    if mixed:
+        listed = ", ".join(mixed[:3]) + (f" and {len(mixed) - 3} more" if len(mixed) > 3 else "")
+        notes.append(f"{len(mixed)} {'origin has' if len(mixed) == 1 else 'origins have'} subpackages at different versions, "
+                     f"matched at the lowest ({listed})")
+    if skipped:
+        notes.append(f"{skipped} {'package has a version' if skipped == 1 else 'packages have versions'} apk cannot parse and "
+                     f"{'was' if skipped == 1 else 'were'} skipped")
+    return {"backend": "apk", "os_id": "alpine", "release": release, "sources": sources, "note": "; ".join(notes),
+            "taken_at": entry.get("read_at") or 0,
+            "hash": digest([release, "; ".join(notes), *(f"{s}={v}" for s, v, _b in sources)])}
+
+
 def pseudo_inventory(entry: dict) -> dict | None:
-    """The inventory the CVE matcher takes (cve/match.py `match_host`) for a Debian image, or None for any other.
-    Packages are grouped by source name and source version, with the binary names listed, as a host's inventory is."""
-    if match_kind(entry) != "debian":
+    """The inventory the CVE matcher takes (cve/match.py `match_host`, cve/alpine.py `match_host`) for a Debian or Alpine
+    image, or None for any other. Debian packages are grouped by source name and source version, with the binary names
+    listed, as a host's inventory is; Alpine ones by origin."""
+    kind = match_kind(entry)
+    if kind == "alpine":
+        return _alpine_inventory(entry)
+    if kind != "debian":
         return None
     groups: dict[tuple[str, str], list[str]] = {}
     for name, source, version, src_version in entry["packages"]:
@@ -131,7 +184,7 @@ def pseudo_inventory(entry: dict) -> dict | None:
 
 
 def image_inventories(snapshots: dict[str, dict]) -> dict[str, dict]:
-    """pseudo-host id -> inventory, for every Debian image in each system's stored `image_packages`. `snapshots` maps a
+    """pseudo-host id -> inventory, for every Debian and Alpine image in each system's stored `image_packages`. `snapshots` maps a
     system's id to its stored Docker summary."""
     out = {}
     for host, data in snapshots.items():
@@ -142,16 +195,32 @@ def image_inventories(snapshots: dict[str, dict]) -> dict[str, dict]:
     return out
 
 
+def _alpine_state(cdb, release: str) -> dict:
+    """How secdb stands for one release, from its two files' feed rows: {"state": "ok" | "absent" | "pending", "ok_at",
+    "error"}. `absent`: secdb has no file for the release. `pending`: not fetched yet. `error` holds the last failed
+    try's reason while an older copy (or none) is in use."""
+    from ..cve import feeds
+    rows = cdb.execute("SELECT name, status, ok_at, detail FROM feed WHERE name IN (?, ?)",
+                       tuple(f.name for f in feeds.alpine_feeds(release))).fetchall()
+    err = next((r["detail"] for r in rows if r["status"] == "error" and r["detail"]), None)
+    if len(rows) < 2 or any(r["ok_at"] is None for r in rows):
+        return {"state": "pending", "ok_at": None, "error": err}
+    state = "absent" if all(r["status"] == "absent" for r in rows) else "ok"
+    return {"state": state, "ok_at": min(r["ok_at"] for r in rows), "error": err}
+
+
 def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
-    """What the CVE chore found for this system's Debian images, for `evaluate` and the page:
-    {"enabled", "available", "epss_high", "feed_at", "images": {image id: {"matched": bool, "cves": [...]}}}.
+    """What the CVE chore found for this system's Debian and Alpine images, for `evaluate` and the page:
+    {"enabled", "available", "epss_high", "feed_at", "alpine": {release: {"state", "ok_at", "error"}},
+    "images": {image id: {"matched": bool, "cves": [...], "note": str}}}.
     None when the stored summary has no package lists."""
     if not data or not data.get("image_packages"):
         return None
     from .. import settings
     from ..cve import match, store
     eff = settings.effective(cfg, state_conn)
-    out = {"enabled": eff.cve.enabled, "available": False, "epss_high": eff.cve.epss_high, "feed_at": None, "images": {}}
+    out = {"enabled": eff.cve.enabled, "available": False, "epss_high": eff.cve.epss_high, "feed_at": None, "alpine": {},
+           "images": {}}
     if not eff.cve.enabled:
         return out
     cdb = store.connect_reader(cfg.cve_db_path)
@@ -162,11 +231,19 @@ def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
         feed = cdb.execute("SELECT ok_at FROM feed WHERE name = 'debian'").fetchone()
         out["feed_at"] = feed["ok_at"] if feed else None
         for e in data["image_packages"]:
-            if match_kind(e) != "debian":
+            kind = match_kind(e)
+            if kind not in ("debian", "alpine"):
                 continue
+            release = alpine_release(e["os"]) if kind == "alpine" else None
+            if kind == "alpine":
+                if not release:
+                    continue                     # no release name to look up: the page says so
+                if release not in out["alpine"]:
+                    out["alpine"][release] = _alpine_state(cdb, release)
             ph = pseudo_host(host, e["image_id"])
-            done = cdb.execute("SELECT 1 FROM matched WHERE host = ?", (ph,)).fetchone() is not None
-            out["images"][e["image_id"]] = {"matched": done,
+            row = cdb.execute("SELECT note FROM matched WHERE host = ?", (ph,)).fetchone()
+            done = row is not None and (kind == "debian" or out["alpine"][release]["state"] != "pending")
+            out["images"][e["image_id"]] = {"matched": done, "note": (row["note"] or "") if row else "",
                                             "cves": match.host_cves(cdb, ph, ("fix", "nofix")) if done else []}
     finally:
         cdb.close()
@@ -236,14 +313,20 @@ def analyze(data: dict | None, unraid_docker: dict | None = None, cves: dict | N
                "os": e["os"], "os_name": sup["name"], "codename": (e["os"] or {}).get("codename") or "", "support": sup, "kind": kind, "state": state, "error": err or None,
                "manager": e["manager"], "count": e["count"], "read_at": e.get("read_at"),
                "cve": None}
-        if kind == "debian":
+        if kind in ("debian", "alpine"):
             m = (cves or {}).get("images", {}).get(iid)
+            release = alpine_release(e["os"]) if kind == "alpine" else None
+            row["alpine_release"] = release
             if cves is None or not cves.get("enabled"):
                 row["cve"] = {"state": "off"}
+            elif kind == "alpine" and not release:
+                row["cve"] = {"state": "unmapped"}
             elif not cves.get("available") or m is None or not m["matched"]:
                 row["cve"] = {"state": "pending"}
+            elif kind == "alpine" and (cves.get("alpine") or {}).get(release, {}).get("state") == "absent":
+                row["cve"] = {"state": "absent", "release": release, "label": alpine.display(release)}
             else:
-                row["cve"] = {"state": "matched", **cve_summary(m["cves"], epss_high)}
+                row["cve"] = {"state": "matched", "note": m.get("note") or "", **cve_summary(m["cves"], epss_high)}
         rows.append(row)
     rows.sort(key=lambda r: (r["support"]["status"] not in ("eol", "ended"), -(len((r["cve"] or {}).get("fixable") or [])), r["name"].lower()))
     return {"rows": rows, "counts": counts, "generated": data.get("generated"), "cves": cves,
@@ -284,11 +367,13 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
         elif hot:
             title += f", {len(hot)} with a high exploit score"
         top = ", ".join(match._describe(x) for x in fixable[:SHOWN_CVES]) + (f" and {n - SHOWN_CVES} more" if n > SHOWN_CVES else "")
-        detail = (f"The image holds package versions that Debian's security tracker lists as fixed in newer ones ({r['os_name']}). "
+        source = "Alpine's security database (secdb)" if r["kind"] == "alpine" else "Debian's security tracker"
+        detail = (f"The image holds package versions that {source} lists as fixed in newer ones ({r['os_name']}). "
                   f"Top CVEs: {top}.")
         if c["unfixed"]:
             detail += f" {c['unfixed']} more in the image have no fix yet; they are listed on the page and raise nothing."
         out.append(Finding("docker.image_cves", r["name"], c["severity"], title[:300], detail[:3900],
-                           f"{LINK}#{r['anchor']}", None, f"{r['repo']}:{digest(x['cve'] for x in fixable)}", HOWTO_CVES))
+                           f"{LINK}#{r['anchor']}", None, f"{r['repo']}:{digest(x['cve'] for x in fixable)}",
+                           HOWTO_CVES_ALPINE if r["kind"] == "alpine" else HOWTO_CVES))
     out.sort(key=lambda f: (f.severity != "high", f.rule, f.title))
     return out

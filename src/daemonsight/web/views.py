@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from urllib.parse import quote, urlsplit
 from dataclasses import replace
@@ -950,18 +951,26 @@ def _cve_row(c: dict, backend: str) -> dict:
 def _feed_rows(cdb, now: float, refresh_hours: float) -> list[dict]:
     have = {r["name"]: r for r in cdb.execute("SELECT * FROM feed")} if cdb is not None else {}
     out = []
-    for name, feed in cve_feeds.FEEDS.items():
+    # Alpine's secdb files are listed after the three fixed feeds, one per release an image runs and per file.
+    alpine = {}
+    for name in sorted(have):
+        m = re.match(r"^" + cve_feeds.ALPINE_PREFIX + r"(v[0-9.]+)-(main|community)$", name)
+        if m:
+            alpine[name] = cve_feeds.alpine_feed(m.group(1), m.group(2))
+    for name, feed in [*cve_feeds.FEEDS.items(), *alpine.items()]:
         r = have.get(name)
         ok_at = r["ok_at"] if r else None
         stale = bool(r) and (now - (ok_at if ok_at is not None else (r["first_try"] or now))) > FEED_STALE_DAYS * 86400
         if r is None or r["checked_at"] is None:
             state, cls = "Not fetched yet", "text-secondary"
+        elif r["status"] == "absent":
+            state, cls = "Not in Alpine's security database", "text-secondary"
         elif r["status"] == "error":
             state, cls = "Last try failed", "text-red"
         else:
             state, cls = "Up to date" if not stale else "Old", "text-green" if not stale else "text-orange"
         out.append({
-            "name": name, "title": feed.title, "url": feed.url, "terms": feed.terms, "state": state, "cls": cls,
+            "name": name, "alpine": name in alpine, "title": feed.title, "url": feed.url, "terms": feed.terms, "state": state, "cls": cls,
             "checked": fmt_ago(r["checked_at"]) if r and r["checked_at"] else "never",
             "ok": fmt_ago(ok_at) if ok_at else "never",
             "changed": fmt_ago(r["changed_at"]) if r and r["changed_at"] else "never",

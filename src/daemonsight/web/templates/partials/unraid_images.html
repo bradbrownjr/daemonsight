@@ -51,11 +51,12 @@
   {% elif not v.has_data or v.old_reader %}
   <div class="card-body text-secondary">Nothing yet.</div>
   {% else %}
-  <div class="card-body">{{ c.read or 0 }} of {{ v.rows|length }} images have a package list. CVEs are matched for Debian images only so far.</div>
+  <div class="card-body">{{ c.read or 0 }} of {{ v.rows|length }} images have a package list. CVEs are matched for Debian and Alpine images so far.</div>
   <div class="card-body pt-0 text-secondary small"><ul class="list-unstyled mb-0">
     <li>Debian: {{ c.debian or 0 }} {{ 'image' if c.debian == 1 else 'images' }} matched against Debian's security tracker{% if v.feed_ago %}, tracker data checked {{ v.feed_ago }}{% endif %}.</li>
     {% if c.ubuntu %}<li>Ubuntu: {{ c.ubuntu }} {{ 'image' if c.ubuntu == 1 else 'images' }}. Ubuntu matching not built yet (phase 3b).</li>{% endif %}
-    {% if c.alpine %}<li>Alpine: {{ c.alpine }} {{ 'image' if c.alpine == 1 else 'images' }}. Alpine matching next.</li>{% endif %}
+    {% if c.alpine %}<li>Alpine: {{ c.alpine }} {{ 'image' if c.alpine == 1 else 'images' }} matched against Alpine's security database (secdb). It lists fixes only, so an Alpine image has no count of CVEs without a fix.
+      {% if v.alpine_lines %}<ul class="list-unstyled mb-0 ms-3">{% for l in v.alpine_lines %}<li>{{ l.text }}.{% if l.error %} <span class="text-red">{{ l.error }}.</span>{% endif %}</li>{% endfor %}</ul>{% endif %}</li>{% endif %}
     {% if c.other_os %}<li>{{ c.other_os }} {{ 'image uses' if c.other_os == 1 else 'images use' }} an OS without dpkg or apk; its packages are not read.</li>{% endif %}
     {% if c.stopped %}<li>{{ c.stopped }} {{ 'image is' if c.stopped == 1 else 'images are' }} used only by stopped containers: not read.</li>{% endif %}
     {% if c.waiting %}<li>{{ c.waiting }} {{ 'image waits' if c.waiting == 1 else 'images wait' }} for a first read (ten at a time, so a busy server is not asked for much).</li>{% endif %}

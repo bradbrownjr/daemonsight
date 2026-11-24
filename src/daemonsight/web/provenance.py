@@ -616,15 +616,20 @@ def images_section(reader_url: str | None) -> dict:
                                "stream; a link is not followed and nothing is written to disk. At most 10 images are read per minute"),
                plain("Support status", "Debian, Ubuntu and Fedora bases use the same release data as a host (distro-info). Alpine and "
                                        "CentOS Linux use endoflife.date's end dates, bundled with DaemonSight"),
-               plain("CVEs", "Debian images only, for now: each package is matched by its source package and version against "
-                             "Debian's security tracker, ranked by CISA KEV and EPSS as a host's packages are. Ubuntu and Alpine are "
-                             "not matched yet. A CVE counts as fixable only when the tracker names a fixed version"),
+               plain("CVEs", "Debian images: each package is matched by its source package and version against Debian's security "
+                             "tracker. Alpine images: each package's origin and version against Alpine's security database "
+                             "(secdb.alpinelinux.org, main.json and community.json of the image's release). Both are ranked by CISA KEV "
+                             "and EPSS as a host's packages are. Ubuntu is not matched yet. A CVE counts as fixable only when the "
+                             "source names a fixed version; secdb lists fixes only, so an Alpine image has no unfixed count"),
                cmd("One image's packages, on the server", "docker cp -L <container>:/var/lib/dpkg/status - | tar -xO"),
                plain("Alpine instead", "docker cp -L <container>:/lib/apk/db/installed - | tar -xO"),
                cmd("Its OS", "docker cp -L <container>:/usr/lib/os-release - | tar -xO")]
     if reader_url:
         entries.append(text("Same read, $TOKEN", f"curl -s -H \"Authorization: Bearer $TOKEN\" {q(reader_url + '/v1/summary')}"))
     return {"title": "Container images", "read": "The Docker reader on this server (GET only) and the hub's CVE data", "entries": entries}
+
+
+ALPINE_TRACKER = "https://security.alpinelinux.org/vuln/"
 
 
 def docker_image_row(r: dict) -> dict:
@@ -635,15 +640,31 @@ def docker_image_row(r: dict) -> dict:
                plain("Packages", f"{r['count']} read with {r['manager']}" if r["manager"] else (r["error"] or "not read")),
                plain("Read through container", cname)]
     c = r.get("cve")
+    alpine = r.get("kind") == "alpine"
     if c and c.get("state") == "matched":
-        entries.append(plain("CVEs", f"{len(c['fixable'])} fixable, {c['unfixed']} with no fix yet"))
+        entries.append(plain("CVEs", f"{len(c['fixable'])} fixable" if alpine else f"{len(c['fixable'])} fixable, {c['unfixed']} with no fix yet"))
+        if c.get("note"):
+            entries.append(plain("Note", c["note"]))
         for x in c["fixable"][:5]:
             entries.append({"kind": "url", "label": x["cve"], "text": match._describe(x).removeprefix(x["cve"]).strip(" ()") or x["cve"],
-                            "href": match.TRACKER_URL + x["cve"]})
+                            "href": ALPINE_TRACKER + x["cve"] if alpine else match.TRACKER_URL + x["cve"]})
+    if alpine and r.get("alpine_release"):
+        rel = r["alpine_release"]
+        entries.append({"kind": "url", "label": "Matched against", "text": f"https://secdb.alpinelinux.org/{rel}/main.json and community.json",
+                        "href": f"https://secdb.alpinelinux.org/{rel}/"})
+        origin = c["fixable"][0]["source"] if c and c.get("state") == "matched" and c["fixable"] else "<origin>"
+        entries.append(cmd("The same lookup in secdb", f"curl -s https://secdb.alpinelinux.org/{rel}/main.json "
+                                                        f"https://secdb.alpinelinux.org/{rel}/community.json | jq '.packages[].pkg | select(.name == \"{origin}\")'"))
+        entries.append(cmd("Updates the container's own apk sees", f"docker exec {q(cname)} apk version -l '<'"))
+        entries.append(plain("That command", "Compares the installed packages with the container's package index (apk update first when "
+                                             "the image ships none; that writes only inside the container). It lists updates, not CVEs: "
+                                             "apk list --upgradable gives the same list"))
+        entries.append(cmd("Compare two versions with apk", "apk version -t 3.5.4-r0 3.5.5-r0"))
     path = "/lib/apk/db/installed" if r["manager"] == "apk" else "/var/lib/dpkg/status"
     entries.append(cmd("Its packages", f"docker cp -L {q(cname)}:{path} - | tar -xO"))
     entries.append(cmd("Its OS", f"docker cp -L {q(cname)}:/usr/lib/os-release - | tar -xO"))
-    entries.append(plain("Fix", "Update the image: on Unraid, Docker tab, Check for Updates, then apply. apt upgrade inside a container does not persist"))
+    entries.append(plain("Fix", "Update the image: on Unraid, Docker tab, Check for Updates, then apply. "
+                                + ("apk upgrade" if alpine else "apt upgrade") + " inside a container does not persist"))
     return {"title": f"Image {r['name']}", "read": "The Docker reader's package list for this image, and the hub's matching of it", "entries": entries}
 
 

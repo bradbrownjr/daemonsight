@@ -12,8 +12,8 @@
 ---
 
 **Status:** phase 3 of 5 is under way: package updates, CVE matching and the
-first part of container image scanning (end-of-life bases and Debian image
-CVEs) are built. Ubuntu and Alpine images are next. The collector reads system health, systemd
+container image scanning (end-of-life bases, Debian and Alpine image CVEs)
+are built. Ubuntu images are next. The collector reads system health, systemd
 services, listening sockets, Docker, Caddy, fail2ban, the firewall and pending
 package updates. The web UI has Overview, Exposure, Routes, Services,
 fail2ban, Packages and (on a hub) Vulnerabilities, Container images and Docker
@@ -60,8 +60,8 @@ the row they are about, and a port's panel shows the process behind it.
   fixed files, through Docker's container archive call). The Container images page
   shows each image's base OS and whether it still gets security updates (finding:
   images on an end-of-life base) and matches Debian images' packages against
-  Debian's security tracker, ranked by CISA KEV and EPSS (finding: one per image,
-  with the fixable CVEs). The reader holds the Docker socket, which is root on the
+  Debian's security tracker and Alpine images' against Alpine's security database,
+  ranked by CISA KEV and EPSS (finding: one per image, with the fixable CVEs). The reader holds the Docker socket, which is root on the
   server: read [SECURITY.md](SECURITY.md) first.
 - **OPNsense, read over its API.** The hub polls an OPNsense firewall with a
   dedicated user's API key and secret, no agent on the firewall. Its pages
@@ -185,7 +185,7 @@ these gaps.
 | Listening and open ports | `ss` / `/proc/net`, nftables rules |
 | Network traffic, CPU, memory, disk | `/proc`, psutil |
 | CVEs in host packages | Debian security tracker, CISA KEV and EPSS, matched on the hub; Fedora security advisories (dnf5) |
-| CVEs in container images | Debian security tracker for Debian images (done); Ubuntu and Alpine images next |
+| CVEs in container images | Debian security tracker for Debian images and Alpine's security database for Alpine images (done); Ubuntu images next |
 
 Targets: a Debian VPS running Caddy and Docker, and Debian LXC containers.
 

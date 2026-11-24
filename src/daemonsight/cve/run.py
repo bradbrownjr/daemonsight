@@ -19,7 +19,7 @@ from functools import partial
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import feeds, match, store
+from . import alpine, feeds, match, store
 
 log = logging.getLogger("daemonsight.cve")
 
@@ -39,7 +39,7 @@ def _inventories(conn) -> dict[str, dict]:
 
 
 def _image_inventories(conn) -> dict[str, dict]:
-    """pseudo-host -> inventory for every Debian container image an Unraid system's Docker reader listed (see
+    """pseudo-host -> inventory for every Debian and Alpine container image an Unraid system's Docker reader listed (see
     remote/docker_images.py). They are matched like hosts but never get findings here: poll.py raises
     `docker.image_cves` from the matches."""
     from ..remote import docker_images, docker_storage
@@ -108,28 +108,48 @@ class Chore:
             self._epss_high = self.cfg.cve.epss_high
             self.dirty = True          # the High threshold moved
         invs = _inventories(self.state)
-        # Debian container images are matched like hosts, under pseudo-host ids, and their releases are loaded too.
+        # Debian and Alpine container images are matched like hosts, under pseudo-host ids, and their releases are loaded too.
         imgs = _image_inventories(self.state)
         every = {**invs, **imgs}
         releases = {i["codename"] for i in every.values() if match.release_of(i)}
+        alpine_releases = {i["release"] for i in imgs.values() if i.get("backend") == "apk" and i.get("release")}
         conn = await asyncio.to_thread(self.factory)
         try:
             changed = await self._refresh(conn, releases, now)
+            changed = await self._refresh_alpine(conn, alpine_releases, now) or changed
             deb = conn.execute("SELECT changed_at FROM feed WHERE name = 'debian'").fetchone()
             gen = f"{match.MATCH_VERSION}:{(deb['changed_at'] if deb else None)}:{','.join(sorted(releases))}"
+            # An Alpine image is matched again when any of the secdb files changed; a host never is for that.
+            apk_gen = f"{match.MATCH_VERSION}:apk:" + ",".join(
+                f"{r['name']}={r['changed_at']}" for r in conn.execute(
+                    "SELECT name, changed_at FROM feed WHERE name LIKE ? ORDER BY name", (feeds.ALPINE_PREFIX + "%",)))
             matched = {r["host"]: r for r in conn.execute("SELECT * FROM matched")}
         finally:
             conn.close()
+        gens = {h: apk_gen if inv.get("backend") == "apk" else gen for h, inv in every.items()}
         todo = [h for h, inv in every.items()
-                if h not in matched or matched[h]["inv_at"] != inv["taken_at"] or matched[h]["gen"] != gen]
+                if h not in matched or matched[h]["inv_at"] != inv["taken_at"] or matched[h]["gen"] != gens[h]]
         if todo:
-            await asyncio.to_thread(self._match, {h: every[h] for h in todo}, gen)
+            await asyncio.to_thread(self._match, {h: every[h] for h in todo}, gens)
             self.dirty = True
         if changed:
             self.dirty = True
         # Hosts that are gone (revoked) leave rows behind; drop them.
         await asyncio.to_thread(self._forget, set(every))
         await self._findings(invs, now)
+
+    async def _refresh_alpine(self, conn, releases: set[str], now: float) -> bool:
+        """Alpine's security database: main and community for each release an image runs, each file asked again at most once
+        per [cve] refresh_hours (an hour after an error). A release no image runs is forgotten."""
+        any_changed = False
+        for release in sorted(releases):
+            for feed in feeds.alpine_feeds(release):
+                if feeds.is_due(feeds.feed_row(conn, feed), now, self.cfg.cve.refresh_hours):
+                    if await feeds.refresh(self.factory, self.cfg.data_dir, feed, set(), now, self.client):
+                        any_changed = True
+        if await asyncio.to_thread(feeds.drop_alpine, self.factory, self.cfg.data_dir, releases):
+            any_changed = True
+        return any_changed
 
     async def _refresh(self, conn, releases: set[str], now: float) -> bool:
         any_changed = False
@@ -146,15 +166,17 @@ class Chore:
                 any_changed = True
         return any_changed
 
-    def _match(self, invs: dict[str, dict], gen: str) -> None:
+    def _match(self, invs: dict[str, dict], gens: dict[str, str]) -> None:
         conn = self.factory()
         try:
             for host, inv in invs.items():
                 try:
                     if inv.get("backend") == "dnf":
-                        match.set_advisories(conn, host, inv, gen)
+                        match.set_advisories(conn, host, inv, gens[host])
+                    elif inv.get("backend") == "apk":
+                        alpine.match_host(conn, host, inv, gens[host])
                     else:
-                        match.match_host(conn, host, inv, gen)
+                        match.match_host(conn, host, inv, gens[host])
                 except Exception:
                     log.exception("CVE matching failed for %s", host)
         finally:
@@ -175,6 +197,9 @@ class Chore:
         try:
             stale = feeds.stale_feeds(conn, now)
             titles = {n: f.title for n, f in feeds.FEEDS.items()}
+            for name, _age in stale:
+                if name.startswith(feeds.ALPINE_PREFIX):
+                    titles[name] = feeds.alpine_title(name)
         finally:
             conn.close()
         stale_f = match.stale_finding(stale, titles)
