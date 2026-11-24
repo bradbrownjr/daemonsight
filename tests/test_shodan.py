@@ -125,7 +125,7 @@ def web(hub_cfg, token):  # noqa: F811
 
 def flash_of(c):
     """The notice the next page shows (settings page), as text."""
-    html = c.get("/settings").text
+    html = c.get("/settings/security").text
     m = re.search(r'class="alert[^"]*"[^>]*role="[a-z]+"[^>]*>(.*?)</div>', html, re.S)
     return html, m.group(1) if m else ""
 
@@ -136,7 +136,7 @@ def dump(conn):
 
 def surfaces(c, conn, cfg):
     """Every place a key could leak to: the pages, the database, events and findings."""
-    pages = [c.get(p).text for p in ("/settings", "/", "/h/testhost/", "/h/testhost/exposure", "/h/testhost/vulnerabilities")]
+    pages = [c.get(p).text for p in ("/settings/general", "/settings/security", "/settings/systems", "/settings/notifications", "/settings/changes", "/", "/h/testhost/", "/h/testhost/exposure", "/h/testhost/vulnerabilities")]
     raw = b"".join(p.read_bytes() for p in (cfg.db_path, *cfg.db_path.parent.glob("state.db-*")) if p.exists())
     return "\n".join(pages) + dump(conn) + raw.decode("latin-1")
 
@@ -200,7 +200,7 @@ def test_choosing_the_shodan_api_without_a_key_is_refused(web):
 
 def test_the_settings_page_offers_both_sources_and_the_guide(web):
     c, conn, cfg, fake = web
-    html = c.get("/settings").text
+    html = c.get("/settings/security").text
     assert 'name="outside.source"' in html
     assert "InternetDB (free, non-commercial)" in html and "Shodan API (your key)" in html
     assert "Getting a Shodan API key" in html
@@ -216,14 +216,14 @@ def test_the_settings_page_offers_both_sources_and_the_guide(web):
 def test_saving_a_key_writes_a_0600_file_and_nothing_else(web):
     c, conn, cfg, fake = web
     r = c.post("/settings/shodan-key", data={"action": "save", "key": KEY})
-    assert r.status_code == 303 and r.headers["location"] == "/settings#outside"
+    assert r.status_code == 303 and r.headers["location"] == "/settings/security#outside"
     path = cfg.shodan_key_path
     assert path == cfg.db_path.parent / "shodan.key"
     assert path.read_text().strip() == KEY and oct(path.stat().st_mode & 0o777) == "0o600"
     assert not list(path.parent.glob("*.tmp"))
     assert "Shodan API key saved" in hub_events(conn)
     assert KEY not in surfaces(c, conn, cfg)
-    html = c.get("/settings").text
+    html = c.get("/settings/security").text
     assert "A key is saved" in html and "Paste a new key to replace it" in html and "Remove key" in html
     assert KEY not in html
 
@@ -233,7 +233,7 @@ OUTSIDE_FORM = {"group": "outside", "outside.enabled": "on", "outside.refresh_ho
 
 def test_the_key_box_sits_under_source_and_shows_only_for_the_shodan_api(web):
     c, conn, cfg, fake = web
-    html = c.get("/settings").text
+    html = c.get("/settings/security").text
     form = re.search(r'<form method="post" action="/settings".*?</form>', html.split('id="outside"')[1], re.S).group(0)
     assert 'id="shodan-key"' in form and 'name="shodan_key"' in form          # in the group's own form
     assert 'data-ds-when="f-outside-source=shodan"' in form
@@ -244,7 +244,7 @@ def test_the_key_box_sits_under_source_and_shows_only_for_the_shodan_api(web):
 def test_one_save_stores_the_key_and_the_shodan_api_source(web):
     c, conn, cfg, fake = web
     r = c.post("/settings", data={**OUTSIDE_FORM, "outside.source": "shodan", "shodan_key": KEY})
-    assert r.status_code == 303 and r.headers["location"] == "/settings#outside"
+    assert r.status_code == 303 and r.headers["location"] == "/settings/security#outside"
     assert shodan.read_key(cfg) == KEY and oct(cfg.shodan_key_path.stat().st_mode & 0o777) == "0o600"
     assert settings.effective(cfg, conn).outside.source == "shodan"
     assert "shodan_key" not in {x["key"] for x in conn.execute("SELECT key FROM settings")}
@@ -279,7 +279,7 @@ def test_the_key_is_replaced_and_removed(web):
     r = c.post("/settings/shodan-key", data={"action": "remove"})
     assert r.status_code == 303 and not cfg.shodan_key_path.exists()
     assert hub_events(conn).count("Shodan API key saved") == 2 and hub_events(conn)[-1] == "Shodan API key removed"
-    assert "No key saved" in c.get("/settings").text
+    assert "No key saved" in c.get("/settings/security").text
     for e in hub_events(conn):
         assert KEY not in e and OTHER not in e
 
@@ -290,7 +290,7 @@ def test_the_key_cannot_be_removed_while_the_shodan_api_is_the_source(web):
     settings.save(conn, cfg, {"outside.source": "shodan"}, "admin")
     c.post("/settings/shodan-key", data={"action": "remove"})
     assert shodan.read_key(cfg) == KEY
-    assert "Set Source back to InternetDB" in c.get("/settings").text
+    assert "Set Source back to InternetDB" in c.get("/settings/security").text
     settings.save(conn, cfg, {"outside.source": "internetdb"}, "admin")
     c.post("/settings/shodan-key", data={"action": "remove"})
     assert not cfg.shodan_key_path.exists()
@@ -302,7 +302,7 @@ def test_a_key_that_cannot_be_one_is_refused(web, bad):
     c, conn, cfg, fake = web
     c.post("/settings/shodan-key", data={"action": "save", "key": bad})
     assert not cfg.shodan_key_path.exists()
-    assert "does not look like a Shodan API key" in c.get("/settings").text
+    assert "does not look like a Shodan API key" in c.get("/settings/security").text
     assert "Shodan API key saved" not in hub_events(conn)
 
 
@@ -376,7 +376,7 @@ def test_test_key_when_shodan_cannot_be_reached(web):
     app = create_app(cfg, outside_client=httpx.AsyncClient(transport=httpx.MockTransport(boom)))
     c2 = login(TestClient(app, follow_redirects=False))
     c2.post("/settings/shodan-key", data={"action": "test", "key": KEY})
-    html = c2.get("/settings").text
+    html = c2.get("/settings/security").text
     assert "Could not reach api.shodan.io: ConnectError" in html and KEY not in html
 
 
@@ -735,7 +735,7 @@ def test_a_refused_key_shows_on_the_exposure_page_with_a_link_to_settings(web):
     shodan_cfg(cfg)
     run(outside.Chore(cfg, conn, FakeApi(key=OTHER).client(), gap=0).run_once())
     sec = section(c.get("/h/testhost/exposure").text)
-    assert "Shodan refused the API key (HTTP 401)" in sec and 'href="/settings#outside"' in sec
+    assert "Shodan refused the API key (HTTP 401)" in sec and 'href="/settings/security#outside"' in sec
     assert KEY not in sec and OTHER not in sec
 
 

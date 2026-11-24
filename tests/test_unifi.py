@@ -710,9 +710,9 @@ def test_the_report_lists_unifi_findings_with_what_to_do(c, hub_cfg, fake):
 
 
 def test_the_offline_threshold_is_on_the_settings_page(c, hub_cfg):
-    html = c.get("/settings").text
+    html = c.get("/settings/systems").text
     assert "UniFi device offline for" in html and "remote.unifi_offline_hours" in html or "unifi_offline_hours" in html
-    r = c.post("/settings/save", data={"remote.unifi_offline_hours": "4"}) if c.get("/settings").status_code == 200 else None
+    r = c.post("/settings/save", data={"remote.unifi_offline_hours": "4"}) if c.get("/settings/systems").status_code == 200 else None
     cn = conn_of(hub_cfg)
     if r is not None and r.status_code in (200, 303):
         assert settings.effective(hub_cfg, cn).remote.unifi_offline_hours in (4, 4.0, 2.0)

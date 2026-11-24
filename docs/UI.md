@@ -18,7 +18,7 @@ These apply to every page. Owner rules, kept as written.
 - **Short up front.** A card opens with one sentence at most. Longer text
   (terms, caveats, how something is worked out) goes behind an (i) button in the
   card title that opens a popover, or in a small note at the foot of the page.
-  On the Settings page that is a group's `note`, `note_title` and `note_links`
+  On the Settings page (one tab per area, see Tabs) that is a group's `note`, `note_title` and `note_links`
   in `settings.GROUPS`; on data pages it is the source panel (`src_button`,
   `src_panel`).
 - **Alerts are for now.** A coloured alert box is for something that just
@@ -111,6 +111,26 @@ These apply to every page. Owner rules, kept as written.
   another, indented under them with a rule down the left. (Owner: symmetry.)
 - **Only phone-specific markup is phone-only.** Desktop must not change when the
   phone menu does; check both (see "Checking a change").
+
+## Tabs
+
+- **A long page of unrelated cards is split into tabs, each its own URL.** The
+  Settings page is the model: `/settings/<tab>`, a bare `/settings` opens the
+  first tab, an unknown tab is a 404. The tabs and their groups are
+  `settings.TABS`. (Owner: the page had grown too long.)
+- **Tabs are real links in a `nav`,** so they work without JavaScript. The
+  current one has `aria-current="page"`. This is page navigation, not the
+  ARIA tab widget, because each tab loads a new page; the APG tabs pattern is
+  for panels that switch on one page [S16].
+- **A save or an error stays on its tab.** A form returns to the tab it is on
+  (a redirect with the message), and a validation error renders the tab that
+  holds the bad field.
+- **Links to a setting name its tab** (`/settings/security#cve`).
+- **Phone: the row wraps, each row fills the width.** Scrolling a row hides
+  tabs without JavaScript, and a select hides the choices; five short names
+  wrap to three rows of 44 px targets with nothing off-screen, and the page
+  never scrolls sideways. (Project practice, within "Touch targets and focus".)
+- **Columns stay the same within a tab,** like every page.
 
 ## Disclosure and accordions
 
@@ -290,6 +310,10 @@ Read for this document on 2026-11-19 unless marked.
   https://www.w3.org/WAI/WCAG22/Understanding/labels-or-instructions.html
 - S15. WCAG 2.2, Understanding 2.3.3 Animation from Interactions, Level AAA.
   https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html
+
+- S16. APG, Tabs Pattern. https://www.w3.org/WAI/ARIA/apg/patterns/tabs/
+  (cited from memory of the pattern's scope; not re-read for this change, so
+  unverified)
 
 Unverified:
 

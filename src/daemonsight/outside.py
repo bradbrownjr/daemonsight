@@ -647,7 +647,7 @@ def key_finding(problem: str, error: str | None) -> Finding:
                    f"{error or title}. Nothing is being refreshed for this host's public addresses, and DaemonSight "
                    "does not fall back to InternetDB on its own: the findings from Shodan come from the last good "
                    "answer, if any.",
-                   "/settings#outside", basis=problem, howto=how)
+                   "/settings/security#outside", basis=problem, howto=how)
 
 
 def host_findings(host: str, rows: dict[str, dict], snaps: dict, exposure, now: float, refresh_hours: float,

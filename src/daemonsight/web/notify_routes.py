@@ -156,7 +156,7 @@ def add_notify_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
         hub_url_for(request, by, True)
         log.info("Notification channel %s (%s) added by %s from %s", values["name"], values["kind"], by, client(request))
         flash(request, f"Channel {values['name']} saved. Press Send test to check it.")
-        return RedirectResponse("/settings#notify-channels", status_code=303)
+        return RedirectResponse("/settings/notifications#notify-channels", status_code=303)
 
     @app.get("/settings/notify/{cid}")
     async def edit_get(request: Request, cid: int):
@@ -187,7 +187,7 @@ def add_notify_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
         hub_url_for(request, by, True)
         log.info("Notification channel %s changed by %s from %s", values["name"], by, client(request))
         flash(request, f"Channel {values['name']} saved." if changed else "No changes: those values are already saved.")
-        return RedirectResponse("/settings#notify-channels", status_code=303)
+        return RedirectResponse("/settings/notifications#notify-channels", status_code=303)
 
     @app.post("/settings/notify-test")
     async def test_post(request: Request):
@@ -238,4 +238,4 @@ def add_notify_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
         channels.remove(conn, cfg.data_dir, cid, by)
         log.info("Notification channel %s removed by %s from %s", ch["name"], by, client(request))
         flash(request, f"Channel {ch['name']} removed, with its saved secret and anything still waiting to be sent.")
-        return RedirectResponse("/settings#notify-channels", status_code=303)
+        return RedirectResponse("/settings/notifications#notify-channels", status_code=303)

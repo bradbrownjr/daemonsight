@@ -224,11 +224,16 @@ def test_invalid_values(key, raw):
         settings.parse(settings.BY_KEY[key], raw)
 
 
+def all_tabs(c) -> str:
+    """Every tab of the Settings page, one after another."""
+    return "\n".join(c.get(f"/settings/{t}").text for t in settings.TAB_IDS)
+
+
 # --- saving on the hub --------------------------------------------------------------------------
 
 def test_the_page_lists_each_field_with_its_source_and_the_licence(hub):
     c, conn, cfg = hub
-    html = c.get("/settings").text
+    html = all_tabs(c)
     for label in ("Outside view", "CVE checks", "Retention", "Backups", "Remote systems", "Config file only"):
         assert label in html
     assert "free for non-commercial use only" in html and "enterprise license" in html
@@ -244,7 +249,7 @@ def test_saving_stores_an_override_flashes_and_logs_an_event(hub):
     c, conn, cfg = hub
     r = c.post("/settings", data={"group": "outside", "outside.enabled": "on", "outside.refresh_hours": "6",
                                   "outside.addresses": "203.0.113.9\n198.51.100.4=vps"})
-    assert r.status_code == 303 and r.headers["location"] == "/settings#outside"
+    assert r.status_code == 303 and r.headers["location"] == "/settings/security#outside"
     import json
     assert json.loads(stored(conn)["outside.enabled"]) is True
     assert json.loads(stored(conn)["outside.refresh_hours"]) == 6
@@ -252,7 +257,7 @@ def test_saving_stores_an_override_flashes_and_logs_an_event(hub):
     row = conn.execute("SELECT changed_by, changed_at FROM settings WHERE key = 'outside.enabled'").fetchone()
     assert row["changed_by"] == "admin" and abs(row["changed_at"] - time.time()) < 60
     assert cfg.outside.enabled is False                                    # the file-level config object is untouched
-    html = c.get("/settings").text
+    html = c.get("/settings/security").text
     assert "Saved: Outside view, enabled" in html and 'role="status"' in html
     assert "Set here</span>" in html and 'name="reset" value="outside.enabled"' in html
     assert "Reset to default" in html
@@ -261,14 +266,14 @@ def test_saving_stores_an_override_flashes_and_logs_an_event(hub):
     assert "Setting changed: Outside view, refresh hours: 24 → 6" in titles
     assert "Setting changed: Outside view, addresses: none → 203.0.113.9, 198.51.100.4=vps" in titles
     # Hub-wide events: on the Settings page and the Hosts page, and under no host's Recent changes.
-    assert "Setting changed: Outside view, enabled: off" in c.get("/settings").text
+    assert "Setting changed: Outside view, enabled: off" in c.get("/settings/changes").text
     hosts = c.get("/").text
     assert "Recent hub changes" in hosts and "Setting changed: Outside view, enabled: off" in hosts
     assert not db.recent_events(conn, "testhost", 10)
     # Saving the same values again changes nothing and says so.
     n = len(hub_events(conn))
     c.post("/settings", data={"group": "outside", "outside.enabled": "on"})
-    assert len(hub_events(conn)) == n and "No changes" in c.get("/settings").text
+    assert len(hub_events(conn)) == n and "No changes" in c.get("/settings/changes").text
 
 
 def test_a_setting_applies_to_the_pages_at_once(hub, seeded):  # noqa: F811
@@ -299,7 +304,7 @@ def test_reset_deletes_the_override_and_logs_it(hub):
     assert set(stored(conn)) == {"retention.metrics_hours"}
     assert "Setting reset: Retention, events days: 30 → 0 (default)" in hub_events(conn)
     r = c.post("/settings", data={"reset": "retention.events_days"})        # nothing left to reset
-    assert r.status_code == 303 and "nothing to reset" in c.get("/settings").text
+    assert r.status_code == 303 and "nothing to reset" in c.get("/settings/changes").text
     assert c.post("/settings", data={"reset": "web.port"}).status_code == 400
 
 
@@ -310,7 +315,7 @@ def test_reset_names_the_config_file_when_it_sets_the_value(tmp_path, hub_cfg, t
     hub_cfg.file_keys = frozenset({"backup.keep"})
     c = login(TestClient(create_app(hub_cfg, config_file=f), follow_redirects=False))
     c.post("/settings", data={"group": "backup", "backup.keep": "20"})
-    html = c.get("/settings").text
+    html = c.get("/settings/general").text
     assert "Reset to config file" in html and "Config file: 3" in html and str(f) in html
     c.post("/settings", data={"reset": "backup.keep"})
     conn = db.connect_writer(hub_cfg.db_path)
@@ -334,7 +339,7 @@ def test_read_only_settings_are_refused_even_if_posted(hub, key, value):
 
 def test_read_only_values_are_listed_with_the_reason(hub):
     c, conn, cfg = hub
-    html = c.get("/settings").text
+    html = c.get("/settings/general").text
     section = html.split('id="config-file-only"')[1]
     for label in ("Web listen address", "Web port", "Data folder", "Database", "Backup folder", "Password file",
                   "Session secret file", "Hub enabled", "Upload address"):
@@ -369,7 +374,7 @@ def test_a_single_host_shows_effective_values_read_only(seeded, monkeypatch):  #
     seeded.retention.events_days = 14
     app = create_app(seeded, config_file=Path("/etc/daemonsight/config.toml"))
     c = login(TestClient(app, follow_redirects=False))
-    html = c.get("/settings").text
+    html = all_tabs(c)
     assert "<form method=\"post\" action=\"/settings\"" not in html
     assert 'name="retention.events_days"' not in html and "<select" not in html
     assert "Edit <code>/etc/daemonsight/config.toml</code>" in html and "restart" in html
@@ -381,14 +386,14 @@ def test_a_single_host_shows_effective_values_read_only(seeded, monkeypatch):  #
     conn = db.connect_writer(seeded.db_path)
     conn.execute("INSERT INTO settings VALUES ('retention.events_days', '99', 0, 'x')")
     conn.close()
-    assert "<strong>14</strong>" in c.get("/settings").text
+    assert "<strong>14</strong>" in c.get("/settings/general").text
     # Without a path from the command line, the page names the real one: $DAEMONSIGHT_CONFIG, else the default.
     monkeypatch.setenv("DAEMONSIGHT_CONFIG", "/srv/ds/custom.toml")
     c2 = login(TestClient(create_app(seeded), follow_redirects=False))
-    assert "<code>/srv/ds/custom.toml</code>" in c2.get("/settings").text
+    assert "<code>/srv/ds/custom.toml</code>" in c2.get("/settings/general").text
     monkeypatch.delenv("DAEMONSIGHT_CONFIG")
     c3 = login(TestClient(create_app(seeded), follow_redirects=False))
-    assert "<code>/etc/daemonsight/config.toml</code>" in c3.get("/settings").text
+    assert "<code>/etc/daemonsight/config.toml</code>" in c3.get("/settings/general").text
 
 
 def test_settings_needs_a_login(seeded):  # noqa: F811
@@ -539,3 +544,88 @@ def test_the_old_epss_high_name_in_a_config_file_still_loads(tmp_path, caplog):
     assert config.load(p).cve.epss_automatable == 0.5
     p.write_text("[cve]\nepss_automatable = 0.02\n")
     assert config.load(p).cve.epss_automatable == 0.02 and config.Config().cve.epss_automatable == 0.04
+
+
+# --- tabs ----------------------------------------------------------------------------------------------
+
+SECTIONS_OF = {"general": ("retention", "backup", "config-file-only"), "security": ("cve", "outside"),
+               "systems": ("remote",), "notifications": ("notify", "notify-channels"), "changes": ("settings-events",)}
+
+
+def test_every_group_is_on_exactly_one_tab():
+    placed = [g for _, _, groups in settings.TABS for g in groups]
+    assert sorted(placed) == sorted(settings.GROUPS) and len(placed) == len(set(placed))
+    assert settings.TAB_IDS[0] == "general"
+
+
+@pytest.mark.parametrize("tab", settings.TAB_IDS)
+def test_each_tab_renders_its_sections_and_no_others(hub, tab):
+    c, conn, cfg = hub
+    html = c.get(f"/settings/{tab}").text
+    mine = SECTIONS_OF[tab]
+    for sid in sum(SECTIONS_OF.values(), ()):
+        assert (f'id="{sid}"' in html) == (sid in mine), sid
+    assert f'href="/settings/{tab}" aria-current="page"' in html
+    assert html.count('class="ds-tab"') == len(settings.TAB_IDS)
+
+
+def test_a_bare_settings_opens_the_first_tab(hub):
+    c, conn, cfg = hub
+    html = c.get("/settings").text
+    assert 'id="retention"' in html and 'id="cve"' not in html and 'href="/settings/general" aria-current="page"' in html
+
+
+def test_an_unknown_tab_is_a_404(hub):
+    c, conn, cfg = hub
+    assert c.get("/settings/nope").status_code == 404
+    assert c.get("/settings/notify").status_code == 404
+
+
+def test_a_single_host_has_no_changes_tab(seeded):  # noqa: F811
+    c = login(TestClient(create_app(seeded), follow_redirects=False))
+    assert c.get("/settings/changes").status_code == 404
+    assert 'href="/settings/changes"' not in c.get("/settings").text
+
+
+def test_saving_returns_to_the_tab_the_group_is_on(hub):
+    c, conn, cfg = hub
+    for group, key, value, tab in (("retention", "retention.events_days", "30", "general"),
+                                   ("cve", "cve.enabled", "on", "security"),
+                                   ("remote", "remote.enabled", "off", "systems"),
+                                   ("notify", "notify.hub_url", "https://ds.example.com", "notifications")):
+        r = c.post("/settings", data={"group": group, key: value, "tab": tab})
+        assert r.status_code == 303 and r.headers["location"] == f"/settings/{tab}#{group}"
+        assert "Saved:" in c.get(r.headers["location"].split("#")[0]).text
+    r = c.post("/settings", data={"reset": "cve.enabled"})
+    assert r.headers["location"] == "/settings/security#cve"
+
+
+def test_a_bad_value_opens_the_tab_with_the_field(hub):
+    c, conn, cfg = hub
+    r = c.post("/settings", data={"group": "cve", "cve.enabled": "on", "cve.refresh_hours": "0", "tab": "general"})
+    assert r.status_code == 400
+    assert 'id="cve"' in r.text and 'id="retention"' not in r.text
+    assert 'href="/settings/security" aria-current="page"' in r.text and "Nothing was saved" in r.text
+    r = c.post("/settings", data={"group": "backup", "backup.keep": "0", "tab": "security"})
+    assert r.status_code == 400 and 'id="backup"' in r.text and 'href="/settings/general" aria-current="page"' in r.text
+
+
+def test_a_refused_key_stays_on_the_posting_tab(hub):
+    c, conn, cfg = hub
+    r = c.post("/settings", data={"group": "cve", "web.port": "1", "tab": "security"})
+    assert r.status_code == 400 and 'href="/settings/security" aria-current="page"' in r.text
+
+
+def test_links_to_a_setting_land_on_its_tab(hub):
+    c, conn, cfg = hub
+    assert 'href="/settings/changes"' in c.get("/").text
+    for link in ("/settings/security#cve", "/settings/security#outside", "/settings/notifications#notify-channels"):
+        page, anchor = link.split("#")
+        assert f'id="{anchor}"' in c.get(page).text
+    assert settings.tab_of("remote") == "systems" and settings.tab_of("unknown") == "general"
+
+
+def test_tab_forms_keep_their_csrf_check(hub):
+    c, conn, cfg = hub
+    r = c.post("/settings", data={"group": "cve", "cve.enabled": "off", "tab": "security"}, headers=CROSS)
+    assert r.status_code == 403 and stored(conn) == {}

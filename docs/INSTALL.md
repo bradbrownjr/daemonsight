@@ -149,16 +149,20 @@ settings") opens a menu with Settings, the theme (Light, Dark or Auto, which
 follows your system), "Hide empty sections" and Log out. On a phone the same
 items sit in the Menu panel.
 
+The page has tabs, each at its own address (`/settings/general`, `/settings/security`, `/settings/systems`,
+`/settings/notifications` and, on a hub, `/settings/changes` for Recent hub changes); `/settings` opens General. A save
+returns to its tab, and an error opens the tab that holds the bad field.
+
 **On a hub**, Settings lets you change these without editing a file or
 restarting:
 
-| Group | Settings |
+| Tab, group | Settings |
 |---|---|
-| Outside view | Enabled, source (InternetDB or the Shodan API), extra addresses (`ip` or `ip=hostid`, one per line), check every N hours; and the Shodan API key (save, replace, remove, test; see "Outside checks") |
-| CVE checks | Enabled, check every N hours, the EPSS probability that stands in for CISA's Automatable rating |
-| Retention | Chart points (hours), Recent changes (days), cleared findings (days); 0 keeps for good |
-| Backups | Hours between scheduled backups (blank is automatic, 0 is off), how many to keep |
-| Remote systems | Whether the hub reads Unraid, OPNsense and UniFi systems at all, and how long a UniFi device is offline before it is a finding |
+| Security checks, Outside view | Enabled, source (InternetDB or the Shodan API), extra addresses (`ip` or `ip=hostid`, one per line), check every N hours; and the Shodan API key (save, replace, remove, test; see "Outside checks") |
+| Security checks, CVE checks | Enabled, check every N hours, the EPSS probability that stands in for CISA's Automatable rating |
+| General, Retention | Chart points (hours), Recent changes (days), cleared findings (days); 0 keeps for good |
+| General, Backups | Hours between scheduled backups (blank is automatic, 0 is off), how many to keep |
+| Systems, Remote systems | Whether the hub reads Unraid, OPNsense and UniFi systems at all, and how long a UniFi device is offline before it is a finding |
 | Notifications | The hub address alert links point at, and the alert channels (Ntfy, Slack, Discord, email), added and edited on their own pages: see "Alerts and digests" |
 
 Each setting shows its default, the range it accepts and where its current
@@ -289,7 +293,7 @@ nginx-http-auth = ["nginx.service"]
 
 ### How long history is kept
 
-On a hub, use Settings, Retention (see "The Settings page"). In the config
+On a hub, use Settings, General tab, Retention (see "The Settings page"). In the config
 file:
 
 ```toml
@@ -329,7 +333,7 @@ data, write one every 24 hours to `backups` in the data folder and keep the
 newest seven. A host that uploads to a hub skips them, since the hub's
 backups hold its history; set `interval_hours` to turn them back on.
 
-On a hub, the interval and the number kept are on the Settings page (Backups);
+On a hub, the interval and the number kept are on the Settings page (General tab, Backups);
 the folder is set in the config file only. In the config file:
 
 ```toml
@@ -392,7 +396,7 @@ lists what protects it.
 The container runs as uid 10001 with a read-only filesystem, and keeps
 everything that changes in `/data`: its config, password, session secret,
 database (every host's history) and log file (`daemonsight.log`). All of it
-survives restarts, rebuilds and image updates. Retention (Settings page or `[retention]`) sets how
+survives restarts, rebuilds and image updates. Retention (Settings page, General tab, or `[retention]`) sets how
 long history stays, and the hub writes a backup to `/data/backups` every
 day (see "Back up and restore").
 
@@ -576,7 +580,7 @@ tracker. It needs outbound HTTPS, nothing inbound, to:
 | `cveawg.mitre.org` | CISA's SSVC rating of each CVE a host or image matches (the CVE Services record), one request per CVE, asked again after 7 days | 5 to 100 KB each |
 | `codeload.github.com` | The OPNsense project's changelog (a tarball of github.com/opnsense/changelog), only while an OPNsense firewall is enabled | 0.6 MB |
 | `www.freebsd.org` | The CVE ids of a FreeBSD security advisory the changelog names (one small file each, asked for once), only for a release a firewall needs | 6 KB each |
-| `raw.githubusercontent.com` | The prioritisation table the DaemonSight repository publishes (two small JSON files, once a week; Settings, CVE checks, "Fetch prioritisation table updates from the DaemonSight repository") | 20 KB |
+| `raw.githubusercontent.com` | The prioritisation table the DaemonSight repository publishes (two small JSON files, once a week; Settings, Security checks tab, CVE checks, "Fetch prioritisation table updates from the DaemonSight repository") | 20 KB |
 | `api.github.com` | The CVE id and rating of an OPNsense security advisory the changelog names (one request each, asked for once; no token, 60 requests an hour allowed) | 20 KB each |
 
 It fetches each every 24 hours, asking only for what changed, keeps them in
@@ -585,7 +589,7 @@ backed up). Parsing the tracker takes about 6 seconds and 60 MB of memory.
 The first matching result shows a minute or so after the first host reports.
 Requests identify themselves as `DaemonSight/<version>` and send nothing else.
 
-Change these on the Settings page (CVE checks), or in the config file:
+Change these on the Settings page (Security checks tab, CVE checks), or in the config file:
 
 ```toml
 [cve]
@@ -608,7 +612,7 @@ information and decides nothing.
 When CISA replaces the directive, the project publishes the new table in its repository and the hub fetches it once a week
 (`raw.githubusercontent.com`, two small JSON files, checked before use), so the new deadlines arrive without a release. The Data
 feeds card on the Vulnerabilities page shows which table is in force and where it came from, and any error. Turn this off with
-the Settings page ("Fetch prioritisation table updates from the DaemonSight repository") or `priority_updates = false`; a fetched
+the Settings page (Security checks tab, "Fetch prioritisation table updates from the DaemonSight repository") or `priority_updates = false`; a fetched
 table is then removed and the bundled one is used. A table you place yourself, as below, is never replaced by a fetched one.
 
 The table is a data file. To use a different one (for example when CISA replaces the directive), put a file in the format described
@@ -633,7 +637,7 @@ The hub can ask Shodan what the internet sees of each host's public
 addresses: open ports, software names, hostnames, tags and CVEs, from
 Shodan's own scans. DaemonSight compares that with what it knows from inside
 the host. It is **off by default**, on the hub only. There are two sources;
-you choose one under Settings, Outside view, Source.
+you choose one under Settings, Security checks tab, Outside view, Source.
 
 | Source | Needs | Terms | What you get |
 |---|---|---|---|
@@ -663,7 +667,7 @@ not turn any of this on for you.
 2. Choose a plan that allows your use on https://developer.shodan.io/pricing.
    For commercial use, a plan that lists Commercial Use (above).
 3. Copy the API key from your account page.
-4. On the hub's Settings page, Outside view, set Source to Shodan API (your
+4. On the hub's Settings page, Security checks tab, Outside view, set Source to Shodan API (your
    key). The API key box opens under it. Paste the key.
 5. Press Test key. It asks Shodan's `api-info` page and shows your plan name
    and your credits, or the reason Shodan refused the key. (Test key does not
@@ -734,7 +738,7 @@ addresses = []                # extra addresses, see below
 
 ### Alerts and digests
 
-The hub can send alerts and digests to Ntfy, Slack, Discord and email. On a hub, open Settings, Notifications. The group has
+The hub can send alerts and digests to Ntfy, Slack, Discord and email. On a hub, open Settings, Notifications tab. The group has
 "Hub address for links" (the address you reach the hub at; blank, it is filled in from the address you use when you save the first
 channel), and "Notification channels" below it lists the channels. Choose "Add a channel", pick a type, fill in its fields, and Save.
 Open a channel with Manage, then press **Send test**: it sends one test message with what is on the page, and says what the service
@@ -986,7 +990,7 @@ If the hub is an Unraid container and Test connection can't reach the firewall,
 see the network note under "Add an Unraid server".
 
 The poller runs with the hub. To stop all remote reading, turn off "Read remote
-systems" on the Settings page, or set `[remote] enabled = false` in
+systems" on the Settings page (Systems tab), or set `[remote] enabled = false` in
 `config.toml` and restart.
 
 ### Add a UniFi Network controller
@@ -1026,7 +1030,7 @@ https://developer.ui.com/network/v11.0.97/gettingstarted).
 The hub reads every minute by default (30 to 3600 seconds). Wi-Fi networks and
 the gateway's firewall policies are read every 5 minutes, or at the interval if
 that is longer. A device offline for 2 hours or more is a finding; change the
-2 hours on the Settings page (Remote systems, "UniFi device offline for"). The
+2 hours on the Settings page (Systems tab, Remote systems, "UniFi device offline for"). The
 hub counts from when it first saw the state, or from the device's last
 heartbeat when that is earlier. Edit, Remove and the certificate pin work as for
 Unraid; delete the key and the admin in UniFi as well when you remove the system.

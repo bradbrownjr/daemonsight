@@ -161,7 +161,7 @@
   <div class="card-footer d-flex flex-wrap gap-2">
     <button type="submit" class="btn btn-primary">Save channel</button>
     {% if existing %}<button type="submit" class="btn" formaction="/settings/notify-test" formnovalidate>Send test</button>{% endif %}
-    <a class="btn btn-ghost-secondary" href="/settings#notify-channels">Cancel</a>
+    <a class="btn btn-ghost-secondary" href="/settings/notifications#notify-channels">Cancel</a>
     {% if existing %}<a class="btn btn-outline-danger ms-auto" href="/settings/notify/{{ existing.id }}/remove">Remove</a>{% endif %}
   </div>
 </form>

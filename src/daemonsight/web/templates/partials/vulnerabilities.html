@@ -9,7 +9,7 @@
 {%- endmacro %}
 
 {% if v.message %}
-<div class="alert alert-info">{{ v.message }}{% if hub and not v.enabled %} <a href="/settings#cve">Open the Settings page</a>.{% endif %}</div>
+<div class="alert alert-info">{{ v.message }}{% if hub and not v.enabled %} <a href="/settings/security#cve">Open the Settings page</a>.{% endif %}</div>
 {% endif %}
 
 {% if v.inv and v.totals %}
