@@ -1187,7 +1187,12 @@ type, is refused. The tests cover each of these and that an override is preferre
 CISA publishes the table only as an image, so turning a new directive into a table needs a person. DaemonSight automates noticing
 the change and spreading the result, not reading the image.
 
-**Detection (the watcher).** `.github/workflows/directive-watch.yml` runs `scripts/check_directive.py` every Monday and on demand.
+**Detection (the watcher).** `.github/workflows/directive-watch.yml` runs `scripts/check_directive.py` monthly (the 3rd, 06:17 UTC) and on demand. Monthly is plenty: CISA has issued 15 BODs
+since 2015, and the prioritisation directive was replaced in June 2026 after BOD 22-01 had stood since late 2021 (CISA's
+directives list, https://www.cisa.gov/news-events/directives/all, read 2026-11-24). Standard runners are free for public
+repositories (GitHub Docs, "About billing for GitHub Actions"). GitHub disables scheduled workflows in a public repository
+after 60 days with no repository activity (GitHub Docs, "Events that trigger workflows", `schedule`): if the repository goes
+quiet, re-enable the workflow in the Actions tab or run it by hand.
 It reads the active table file (`src/daemonsight/data/priority/current.json` names it) and fetches `directive.url` and
 `directive.table_url` from it. It opens an issue titled "CISA directive change: review the prioritisation table", unless one is
 already open, when:
@@ -1211,7 +1216,7 @@ shows in Actions. No issue is opened for that. The workflow has `issues: write` 
 
 If the table changed but the directive did not, edit the same file, raise its `version` and update the hash.
 
-**How hubs pick it up.** Once a day the CVE chore (`cve/priority_fetch.py`) asks `raw.githubusercontent.com` for
+**How hubs pick it up.** Once a week the CVE chore (`cve/priority_fetch.py`) asks `raw.githubusercontent.com` for
 `.../main/src/daemonsight/data/priority/current.json` and for the file it names, each with a conditional request (ETag and
 Last-Modified), over https, a redirect only to the same host, at most 256 KB each. The table goes through the same strict check as
 any file (`priority.parse`) and is accepted only when its `version` is greater than the bundled table's and than the fetched one already installed. It is

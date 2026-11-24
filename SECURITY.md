@@ -481,7 +481,7 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   advisory answer is HTTPS only, from the host asked, never redirected, capped
   (128 KB FreeBSD, 512 KB GitHub), and only CVE ids, GitHub's rating and a
   short title are kept.
-- **The prioritisation table can be updated from the DaemonSight repository.** Once a day the hub asks `raw.githubusercontent.com`
+- **The prioritisation table can be updated from the DaemonSight repository.** Once a week the hub asks `raw.githubusercontent.com`
   (a new outbound source) for two small JSON files in this project's repository,
   `/bradbrownjr/daemonsight/main/src/daemonsight/data/priority/current.json` (the name of the active table file) and that table, so
   that a directive replacing CISA BOD 26-04 reaches the hub without a release. The files are data only and nothing in them is

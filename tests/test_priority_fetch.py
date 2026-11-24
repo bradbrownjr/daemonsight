@@ -14,8 +14,10 @@ from daemonsight import config, db, settings
 from daemonsight.config import Config
 from daemonsight.cve import priority, priority_fetch as pf, run
 
-from .test_cve import DAY, page_client, put_inventory, seed_hub, serve
+from .test_cve import page_client, put_inventory, seed_hub, serve
 from .test_hub import hub_cfg, token  # noqa: F401 (fixtures)
+
+DAY = pf.EVERY   # the fetch interval (weekly); the tests step the clock by it
 
 BUNDLED = json.loads((Path(priority.__file__).parent.parent / "data" / "priority" / "bod-26-04.json").read_text())
 
@@ -100,7 +102,7 @@ def test_a_newer_table_is_installed_and_used(tmp_path):
     assert d["origin"] == "fetched" and d["when"] == CLOCK[0] and not d["error"]
 
 
-def test_it_asks_once_a_day_and_then_with_the_validators(tmp_path):
+def test_it_asks_once_per_interval_and_then_with_the_validators(tmp_path):
     repo = Repo()
     assert refresh(tmp_path, repo, 1000.0) is not None and len(repo.asked()) == 2
     assert refresh(tmp_path, repo, 1000.0 + 3600) is None and len(repo.asked()) == 2     # not due

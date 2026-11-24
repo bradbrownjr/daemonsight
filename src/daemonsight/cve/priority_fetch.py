@@ -1,7 +1,7 @@
 """Keep the prioritisation table current without a release: fetch the one the DaemonSight repository publishes.
 
 When CISA replaces BOD 26-04, a person transcribes the new table into a file under data/priority/ in the repository and points
-`current.json` at it (docs/DESIGN.md, "When the directive changes"). Once a day the hub's CVE chore asks for two small files:
+`current.json` at it (docs/DESIGN.md, "When the directive changes"). Once a week the hub's CVE chore asks for two small files:
 
   https://raw.githubusercontent.com/bradbrownjr/daemonsight/main/src/daemonsight/data/priority/current.json    {"table": "<file>.json"}
   https://raw.githubusercontent.com/bradbrownjr/daemonsight/main/src/daemonsight/data/priority/<file>.json    the table
@@ -40,7 +40,7 @@ HOST = "raw.githubusercontent.com"
 BASE = f"https://{HOST}/bradbrownjr/daemonsight/main/src/daemonsight/data/priority/"
 POINTER = "current.json"
 MAX_BYTES = 256 << 10
-EVERY = 24 * 3600
+EVERY = 7 * 24 * 3600   # CISA replaces this directive every few years; weekly is plenty
 RETRY_AFTER_ERROR = 3600
 MAX_HOPS = 3
 STATE = Path("priority") / "fetch.json"
