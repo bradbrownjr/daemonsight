@@ -608,6 +608,50 @@ reachable from the internet.
 
 See "Hub" for the central view.
 
+### Planned sources (staged)
+
+Each source below is read over its own API with a dedicated least-privilege key, GET only, through the same
+client, certificate pin and finding pipeline as OPNsense and Unraid. The detail for each is in its subsection.
+
+#### Next (in use by the owner)
+
+**UniFi.** Reads the UniFi Network Integration API (`X-API-KEY`): devices with state and firmware, Wi-Fi networks
+with their security type, clients as a count, and the controller version. Key: a dedicated local admin with the
+View Only role (the API does not say a key can be made read-only, so this is documented, not checked). Findings:
+firmware update waiting, a device offline, an open Wi-Fi network that is not a guest network, a device waiting
+for adoption; on a site with a gateway, port forwards and firewall policies as for OPNsense. See [UniFi](planned-sources.md#unifi-next-the-owner-runs-it).
+
+#### Staged, built when someone needs it
+
+**Proxmox VE, with Proxmox Backup Server and the community Helper-Scripts.** Reads the PVE API with an API token
+under the built-in PVEAuditor role (a custom role with Sys.Modify only for the optional pending-updates finding)
+and the PBS API with the built-in Audit role. Findings: no recent backup for a guest, a failed backup, a
+datastore nearly full, a failed verify or garbage-collection job, a certificate expiring, an enterprise
+repository without a subscription, the firewall off at datacenter level, Ceph not healthy, HA problems,
+pending updates. Guests tagged `community-script` by the Helper-Scripts project are listed with a plain note
+on how their `update` command works. See [Proxmox VE](planned-sources.md#proxmox-ve), [Proxmox Helper-Scripts](planned-sources.md#proxmox-helper-scripts-community-overlay) and [Proxmox Backup Server](planned-sources.md#proxmox-backup-server).
+
+**Proxmox Mail Gateway and Datacenter Manager (only if worthwhile).** PMG has no confirmed API token, so it would
+need a password login; deferred. PDM mostly repeats what PVE and PBS give directly; not planned. See
+[Proxmox Mail Gateway](planned-sources.md#proxmox-mail-gateway-brief-recommend-later) and [Proxmox Datacenter Manager](planned-sources.md#proxmox-datacenter-manager-recommend-not-supporting).
+
+**XCP-ng.** Read through the Xen Orchestra REST API with a token for a user whose RBAC role holds read actions
+only (XAPI's own read-only role needs Active Directory, so reading XAPI directly would need the root
+password). Findings: patches waiting, a storage repository nearly full, a running VM with no backup job, a failed
+backup, an old snapshot. See [XCP-ng](planned-sources.md#xcp-ng).
+
+**FortiGate.** Reads the FortiOS REST API with a REST API administrator on a read-only access profile and
+trusted hosts. Findings: firmware update, expiring FortiGuard licences, any-to-any policies, internet-facing
+virtual IPs, management reachable from the WAN. See [FortiGate](planned-sources.md#fortigate-fortinet).
+
+**Meraki.** Reads the Dashboard API with the key of a read-only organization administrator, paced to the
+10 calls per second limit. Findings: licence expiry, device offline, firmware behind, open Wi-Fi, port forwards.
+See [Meraki](planned-sources.md#meraki-cisco).
+
+**Aruba.** Aruba Central first, with a read-scope token from a View Only user. Token refresh is a POST to the
+OAuth endpoint, so it needs one documented exception to GET only. Findings: access point or switch offline,
+firmware behind, open Wi-Fi, licence expiry. See [Aruba](planned-sources.md#aruba-hpe-aruba-networking).
+
 ## Hub
 
 One install acts as the hub and shows every host. Collectors push to it over
