@@ -361,7 +361,7 @@ def analyze(data: dict | None, unraid_docker: dict | None = None, cves: dict | N
                "containers": sorted(c["name"] for c in cs), "running": any(c.get("state") == "running" for c in cs),
                "read_container": e.get("container"),
                "os": e["os"], "os_name": sup["name"], "codename": (e["os"] or {}).get("codename") or "", "support": sup, "kind": kind, "state": state, "error": err or None,
-               "manager": e["manager"], "count": e["count"], "read_at": e.get("read_at"),
+               "manager": e["manager"], "count": e["count"], "read_at": e.get("read_at"), "carried": bool(e.get("carried")),
                "cve": None}
         if kind in ("debian", "alpine", "ubuntu"):
             m = (cves or {}).get("images", {}).get(iid)
@@ -440,7 +440,9 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
     """`prior` maps (rule, key) to this system's open findings. Without package data at all (no summary, a reader from before
     package lists, an empty list) every open `docker.image_cves` finding is emitted unchanged."""
     a = analyze(data, unraid_docker, cves, today)
-    if not a or not data.get("image_packages"):
+    # A reachable reader with no image and no container at all has nothing left to keep a finding for: they resolve (see _held_images).
+    empty = bool(data) and data.get("image_packages") == [] and data.get("images") == [] and not data.get("containers")
+    if not a or (not data.get("image_packages") and not empty):
         return [rules.held(prior, *k) for k in sorted(prior or {}) if k[0] == "docker.image_cves"]
     from ..cve import match
     out: list[Finding] = []

@@ -775,10 +775,17 @@ def test_a_restart_keeps_the_image_findings_open_end_to_end(world, tmp_path):
     world.poll(t + 1400)
     run_chore(world.cfg, tmp_path, t + 1410)
     cdb = cvestore.connect_reader(world.cfg.cve_db_path)
-    assert not cdb.execute("SELECT 1 FROM matched WHERE host LIKE 'docker:%'").fetchone()           # the matches are gone ...
+    assert cdb.execute("SELECT COUNT(*) FROM matched WHERE host LIKE 'docker:%'").fetchone()[0] == 3     # carried reads: nothing is forgotten
     cdb.close()
     world.poll(t + 1420)
-    same()                                                                                         # ... and the findings stay
+    same()
+    # Defence in depth: even with the matches gone (as `_forget` used to leave them) the findings stay.
+    wdb = cvestore.connect(world.cfg.cve_db_path)
+    wdb.execute("DELETE FROM match WHERE host LIKE 'docker:%'")
+    wdb.execute("DELETE FROM matched WHERE host LIKE 'docker:%'")
+    wdb.close()
+    world.poll(t + 1430)
+    same()
     # The reader has read the packages again, the chore has not matched yet: still open.
     world.reader.summary = summary_with(image_entries())
     world.poll(t + 2100)
@@ -800,3 +807,53 @@ def test_a_restart_keeps_the_image_findings_open_end_to_end(world, tmp_path):
     assert row[IDS["nginx"]]["cve"] == {"state": "pending"} and row[IDS["postgres"]]["cve"]["state"] == "matched"
     conn.close()
     same()
+
+
+
+# --- the package list of an image ID is carried over a reader restart -------------------------------------------------------------------
+
+def test_a_restart_carries_the_last_good_read_of_an_image_id_so_nothing_flaps():
+    old = [("nginx", os_("debian", "10", "buster")), ("postgres", os_("alpine", "3.17.2"))]
+    good = eol_world(*old)
+    first = stored(good)
+    before = [x for x in di.evaluate(first, None, None, TODAY) if x.rule == "docker.eol_base"][0]
+    rows_before = di.analyze(first, None, None, TODAY)["rows"]
+    # The reader restarts: both images come back as "not read yet", plus a failed read and a stopped one.
+    unread = [entry(IDS["nginx"], None, None, error="not read yet", container=None, read_at=None),
+              entry(IDS["postgres"], None, None, error="not read: stopped", container=None, read_at=None),
+              entry(IDS["widget-new"], None, None, error="not read yet", container=None, read_at=None)]
+    again = ds.parse_summary(summary_with(unread), first, None, NOW + 600)
+    by = {e["image_id"]: e for e in again["image_packages"]}
+    assert by[IDS["nginx"]]["carried"] is True and by[IDS["nginx"]]["manager"] == "dpkg" and by[IDS["nginx"]]["read_at"] == good[0]["read_at"]
+    assert by[IDS["nginx"]]["packages"] == good[0]["packages"] and by[IDS["nginx"]]["os"]["version_id"] == "10"
+    assert by[IDS["widget-new"]]["manager"] is None and "carried" not in by[IDS["widget-new"]]        # never read: nothing to carry
+    assert [x for x in di.evaluate(again, None, None, TODAY) if x.rule == "docker.eol_base"] == [before]
+    rows = {r["id"]: r for r in di.analyze(again, None, None, TODAY)["rows"]}
+    assert rows[IDS["nginx"]]["state"] == "read" and rows[IDS["nginx"]]["carried"] and rows[IDS["nginx"]]["read_at"] == rows_before[0]["read_at"]
+    # A carried entry is carried again at the next restart, and a new good read replaces it (not carried).
+    third = ds.parse_summary(summary_with(unread), again, None, NOW + 1200)
+    assert {e["image_id"]: e for e in third["image_packages"]}[IDS["nginx"]]["carried"] is True
+    fresh = ds.parse_summary(summary_with(good), third, None, NOW + 1800)
+    assert not any(e.get("carried") for e in fresh["image_packages"])
+
+
+def test_a_failed_read_or_a_removed_image_is_never_carried():
+    first = stored(eol_world(("nginx", os_("debian", "10", "buster"))))
+    failed = [entry(IDS["nginx"], None, None, error="packages not read: docker said no", container=None, read_at=None)]
+    got = ds.parse_summary(summary_with(failed), first, None, NOW + 600)["image_packages"][0]
+    assert got["manager"] is None and "carried" not in got and got["error"].startswith("packages not read")      # a newer failed read stands
+    unread = [entry(IDS["nginx"], None, None, error="not read yet", container=None, read_at=None)]
+    gone = ds.parse_summary(_without(summary_with(unread), "nginx"), first, None, NOW + 600)["image_packages"][0]
+    assert gone["manager"] is None and "carried" not in gone                                                    # not in the image list any more
+    # A previous entry that was itself not a good read gives nothing to carry.
+    bare = ds.parse_summary(summary_with(unread), stored(unread), None, NOW + 600)["image_packages"][0]
+    assert bare["manager"] is None and "carried" not in bare
+
+
+def test_a_reachable_reader_with_no_images_resolves_the_image_findings(open_one):
+    e, f, prior = open_one
+    raw = summary_with([])
+    raw["images"], raw["containers"] = [], []
+    empty = ds.parse_summary(raw, None, None, NOW)
+    assert empty["image_packages"] == [] and empty["images"] == []
+    assert _image_cves(empty, None, prior) == []

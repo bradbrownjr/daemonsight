@@ -230,6 +230,26 @@ def _image_packages(raw) -> list[dict] | None:
     return out
 
 
+CARRY_ERRORS = ("not read yet", "not read: stopped")
+
+
+def _carry_packages(new: list[dict] | None, prev: dict | None, image_ids: set[str]) -> list[dict] | None:
+    """An image ID is a content hash, so the packages read from it never change. While the reader has not read an image again (it
+    restarted: "not read yet"; only stopped containers use it: "not read: stopped"), keep the last good read of the same ID,
+    marked `carried` and with its own `read_at`. Only a good read is carried (OS and package manager), never over a newer failed
+    read, and only for an ID still in the reader's image list."""
+    if new is None:
+        return None
+    old = {e["image_id"]: e for e in (prev or {}).get("image_packages") or [] if e.get("manager") and e.get("os")}
+    out = []
+    for e in new:
+        o = old.get(e["image_id"])
+        if o is not None and not e["manager"] and e["error"] in CARRY_ERRORS and e["image_id"] in image_ids:
+            e = {**o, "carried": True}
+        out.append(e)
+    return out
+
+
 def parse_summary(raw: dict, prev: dict | None, unraid_docker: dict | None, now: float) -> dict:
     """What is stored for this server: the summary, re-checked and trimmed again, with the volumes cut down to the
     unused ones and a count of the rest. `prev` is the last stored value (the remembered apps), `unraid_docker`
@@ -265,7 +285,7 @@ def parse_summary(raw: dict, prev: dict | None, unraid_docker: dict | None, now:
     return {"generated": now, "docker": {"version": _text(d.get("version"), 40), "api": _text(d.get("api"), 10)},
             "df_at": _int(raw.get("df_at")), "df_error": _text(raw.get("df_error"), 200) or None,
             "df_running": raw.get("df_running") is True,
-            "image_packages": _image_packages(raw.get("image_packages")),
+            "image_packages": _carry_packages(_image_packages(raw.get("image_packages")), prev, {i["id"] for i in images}),
             "images": images, "containers": containers, "images_reclaimable": _int(raw.get("images_reclaimable")),
             "volumes": {"total": vols, "in_use": in_use, "unknown": unknown, "total_size": known_size, "unused": unused[:5000]},
             "build_cache": {"count": _int(bc.get("count")), "size": _int(bc.get("size"))} if bc else None,
