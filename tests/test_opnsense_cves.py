@@ -329,7 +329,7 @@ def opn_calls(calls):
     return [(h, d) for h, d in calls if h == feeds.OPNSENSE_HOST]
 
 
-def test_the_changelog_is_fetched_once_a_day_with_a_conditional_get_and_only_while_an_update_is_pending(tmp_path):
+def test_the_changelog_is_fetched_once_a_day_with_a_conditional_get_and_only_while_a_firewall_is_enabled(tmp_path):
     calls = []
     cfg, conn, c = make(tmp_path, calls=calls)
     asyncio.run(c.run_once(NOW))
@@ -337,7 +337,8 @@ def test_the_changelog_is_fetched_once_a_day_with_a_conditional_get_and_only_whi
     assert len(got) == 1 and "if-none-match" not in got[0][1]
     row = feed_row(cfg)
     assert row["status"] == "ok" and row["etag"] == '"v1"' and row["url"] == chg.URL and "series 26.1" in row["note"] and row["rows"] > 0
-    assert {r["series"] for r in cve_rows(cfg, "opn_release")} == {"26.1"}                    # only the series the update crosses
+    # the firewall's series and the later ones the changelog has (a major upgrade is only a line on the card)
+    assert {r["series"] for r in cve_rows(cfg, "opn_release")} == {"26.1", "26.7"}
     assert (Path(cfg.data_dir) / "cve" / "opnsense-changelog.tar.gz").exists()
     m = store.connect(cfg.cve_db_path)
     assert m.execute("SELECT cve, fixed FROM match WHERE host = 'opnsense:fw1'").fetchall()[0][:] == ("CVE-2026-30868", "26.1.4")
@@ -350,8 +351,12 @@ def test_the_changelog_is_fetched_once_a_day_with_a_conditional_get_and_only_whi
     assert again[1]["if-none-match"] == '"v1"' and again[1]["if-modified-since"].startswith("Tue, 24 Nov")
     assert feed_row(cfg)["status"] == "not modified" and cve_rows(cfg)
     assert all(set(d) <= {"host", "accept", "accept-encoding", "connection", "user-agent", "if-none-match", "if-modified-since"} for _h, d in opn_calls(calls))
-    # No firewall has a release update waiting any more: the file, the rows and the feed row go, and nothing is asked.
+    # An update no longer pending changes nothing: the changelog is kept for a release the firewall may not have seen.
     put_firmware(conn, {**firmware(), "count": 0, "packages": []})
+    asyncio.run(c.run_once(NOW + 2 * DAY - 10))
+    assert feed_row(cfg) is not None and cve_rows(cfg)
+    # No enabled firewall is left: the file, the rows and the feed row go, and nothing is asked.
+    conn.execute("UPDATE remotes SET enabled = 0 WHERE id = 'fw1'")
     asyncio.run(c.run_once(NOW + 2 * DAY + 10))
     assert len(opn_calls(calls)) == 2 and feed_row(cfg) is None and cve_rows(cfg) == []
     assert not (Path(cfg.data_dir) / "cve" / "opnsense-changelog.tar.gz").exists()
@@ -360,12 +365,13 @@ def test_the_changelog_is_fetched_once_a_day_with_a_conditional_get_and_only_whi
     s.close()
 
 
-def test_a_disabled_firewall_or_one_with_only_package_updates_asks_for_nothing(tmp_path):
+def test_a_disabled_firewall_asks_for_nothing_and_package_updates_alone_still_need_the_changelog(tmp_path):
     calls = []
     only_plugin = firmware()
     only_plugin["packages"] = [p for p in only_plugin["packages"] if p["name"] != "opnsense"]
     only_plugin.update(new_version="", count=1)
     cfg, conn, c = make(tmp_path, only_plugin, calls=calls)
+    conn.execute("UPDATE remotes SET enabled = 0 WHERE id = 'fw1'")
     asyncio.run(c.run_once(NOW))
     assert opn_calls(calls) == [] and feed_row(cfg) is None
     put_firmware(conn, firmware())
@@ -417,9 +423,9 @@ def test_a_first_download_that_fails_leaves_the_finding_without_cves_and_is_not_
 
 def test_a_pending_update_that_reaches_another_series_reads_the_saved_file_without_downloading_again(tmp_path):
     calls = []
-    cfg, conn, c = make(tmp_path, calls=calls)
+    cfg, conn, c = make(tmp_path, firmware(to="26.7.7", frm="26.7.1"), calls=calls)
     asyncio.run(c.run_once(NOW))
-    assert {r["series"] for r in cve_rows(cfg, "opn_release")} == {"26.1"} and len(opn_calls(calls)) == 1
+    assert {r["series"] for r in cve_rows(cfg, "opn_release")} == {"26.7"} and len(opn_calls(calls)) == 1
     crossing = firmware(to="26.7.7", frm="26.1.10")
     put_firmware(conn, crossing)
     asyncio.run(c.run_once(NOW + 120))
@@ -431,9 +437,9 @@ def test_a_pending_update_that_reaches_another_series_reads_the_saved_file_witho
     by = {c["cve"]: c["release"] for c in got["cves"]}
     assert by["CVE-2026-109618"] == "26.7.7" and by["CVE-2026-57154"] == "26.1.11"           # named in 26.1.11_10 and in 26.7.7: the later one
     # The firewall is back to a single series: only that one is kept.
-    put_firmware(conn, firmware())
+    put_firmware(conn, firmware(to="26.7.7", frm="26.7.1"))
     asyncio.run(c.run_once(NOW + 240))
-    assert {r["series"] for r in cve_rows(cfg, "opn_release")} == {"26.1"} and len(opn_calls(calls)) == 1
+    assert {r["series"] for r in cve_rows(cfg, "opn_release")} == {"26.7"} and len(opn_calls(calls)) == 1
 
 
 def test_a_redirect_off_the_repository_host_and_a_huge_file_are_refused(tmp_path):
@@ -682,3 +688,179 @@ def test_the_vulnerabilities_feed_list_names_the_changelog_while_it_is_needed(pa
     cdb.close()
     mine = [f for f in feeds_listed if f["name"] == "opnsense-changelog"]
     assert len(mine) == 1 and mine[0]["title"] == "OPNsense changelog" and mine[0]["state"] == "Up to date" and mine[0]["url"] == chg.URL
+
+
+# --- a release the firewall has not been offered (opnsense.unseen_release) -----------------------------------------------------
+
+LC = "Wed Nov 18 08:45:50 EST 2026"            # the shape `date` prints (core scripts/firmware/check.sh)
+LC_TS = opnsense.last_check_ts(LC)
+
+
+def idle(version, latest=None, last_check=LC, **kw):
+    """A firmware status with nothing pending: what the live firewall showed (version 26.7.9_3, latest 26.7.9, status none)."""
+    base = latest or version.split("_")[0]
+    return {"version": version, "latest": base, "new_version": "", "status": "none", "message": "There are no updates available on the selected mirror.",
+            "packages": [], "sets": [], "count": 0, "count_packages": 0, "count_sets": 0, "needs_reboot": False,
+            "last_check": last_check, "major": "", "name": "OPNsense", "series": version[:4], "pending_since": None, **kw}
+
+
+def unseen_world(tmp_path, fw, extra=None):
+    override = {feeds.OPNSENSE_HOST: lambda r: httpx.Response(200, content=fake_changelog.tarball_bytes(extra=extra))} if extra else None
+    cfg, conn, c = make(tmp_path, fw, serve(tmp_path, override=override))
+    asyncio.run(c.run_once(NOW))
+    return cfg, conn, c
+
+
+def unseen_findings(cfg, conn, fw, now):
+    cves = opnsense_cves.load(cfg, conn, "fw1", fw)
+    return [f for f in rules.firmware_rules(fw, now, cves) if f.rule == "opnsense.unseen_release"], cves
+
+
+def both(cfg, conn, fw, now):
+    cves = opnsense_cves.load(cfg, conn, "fw1", fw)
+    return sorted(f.rule for f in rules.firmware_rules(fw, now, cves) if f.rule in ("opnsense.unseen_release", "opnsense.updates"))
+
+
+@pytest.mark.parametrize("text, want", [
+    ("Wed Nov 18 08:45:50 EST 2026", LC_TS), ("Wed Nov 18 13:45:50 UTC 2026", LC_TS), ("Wed Nov 18 09:45:50 EDT 2026", LC_TS),
+    ("Wed Nov 18 16:45:50 +03 2026", LC_TS), ("Wed Nov 18 13:45:50 XYZ 2026", LC_TS),     # an unknown abbreviation is read as UTC
+    ("Sun Nov  8 08:45:50 EST 2026", LC_TS - 10 * 86400),                                  # a day under 10 is space-padded
+    ("unknown", None), ("", None), (None, None), ("Wed Nov 18 08:45:50 2026", None), ("Wed Foo 18 08:45:50 EST 2026", None),
+    ("Wed Feb 31 08:45:50 EST 2026", None)])
+def test_last_check_is_read_the_way_date_prints_it(text, want):
+    assert opnsense.last_check_ts(text) == want
+
+
+def test_a_newer_release_and_an_old_check_raise_the_finding_and_the_updates_finding_stays_away(tmp_path):
+    fw = idle("26.7.1", latest="26.7.1")
+    cfg, conn, _c = unseen_world(tmp_path, fw)
+    now = LC_TS + 3 * DAY
+    got, cves = unseen_findings(cfg, conn, fw, now)
+    assert len(got) == 1 and cves["unseen"]["state"] == "ok"
+    f = got[0]
+    assert f.title == "26.7.10 is out (fixes 2 CVEs); the firewall hasn't checked since Nov 18"
+    assert f.basis == "26.7.10" and f.link == "/#firmware"
+    assert "Updating to 26.7.10 fixes 2 CVEs" in f.detail and "CVE-2026-109618" in f.detail and "last firmware check (Wed Nov 18" in f.detail
+    assert "nothing above 26.7.1" in f.detail
+    assert "System, Firmware, Status, Check for updates" in f.howto and "'Firmware update check'" in f.howto and "System, Settings, Cron" in f.howto
+    assert chg.changelog_url("26.7.10") in f.howto
+    assert both(cfg, conn, fw, now) == ["opnsense.unseen_release"]
+
+
+def test_a_recent_check_does_not_raise_it(tmp_path):
+    fw = idle("26.7.1", latest="26.7.1")
+    cfg, conn, _c = unseen_world(tmp_path, fw)
+    assert unseen_findings(cfg, conn, fw, LC_TS + 2 * DAY - 60)[0] == []
+    assert len(unseen_findings(cfg, conn, fw, LC_TS + 2 * DAY)[0]) == 1                    # 2 days or more
+
+
+def test_no_newer_release_and_an_old_check_raise_nothing(tmp_path):
+    fw = idle("26.7.10", latest="26.7.10")
+    cfg, conn, _c = unseen_world(tmp_path, fw)
+    got, cves = unseen_findings(cfg, conn, fw, LC_TS + 30 * DAY)
+    assert got == [] and cves["unseen"] is None
+
+
+def test_it_clears_when_the_firewall_catches_up_and_the_updates_finding_takes_over(tmp_path):
+    fw = idle("26.7.1", latest="26.7.1")
+    cfg, conn, c = unseen_world(tmp_path, fw)
+    now = LC_TS + 3 * DAY
+    assert both(cfg, conn, fw, now) == ["opnsense.unseen_release"]
+    caught = idle("26.7.1", latest="26.7.10")                                        # the check ran: it knows 26.7.10, nothing to install yet
+    assert both(cfg, conn, caught, now) == []
+    pending = firmware(to="26.7.10", frm="26.7.1", last_check=LC)                  # and when it offers the update
+    put_firmware(conn, pending)
+    asyncio.run(c.run_once(NOW + 10))
+    assert both(cfg, conn, pending, now) == ["opnsense.updates"]
+
+
+def test_a_hotfix_only_newer_version_counts(tmp_path):
+    fw = idle("26.1.11_3", latest="26.1.11")
+    cfg, conn, _c = unseen_world(tmp_path, fw)
+    got, cves = unseen_findings(cfg, conn, fw, LC_TS + 3 * DAY)
+    assert len(got) == 1 and got[0].title.startswith("26.1.11_10 is out (fixes 2 CVEs); ") and got[0].basis == "26.1.11_10"
+    assert cves["unseen"]["plan"]["seen"] == "26.1.11_3"
+    # A hotfix with no CVE in it is known too, from its section header.
+    conn2 = loaded_db(tmp_path / "x")
+    assert "26.7.1_1" in chg.known_versions(conn2) and not conn2.execute("SELECT 1 FROM opn_fix WHERE version = '26.7.1_1'").fetchall()
+
+
+def test_an_unreadable_last_check_counts_as_unknown_age(tmp_path):
+    for i, bad in enumerate(("unknown", "", "yesterday-ish")):
+        fw = idle("26.7.1", latest="26.7.1", last_check=bad)
+        (tmp_path / str(i)).mkdir()
+        cfg, conn, _c = unseen_world(tmp_path / str(i), fw)
+        got, _ = unseen_findings(cfg, conn, fw, NOW)
+        assert len(got) == 1 and got[0].title == "26.7.10 is out (fixes 2 CVEs); the firewall's last check time is unknown"
+
+
+NEW_SERIES = {"community/27.1/27.1": b"@ November 24, 2026\n\nHello!\n\no system: something\n\nStay safe,\n"}
+
+
+def test_a_newer_series_alone_raises_no_finding_and_is_one_line_on_the_card(tmp_path):
+    fw = idle("26.7.10", latest="26.7.10")
+    cfg, conn, _c = unseen_world(tmp_path, fw, extra=NEW_SERIES)
+    got, cves = unseen_findings(cfg, conn, fw, LC_TS + 3 * DAY)
+    assert got == [] and cves["unseen"]["newer_series"] == "27.1" and not cves["unseen"]["plan"]["ok"]
+    st = opnsense_cves.unseen_state(fw, cves, LC_TS + 3 * DAY)
+    assert st and st["version"] == "" and st["newer_series"] == "27.1"
+    from daemonsight.web import opnsense_views
+    v = opnsense_views._unseen_view(fw, cves, LC_TS + 3 * DAY)
+    assert v["title"] is None and "27.1 is also out" in v["newer"]
+    assert opnsense_cves.unseen_state(fw, cves, LC_TS + DAY) is None                   # a recent check: nothing at all
+
+
+def test_a_release_in_the_series_wins_over_a_newer_series_for_the_finding(tmp_path):
+    fw = idle("26.7.1", latest="26.7.1")
+    cfg, conn, _c = unseen_world(tmp_path, fw, extra=NEW_SERIES)
+    got, cves = unseen_findings(cfg, conn, fw, LC_TS + 3 * DAY)
+    assert len(got) == 1 and got[0].basis == "26.7.10" and cves["unseen"]["newer_series"] == "27.1"
+
+
+def test_with_no_cve_the_title_leaves_the_count_out_and_severity_is_low(tmp_path):
+    fw = idle("26.7.7", latest="26.7.7")
+    cfg, conn, _c = unseen_world(tmp_path, fw)
+    got, _ = unseen_findings(cfg, conn, fw, LC_TS + 3 * DAY)
+    assert got[0].title == "26.7.10 is out; the firewall hasn't checked since Nov 18" and got[0].severity == "low"
+
+
+def test_severity_comes_from_the_same_summary_call_as_the_updates_finding(tmp_path):
+    """The two rules rank the same CVE set the same way, with no mapping of their own: a change to the shared scale moves both."""
+    pend = firmware(to="26.7.10", frm="26.7.1", last_check=LC)
+    idle_fw = idle("26.7.1", latest="26.7.1")
+    cfg, conn, c = unseen_world(tmp_path, pend)
+    now = LC_TS + 3 * DAY
+    for mark in (None, "kev", "epss"):
+        if mark == "kev":
+            set_kev(cfg, "CVE-2026-109618")
+        if mark == "epss":
+            s = store.connect(cfg.cve_db_path)
+            s.execute("DELETE FROM kev")
+            s.close()
+            set_epss(cfg, "CVE-2026-109619", 0.9)
+        put_firmware(conn, pend)
+        asyncio.run(c.run_once(NOW + 20))
+        up = updates(pend, opnsense_cves.load(cfg, conn, "fw1", pend))
+        put_firmware(conn, idle_fw)
+        asyncio.run(c.run_once(NOW + 30))
+        cves = opnsense_cves.load(cfg, conn, "fw1", idle_fw)
+        un = unseen_findings(cfg, conn, idle_fw, now)[0][0]
+        want = opnsense_cves.summary(cves["unseen"]["cves"], cves["epss_high"])["severity"]
+        assert un.severity == want == up.severity == ("medium" if mark is None else "high")
+
+
+def test_the_card_has_the_same_sentence_and_the_cve_table_and_labels_the_release_as_not_offered(page):
+    client, cfg, conn, _fake = page
+    put_firmware(conn, idle("26.7.1", latest="26.7.1"))
+    read_cves(cfg, conn, now=time.time())
+    html = client.get("/h/fw1/").text
+    card = html.split('id="firmware-unseen"')[1].split("</section>")[0]
+    assert "26.7.10 is out (fixes 2 CVEs); the firewall hasn&#39;t checked since Nov 18" in card
+    assert "The firewall has not been offered 26.7.10 yet" in card and "nothing above 26.7.1" in card
+    assert 'data-table="opn-firmware-unseen-cves"' in card and "CVE-2026-109618" in card
+    assert "Firmware release not yet seen" in html and "Pending firmware updates" not in html
+    assert 'id="src-fw-unseen"' in html and "CVEs the newest release fixes" in html
+    check_panels(html)
+    # A recent check: no card.
+    put_firmware(conn, idle("26.7.1", latest="26.7.1", last_check=time.strftime("%a %b %e %H:%M:%S UTC %Y", time.gmtime())))
+    assert 'id="firmware-unseen"' not in client.get("/h/fw1/").text

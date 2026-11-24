@@ -103,18 +103,41 @@ def _cves_view(c: dict | None) -> dict | None:
                        if feed.get("error") else
                        f"Looking up the CVEs fixed between {p['installed']} and {p['offered']}: the hub reads OPNsense's changelog on its next CVE pass.")
     else:
-        s = opnsense_cves.summary(c["cves"], c["epss_high"])
-        n = len(s["fixable"])
-        out["kev"] = len(s["kev"])
-        out["headline"] = opnsense_cves.headline(n, out["kev"]) if n else "Fixes no CVE that OPNsense's changelog names"
-        for x in s["fixable"][:opnsense_cves.LIST_MAX]:
-            out["rows"].append({"cve": x["cve"], "url": x["url"], "kev": x["kev"], "kev_name": x.get("kev_name") or "",
-                                "epss": x["epss"], "epss_text": views._epss_text(x["epss"]), "epss_v": _epss_v(x["epss"]),
-                                "release": x["release"], "date": x["date"] or "", "changelog": x["changelog"], "line": x["line"]})
-        out["more"] = max(0, n - opnsense_cves.LIST_MAX)
-        out["advisories"] = [{"ref": a["ref"].split(":", 1)[1], "kind": ADVISORY_KIND.get(a["ref"].split(":", 1)[0], "Other"),
-                              "url": a["url"], "version": a["version"], "line": a["line"]}
-                             for a in c["advisories"]][:opnsense_cves.LIST_MAX]
+        _fill_rows(out, c)
+    return out
+
+
+def _fill_rows(out: dict, c: dict) -> None:
+    """The headline, the ranked CVE rows and the advisories of a matched range (`c` has "cves", "advisories", "epss_high")."""
+    s = opnsense_cves.summary(c["cves"], c["epss_high"])
+    n = len(s["fixable"])
+    out["kev"] = len(s["kev"])
+    out["headline"] = opnsense_cves.headline(n, out["kev"]) if n else "Fixes no CVE that OPNsense's changelog names"
+    for x in s["fixable"][:opnsense_cves.LIST_MAX]:
+        out["rows"].append({"cve": x["cve"], "url": x["url"], "kev": x["kev"], "kev_name": x.get("kev_name") or "",
+                            "epss": x["epss"], "epss_text": views._epss_text(x["epss"]), "epss_v": _epss_v(x["epss"]),
+                            "release": x["release"], "date": x["date"] or "", "changelog": x["changelog"], "line": x["line"]})
+    out["more"] = max(0, n - opnsense_cves.LIST_MAX)
+    out["advisories"] = [{"ref": a["ref"].split(":", 1)[1], "kind": ADVISORY_KIND.get(a["ref"].split(":", 1)[0], "Other"),
+                          "url": a["url"], "version": a["version"], "line": a["line"]}
+                         for a in c["advisories"]][:opnsense_cves.LIST_MAX]
+
+
+def _unseen_view(fw: dict, c: dict, now: float) -> dict | None:
+    """The card's block for a release the firewall has not been offered: the finding's sentence, the CVE table for the range
+    above what it runs, and one line for a newer series. None unless the finding's two conditions hold (opnsense_cves
+    `unseen_state`); a newer series alone gives the line and no sentence."""
+    st = opnsense_cves.unseen_state(fw, c, now)
+    if not st:
+        return None
+    out = {"title": opnsense_cves.unseen_title(st, now) if st["version"] else None, "version": st["version"], "rows": [], "more": 0,
+           "advisories": [], "kev": 0, "headline": None, "note": st["note"], "pending": bool(st["version"]) and not st["ready"],
+           "newer": (f"OPNsense {st['newer_series']} is also out. It is a major upgrade, which the firewall offers after its next check."
+                     if st["newer_series"] else ""),
+           "seen": st["plan"].get("seen") or fw.get("version") or "", "installed": st["plan"].get("installed") or "",
+           "src": prov.opnsense_cves({"plan": {**st["plan"], "ok": True}}, unseen=True) if st["version"] else None}
+    if st["ready"]:
+        _fill_rows(out, st)
     return out
 
 
@@ -193,12 +216,19 @@ def overview(conn, cfg: Config) -> dict:
                        "alert": (r["last_error"] or "")[:120] if r["fails"] else None})
 
     firmware = None
+    now = time.time()
+    cv_all = opnsense_cves.load(cfg, conn, host, fw) if fw else None
+    unseen = _unseen_view(fw, cv_all, now) if cv_all else None
+    if fw and not fw.get("count") and unseen:
+        firmware = {"rows": [], "count": 0, "version": fw.get("version"), "new": None, "reboot": fw.get("needs_reboot"),
+                    "last_check": fw.get("last_check"), "since": None}
     if fw and fw.get("count"):
         firmware = {"rows": [{"name": p["name"], "old": p["old"], "new": p["new"], "reason": p["reason"]} for p in (fw["packages"] or fw["sets"])][:60],
                     "count": fw["count"], "version": fw.get("version"), "new": fw.get("new_version"), "reboot": fw.get("needs_reboot"),
                     "last_check": fw.get("last_check"), "since": _ago(fw.get("pending_since")) if fw.get("pending_since") else None}
     if firmware:
-        firmware["cves"] = _cves_view(opnsense_cves.load(cfg, conn, host, fw))
+        firmware["cves"] = _cves_view(cv_all) if fw.get("count") else None
+        firmware["unseen"] = unseen
     resources = None
     if sysd and (sysd.get("disks") or sysd.get("temperatures")):
         resources = {"disks": [{"mount": x["mount"], "device": x["device"], "type": x["type"], "percent": x.get("percent"),
@@ -214,6 +244,7 @@ def overview(conn, cfg: Config) -> dict:
         "src": {"system": prov.opnsense_section("opnsense_system", url, interval), "findings": prov.section("findings", cfg),
                 "events": prov.section("events", cfg), "firmware": prov.opnsense_section("opnsense_firmware", url, interval),
                 "cves": ((firmware or {}).get("cves") or {}).get("src"),
+                "unseen": ((firmware or {}).get("unseen") or {}).get("src"),
                 "resources": prov.opnsense_section("opnsense_system", url, interval)},
     }
 

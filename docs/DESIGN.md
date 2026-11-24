@@ -943,7 +943,7 @@ feed's own host, and a download is capped (400 MB decoded for the tracker,
 100 MB EPSS, 50 MB KEV). A feed that fails is retried an hour later; the last
 good data stays in use. Nothing here runs in a request. Alpine's security database is the exception to "three feeds": its files are
 fetched only for the Alpine releases the hub's container images run (see "CVE matching: Alpine images"). So is the OPNsense project's
-changelog, one tarball fetched only while a firewall has a release update pending (see "OPNsense updates and CVEs"). Canonical's Ubuntu OVAL files are
+changelog, one tarball fetched while an enabled OPNsense system exists (see "OPNsense updates and CVEs"). Canonical's Ubuntu OVAL files are
 fetched only for the Ubuntu releases the hub's hosts and images run (see "CVE matching: Ubuntu").
 
 | Feed | Size as served | After decoding | Notes |
@@ -1587,6 +1587,7 @@ table; nothing is hidden.
 | Rule | Severity | When |
 |------|----------|------|
 | `opnsense.updates` | Low; Medium at 5 packages or a new release; High at 20 packages or waiting more than 30 days. With CVEs the update fixes: at least Medium, and High when one is on CISA's KEV list or has an EPSS score at or above `[cve] epss_high` | The last firmware check found updates. "Waiting" counts from when the hub first saw them. The basis is the package names and versions, and with CVEs also the offered version and the CVE ids, so a new update, another offered version or a new CVE brings an accepted finding back. See "OPNsense updates and CVEs" |
+| `opnsense.unseen_release` | `opnsense_cves.summary(...)["severity"]` of the CVEs the newest release fixes (the call `opnsense.updates` uses); Low with none | The changelog has a release or hotfix in the firewall's series above what it runs and above what its last check showed, and that check is 2 days or more old, missing or unreadable. Clears when the firewall checks. The basis is that version. See "OPNsense updates and CVEs" |
 | `opnsense.reboot` | Medium | The pending update needs a reboot |
 | `opnsense.gateway` | High down; Medium degraded | Gateway down, loss of 10% or more, or round trip of 300 ms or more |
 | `opnsense.wg_no_peer` | High | An instance with no peer (an unlinked peer vanishes from the reply, so this is how it shows) |
@@ -1720,12 +1721,12 @@ running version, `fixed` the section that names the CVE; `opn_fix` holds the cha
 release's date. The KEV flag and EPSS score come from the same tables as for a host, so the ranking is the same. The rows are made again
 when the plan (installed and offered), the series loaded or the changelog data changes.
 
-**Fetching** (`cve/feeds.py`, `cve/run.py`). Only while at least one enabled OPNsense system has a release update pending. At most once
+**Fetching** (`cve/feeds.py`, `cve/run.py`). While at least one enabled OPNsense system exists, whether or not an update is pending (see "A release the firewall has not been offered"). At most once
 per `[cve] refresh_hours` (24; an hour after an error) with `If-None-Match` and `If-Modified-Since`, one host (`codeload.github.com`,
 no other redirect target), generic User-Agent. A failure (HTTP error, not a tarball, no `community/` files, a file over the cap)
 keeps the last good rows, records the error on the feed's row and shows "The last try to read OPNsense's changelog failed: ... These are
 from the last good copy, N ago." on the card. A change in the series a firewall needs is read from the saved file without
-downloading. When no firewall has a release update pending, the file, rows and feed row are dropped. The Vulnerabilities page lists
+downloading. When no enabled firewall is left, the file, rows and feed row are dropped. The Vulnerabilities page lists
 the feed while it exists. `cve.db` is schema 3 (adds `opn_release` and `opn_fix`; an older hub refuses it, and `cve.db` can be deleted).
 
 **The finding** (`opnsense.updates`, in `remote/opnsense_rules.py`, reading `remote/opnsense_cves.py`). With CVEs it adds "; fixes N
@@ -1744,6 +1745,49 @@ cve.org, EPSS, KEV, the release with its date linked to the changelog file, the 
 Security runs `pkg audit -F`, `scripts/firmware/security.sh` [68]). Without a result it says why in one sentence: CVE matching is off,
 the update has no new release (package updates only), the versions cannot be ordered, the series is not read, or the hub has not read
 the changelog yet.
+
+**A release the firewall has not been offered** (`opnsense.unseen_release`). Found 2026-11-24: a firewall on 26.7.9_3 showed
+`latest` 26.7.9, `status` `none`, "There are no updates available on the selected mirror." and a `last_check` of Nov 18, while the
+changelog already had 26.7.10. With no update pending the hub never read the changelog, so it had nothing to say. The changelog is
+now read whenever an enabled OPNsense system exists, keeping the firewall's series and the two after it (`opnver.next_series`), and
+the rule fires only when both hold:
+
+1. The changelog has a release or hotfix version in the firewall's series that is above the installed version and above what its
+   last check showed: the highest of `latest`, `new_version` and the `new` of the OPNsense package of a pending update, all in that
+   series (a major upgrade on offer says nothing about this series). The order is `opnver`'s. The hotfix versions come from the
+   section headers, kept in `cve.db` `meta` key `opn_versions`, because a hotfix with no CVE has no row in `opn_fix`.
+2. `last_check` is 2 days or more old, missing or unreadable. Two days is the owner's rule ("only stale if there's a new version AND
+   the firewall hasn't checked in a couple of days"), not an OPNsense value. An unreadable value counts as an unknown age and fires.
+
+It clears when the firewall checks: `latest` or `new_version` catches up, and if the release is then offered `opnsense.updates` takes
+over. Both cannot name the same version, because condition 1 is above what the pending update offers. A newer series alone (27.1
+while on 26.7, a major upgrade) raises no finding; the card gets one line, shown only when the check is also 2 days old.
+
+*`last_check`.* `scripts/firmware/check.sh` sets `last_check=$(date)` (the file's header lists it as `last_check:
+<date_time_stamp>`), and the status API returns it as is [76]. `date` with no format uses `%+` [77], which in FreeBSD's C locale is
+`%a %b %e %H:%M:%S %Z %Y` [78]: `Wed Nov 18 08:45:50 EST 2026`, the day space-padded under 10. The zone is the firewall's own
+abbreviation. `remote/opnsense.py` `last_check_ts` maps UTC, GMT, EST, EDT, CST, CDT, MST, MDT, PST, PDT and a few more, reads a
+numeric abbreviation (`+03`) as that offset, and reads any other abbreviation as UTC, at most 14 hours off against a 48-hour
+threshold. The string `unknown` (what the script writes before a check succeeds) and anything else that does not match give no time.
+Unverified: the format on a firewall set to another locale, and the abbreviations of zones not in the map.
+
+*The finding.* Title "26.7.10 is out (fixes N CVEs); the firewall hasn't checked since Nov 18" (the count is left out at 0; with no
+readable time: "the firewall's last check time is unknown"). Detail: the installed and seen versions, then the same sentence and top
+CVEs as `opnsense.updates`. Severity is `opnsense_cves.summary(...)["severity"]` on the CVEs of the range from the installed version
+to the newest one, the call `opnsense.updates` makes, with no floor or mapping of its own, and Low with no CVE; a test holds both rules to the
+same severity for the same CVE set. The basis is the newest unseen version. "What to do": Check now: System, Firmware, Status, Check
+for updates (`Menu.xml`) [68]; so it checks on its own: System, Settings, Cron (`Cron/Menu/Menu.xml`: System, Settings, Cron), add a
+job whose command is "Firmware update check", daily. That is the description of the configd action `firmware poll`
+(`actions_firmware.conf`: `[poll]`, `message: Running firmware update status via cron`, `description: Firmware update check`), and the
+Cron model's `command` field lists configd actions by description (`Cron.xml`, `ConfigdActionsField`) [79]; then the changelog link.
+
+*Matching.* The range is matched like a pending update's under the pseudo-host `opnsense-unseen:<system id>` (a plan of installed
+and newest), so a CVE's KEV flag and EPSS score come from the same tables. Rows are kept only while the plan holds.
+
+*The card.* When the finding's two conditions hold the Overview shows "Firmware release not yet seen" (or, with an update pending, a
+second block under the pending one) with the finding's sentence, "The firewall has not been offered 26.7.10 yet. These CVEs are fixed
+between 26.7.9_3 and 26.7.10; the firewall's last check showed nothing above 26.7.9", the CVE table, the advisories and an (i)
+panel.
 
 **Package updates outside a release.** The status lists plugin and third-party packages (`os-*`, `php`, `curl`) as pending too. The
 changelog covers a release's bundled ports and plugins only as bullets (`ports: php 8.5.13[37]`, `plugins: os-caddy 2.2.4[3]`) and names
@@ -2724,3 +2768,7 @@ The collector must stay light:
 73. Ubuntu OSV data: https://security-metadata.canonical.com/osv/ (`osv-all.tar.xz`, 60.95 MB, modified 2026-11-24 06:14; the `LICENSE` is the same directory's); the OSV schema: https://ossf.github.io/osv-schema/
 74. Canonical's OVAL generator, `oval_lib.py` and `generate-oval` in the ubuntu-cve-tracker repository (status mapping, the "might be affected and may need fixing" wording, the kernel and ESM pocket handling): https://git.launchpad.net/ubuntu-cve-tracker (read 2026-11-24; the file the published OVAL header names)
 75. Ubuntu Pro client (GPL-3.0), `uaclient/apt.py`, `uaclient/entitlements/esm.py`, `enable.py` and `security.py`/`fix.py` (`--dry-run`, the repo file names and their removal on disable): https://github.com/canonical/ubuntu-pro-client ; its documentation of apt's ESM messages and `pro security-status`: https://documentation.ubuntu.com/pro-client/en/latest/ (read 2026-11-24 from the repository and the pages; not run on a host)
+76. OPNsense core `src/opnsense/scripts/firmware/check.sh` at master, read 2026-11-24: `last_check=$(date)`, written into the JSON as `"last_check":"${last_check}"` (initial value `unknown`); `src/opnsense/mvc/app/controllers/OPNsense/Core/Api/FirmwareController.php` returns the check's JSON
+77. FreeBSD `date(1)` (`bin/date/date.1`, "The format string for the default display is `%+`"), https://github.com/freebsd/freebsd-src/blob/main/bin/date/date.1, read 2026-11-24
+78. FreeBSD libc `lib/libc/stdtime/timelocal.c`, C locale `date_fmt`: `"%a %b %e %H:%M:%S %Z %Y"`, read 2026-11-24
+79. OPNsense core, read 2026-11-24: `src/opnsense/service/conf/actions.d/actions_firmware.conf` (`[poll]`: `command:/usr/local/opnsense/scripts/firmware/launcher.sh -r 1500 check`, `description:Firmware update check`), `src/opnsense/mvc/app/models/OPNsense/Cron/Cron.xml` (`command` is a `ConfigdActionsField`), `Base/FieldTypes/ConfigdActionsField.php` (lists actions by `description`), `Cron/Menu/Menu.xml` (System, Settings, Cron). The firewall's own cron list was not opened

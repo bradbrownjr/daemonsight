@@ -23,6 +23,7 @@ import asyncio
 import ipaddress
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from . import roles
 from .client import Net, RemoteError, Rest, scrub
@@ -239,6 +240,38 @@ def parse_firmware(d: dict) -> dict:
         "connection": text(d.get("connection"), 20), "repository": text(d.get("repository"), 20),
         "pending_since": None,     # the poller fills this in: when updates were first seen waiting
     }
+
+
+# `last_check` is written by core's `scripts/firmware/check.sh` as `last_check=$(date)` (the string "unknown" until a check
+# has run), and `date` with no format prints `%+`, which in FreeBSD's C locale is "%a %b %e %H:%M:%S %Z %Y"
+# (lib/libc/stdtime/timelocal.c): "Wed Nov 18 08:45:50 EST 2026", the day padded with a space under 10. The zone is the
+# firewall's own abbreviation, which names no unique offset, so the common ones are mapped and the rest are read as UTC.
+_MONTHS = {m: i for i, m in enumerate(("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"), 1)}
+_LAST_CHECK = re.compile(r"^[A-Za-z]{3} ([A-Za-z]{3}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\S{1,10}) (\d{4})$")
+_ZONES = {"UTC": 0, "GMT": 0, "UT": 0, "Z": 0, "EST": -5, "EDT": -4, "CST": -6, "CDT": -5, "MST": -7, "MDT": -6, "PST": -8,
+          "PDT": -7, "AKST": -9, "AKDT": -8, "HST": -10, "AST": -4, "ADT": -3, "WET": 0, "WEST": 1, "CET": 1, "CEST": 2,
+          "EET": 2, "EEST": 3, "MSK": 3, "BST": 1, "JST": 9, "KST": 9, "AEST": 10, "AEDT": 11, "NZST": 12, "NZDT": 13}
+
+
+def last_check_ts(value: str | None) -> float | None:
+    """When the firewall's last firmware check ran, as a Unix time, from its `last_check` text; None when it is missing or
+    does not read as `date` output ("unknown" included). Zone abbreviations in `_ZONES` and numeric ones ("+03") give their
+    offset; any other is read as UTC, which is at most about 14 hours off."""
+    m = _LAST_CHECK.match((value or "").strip())
+    if not m or m.group(1) not in _MONTHS:
+        return None
+    zone = m.group(6)
+    z = re.match(r"^([+-])(\d{2})(\d{2})?$", zone)
+    if z:
+        off = (int(z.group(2)) + int(z.group(3) or 0) / 60) * (1 if z.group(1) == "+" else -1)
+    else:
+        off = _ZONES.get(zone.upper(), 0)
+    try:
+        dt = datetime(int(m.group(7)), _MONTHS[m.group(1)], int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)),
+                      tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return dt.timestamp() - off * 3600
 
 
 def parse_gateways(d: dict) -> dict:

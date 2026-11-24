@@ -586,7 +586,7 @@ def drop_opnsense(conn_factory, data_dir: str) -> bool:
         conn.execute("DELETE FROM feed WHERE name = ?", (OPNSENSE_NAME,))
         conn.execute("DELETE FROM opn_fix")
         conn.execute("DELETE FROM opn_release")
-        conn.execute("DELETE FROM meta WHERE key = 'opn_series'")
+        conn.execute("DELETE FROM meta WHERE key IN ('opn_series', 'opn_versions')")
     finally:
         conn.close()
     raw_path(data_dir, OPNSENSE_FEED).unlink(missing_ok=True)

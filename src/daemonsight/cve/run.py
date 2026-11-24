@@ -54,20 +54,28 @@ def _image_inventories(conn) -> dict[str, dict]:
     return docker_images.image_inventories(stored)
 
 
-def _opnsense_plans(conn) -> dict[str, dict]:
-    """pseudo-host -> plan (cve/opnsense.py `plan`) for every enabled OPNsense system whose last firmware check found an
-    update that brings a new OPNsense release. Only these systems need the changelog."""
-    out = {}
+def _opnsense_plans(conn) -> tuple[dict[str, dict], dict[str, dict], set[str]]:
+    """(pending, fws, series) for the enabled OPNsense systems. `pending`: pseudo-host -> plan (cve/opnsense.py `plan`) for each
+    whose last firmware check found an update that brings a new OPNsense release. `fws`: system id -> firmware status, for the
+    check of a release it has not been offered (`unseen_plan`). `series`: what the changelog must hold for both. Every enabled
+    firewall needs the changelog, not only one with an update pending."""
+    out, fws, series = {}, {}, set()
     for r in conn.execute("SELECT s.host, s.data FROM snapshots s JOIN remotes r ON r.id = s.host "
                           "WHERE s.source = 'opnsense_firmware' AND r.kind = 'opnsense' AND r.enabled = 1"):
         try:
             d = json.loads(r["data"]) if r["data"] else None
         except ValueError:
             d = None
-        p = opnsense.plan(d if isinstance(d, dict) else None)
+        d = d if isinstance(d, dict) else None
+        p = opnsense.plan(d)
         if p["ok"]:
             out[opnsense.pseudo_host(r["host"])] = p
-    return out
+            series.update(p["series"])
+        w = opnsense.watch_series(d)
+        if w:
+            fws[r["host"]] = d
+            series.update(w)
+    return out, fws, series
 
 
 def _pending_names(conn, host: str) -> set[str]:
@@ -127,8 +135,8 @@ class Chore:
         # Debian, Ubuntu and Alpine container images are matched like hosts, under pseudo-host ids, and their releases are loaded too.
         imgs = _image_inventories(self.state)
         every = {**invs, **imgs}
-        opn = _opnsense_plans(self.state)
-        opn_series = sorted({x for p in opn.values() for x in p["series"]})
+        opn, opn_fws, opn_series = _opnsense_plans(self.state)
+        opn_series = sorted(opn_series)
         releases = {i["codename"] for i in every.values() if match.release_of(i)}
         alpine_releases = {i["release"] for i in imgs.values() if i.get("backend") == "apk" and i.get("release")}
         # Ubuntu: a file per release; kernel rows are kept only for the flavors the hub's own hosts run (see feeds.load_ubuntu).
@@ -155,6 +163,13 @@ class Chore:
             opn_loaded = opnsense.loaded_series(conn)
             opn_gen = f"{match.MATCH_VERSION}:opn:{opn_row['changed_at'] if opn_row else None}:{','.join(sorted(opn_loaded))}"
             opn_ready = bool(opn_loaded) and set(opn_series) <= opn_loaded
+            # The newest release in a firewall's series that it has not been offered, matched like a pending update.
+            unseen = {}
+            if opn_ready:
+                for h, fw in opn_fws.items():
+                    u = opnsense.unseen_plan(conn, fw)
+                    if u["ok"]:
+                        unseen[opnsense.unseen_host(h)] = u
             matched = {r["host"]: r for r in conn.execute("SELECT * FROM matched")}
         finally:
             conn.close()
@@ -167,14 +182,14 @@ class Chore:
             self.dirty = True
         # A firewall is matched against the changelog once the series it needs are loaded, and again when its plan or the
         # loaded data changes.
-        opn_todo = {h: p for h, p in opn.items() if opn_ready and (
+        opn_todo = {h: p for h, p in {**opn, **unseen}.items() if opn_ready and (
             h not in matched or matched[h]["inv_hash"] != opnsense.plan_hash(p) or matched[h]["gen"] != opn_gen)}
         if opn_todo:
             await asyncio.to_thread(self._match_opnsense, opn_todo, opn_gen)
         if changed:
             self.dirty = True
         # Hosts that are gone (revoked) leave rows behind; drop them.
-        await asyncio.to_thread(self._forget, set(every) | set(opn))
+        await asyncio.to_thread(self._forget, set(every) | set(opn) | set(unseen))
         await self._findings(invs, now)
 
     async def _refresh_alpine(self, conn, releases: set[str], now: float) -> bool:
@@ -212,7 +227,7 @@ class Chore:
 
     async def _refresh_opnsense(self, conn, series: set[str], now: float) -> bool:
         """OPNsense's changelog: one tarball, asked again at most once per [cve] refresh_hours (an hour after an error) and only
-        while a firewall has a release update pending. The rows kept are those of the series the firewalls need; another set
+        while an enabled firewall exists (it needs the changelog to know of a release it was not offered). The rows kept are those of the series the firewalls need; another set
         is read from the saved file without a new download. With no firewall waiting, the file and its rows are dropped."""
         if not series:
             return await asyncio.to_thread(feeds.drop_opnsense, self.factory, self.cfg.data_dir)
@@ -220,7 +235,7 @@ class Chore:
         changed = False
         if feeds.is_due(feeds.feed_row(conn, feed), now, self.cfg.cve.refresh_hours):
             changed = await feeds.refresh(self.factory, self.cfg.data_dir, feed, series, now, self.client)
-        if not changed and opnsense.loaded_series(conn) != series and feeds.raw_path(self.cfg.data_dir, feed).exists():
+        if not changed and (opnsense.loaded_series(conn) != series or opnsense.versions_missing(conn)) and feeds.raw_path(self.cfg.data_dir, feed).exists():
             changed = await asyncio.to_thread(feeds.reload_opnsense, self.factory, self.cfg.data_dir, series) is not None
         return changed
 

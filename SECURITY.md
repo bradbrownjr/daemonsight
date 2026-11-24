@@ -451,7 +451,7 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   Ubuntu release a host or an image runs, Canonical's CVE OVAL file
   (`https://security-metadata.canonical.com/oval/com.ubuntu.<release>.cve.oval.xml.bz2`,
   about 12 MB, Creative Commons Attribution-ShareAlike 4.0), and, while an
-  OPNsense firewall has a release update pending, the OPNsense project's
+  OPNsense firewall is enabled, the OPNsense project's
   changelog: one 0.6 MB tarball of its repository from `codeload.github.com`
   (`/opnsense/changelog/tar.gz/refs/heads/master`, BSD 2-Clause), read for the
   CVE ids in the release notes between the installed and the offered version.
