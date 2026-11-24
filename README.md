@@ -49,7 +49,7 @@ one list of what to fix, without a SIEM.
 | Exposure | Listening ports, nftables rules, Caddy admin API, fail2ban |
 | Containers | Docker socket; on Unraid, a small read-only Docker reader |
 | Host package CVEs | Debian security tracker, CISA KEV and EPSS; Fedora advisories |
-| Container image CVEs | Debian images; Alpine and Ubuntu next |
+| Container image CVEs | Debian and Alpine images; Ubuntu next |
 | Unraid | GraphQL API, Viewer-only key |
 | OPNsense and CrowdSec | REST API, GET only; CrowdSec Local API, read-only key |
 | Seen from outside | Shodan InternetDB or API (off by default) |

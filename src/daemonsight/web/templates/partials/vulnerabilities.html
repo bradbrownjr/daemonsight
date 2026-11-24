@@ -98,7 +98,7 @@
       </div>
       {% endfor %}
     </div>
-    <div class="text-secondary small mt-3">The hub downloads these every {{ v.refresh_hours|default(24) }} hours. EPSS scores are from FIRST (<a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">first.org/epss</a>); the KEV list is CISA's, released as CC0.</div>
+    <div class="text-secondary small mt-3">The hub downloads these every {{ v.refresh_hours|default(24) }} hours. EPSS scores are from FIRST (<a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">first.org/epss</a>); the KEV list is CISA's, released as CC0.{% if v.feeds|map(attribute='alpine')|select|list %} The Alpine files are Alpine Linux's security database (<a href="https://secdb.alpinelinux.org/" target="_blank" rel="noopener noreferrer">secdb.alpinelinux.org</a>), downloaded only for the Alpine releases that container images run.{% endif %}</div>
   </div>
 </section>
 {% endif %}

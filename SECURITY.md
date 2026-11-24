@@ -443,8 +443,10 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
     `remote.*`, `unraid.*` or `outside.*` findings
   - ten bad tokens from one address in five minutes block that address,
     and one host may upload at most 120 times a minute
-- **CVE matching downloads three public files.** The hub fetches the Debian
-  security tracker, FIRST's EPSS scores and CISA's KEV list over HTTPS, with
+- **CVE matching downloads public files.** The hub fetches the Debian
+  security tracker, FIRST's EPSS scores and CISA's KEV list over HTTPS, and,
+  when a container image on an Unraid server is Alpine, that release's
+  `main.json` and `community.json` from `secdb.alpinelinux.org`, with
   the User-Agent `DaemonSight/<version>` and nothing about your hosts. A
   redirect may only stay on the feed's own host, each download has a size
   cap, files are written atomically and parsed with the standard library
@@ -506,8 +508,8 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
 - **Feed text is untrusted.** CVE descriptions and names come from other
   people's files. They are cut to a fixed length when stored and shown only
   through autoescaped templates, and the links they produce go to
-  `security-tracker.debian.org`, built from a CVE id that matched a strict
-  pattern. A bad feed can give wrong findings but can't run anything.
+  `security-tracker.debian.org` (Alpine images: `security.alpinelinux.org`),
+  built from a CVE id that matched a strict pattern. A bad feed can give wrong findings but can't run anything.
 - **Refusals are logged** as `Refused upload from <address>: <reason>`.
   The fail2ban filter counts only bad tokens.
 - **The hub can ask for one thing: an update.** Its reply carries the last

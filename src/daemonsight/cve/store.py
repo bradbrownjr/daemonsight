@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 -- One row per feed: when it was tried, when it last answered, and what it said.
@@ -40,6 +40,18 @@ CREATE TABLE IF NOT EXISTS deb (
     urgency TEXT,
     nodsa   TEXT,            -- the tracker's reason for not issuing an advisory, if any
     PRIMARY KEY (release, source, cve)
+) WITHOUT ROWID;
+
+-- Alpine's security database (secdb), only the releases the hub's container images run. One row per origin package, CVE and
+-- fixed version: `fixed` is a version from the package's secfixes list, never "0" (that key lists CVEs that never
+-- affected the package). A CVE fixed in two versions has two rows.
+CREATE TABLE IF NOT EXISTS apk (
+    release TEXT NOT NULL,   -- "v3.23"
+    repo    TEXT NOT NULL,   -- "main" or "community": the file the row came from
+    origin  TEXT NOT NULL,
+    cve     TEXT NOT NULL,
+    fixed   TEXT NOT NULL,
+    PRIMARY KEY (release, origin, cve, fixed)
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS cve (

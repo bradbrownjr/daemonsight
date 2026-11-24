@@ -1,6 +1,6 @@
 # DaemonSight design
 
-Status: phases 1, 2, 2c, 3a and 3b are built; phase 3c part 1 (container images: end-of-life bases and Debian CVEs) is built, and Ubuntu and Alpine images are next. Updated 2026-11-24.
+Status: phases 1, 2, 2c, 3a and 3b are built; phase 3c parts 1 and 2 (container images: end-of-life bases, Debian CVEs and Alpine CVEs) are built, and Ubuntu images are next. Updated 2026-11-24.
 
 ## Goal
 
@@ -600,7 +600,7 @@ supports ntfy and SMTP email. Daily digest optional.
 3. Package and CVE checks.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
    3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, ranks by EPSS and CISA's KEV list, and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian and Raspberry Pi OS; Ubuntu is next (see "CVE matching"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
-   3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases. Part 1 is done: the reader reads each running image's package list, the Container images page shows each image's base OS and support status (`docker.eol_base`), and Debian images are matched against the Debian tracker (`docker.image_cves`). Ubuntu images (with phase 3b's Ubuntu matcher) and Alpine images (secdb) are next. See "Docker reader", "Container images".
+   3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases. Parts 1 and 2 are done: the reader reads each running image's package list, the Container images page shows each image's base OS and support status (`docker.eol_base`), Debian images are matched against the Debian tracker and Alpine images against Alpine's security database (`docker.image_cves`). Ubuntu images (with phase 3b's Ubuntu matcher) are next. See "Docker reader", "Container images", "CVE matching: Alpine images".
 4. Alerts, recent-changes feed, history charts with drill-down. See "History charts and drill-down (planned)".
 5. `.deb` package and docs.
 
@@ -938,7 +938,8 @@ downloaded again). Requests carry the User-Agent `DaemonSight/<version>` and
 nothing else about the hub or its hosts. A redirect may only stay on the
 feed's own host, and a download is capped (400 MB decoded for the tracker,
 100 MB EPSS, 50 MB KEV). A feed that fails is retried an hour later; the last
-good data stays in use. Nothing here runs in a request.
+good data stays in use. Nothing here runs in a request. Alpine's security database is the exception to "three feeds": its files are
+fetched only for the Alpine releases the hub's container images run (see "CVE matching: Alpine images").
 
 | Feed | Size as served | After decoding | Notes |
 |------|---------------|----------------|-------|
@@ -2112,7 +2113,8 @@ Container images page.
   with the same CVEs and returns as Changed when the set changes.
 - Fix: update the image (Unraid: Docker tab, Check for Updates, apply; or pull a newer tag). `apt upgrade` inside a container
   does not persist. If no newer image exists, the maintainer has not rebuilt it.
-- Ubuntu images count as "Ubuntu matching not built yet (phase 3b)" and Alpine as "Alpine matching next"; neither is a finding.
+- Ubuntu images count as "Ubuntu matching not built yet (phase 3b)"; that is not a finding. Alpine images are matched against Alpine's
+  security database (next subsection).
 - A release the tracker no longer lists has no rows, so an end-of-life Debian image may show no CVEs; the end-of-life finding
   covers it.
 
@@ -2126,6 +2128,91 @@ Registered in `web/sections.py`. The Overview's glance has a line for it.
 Not verified: the exact bytes Docker 29 sends for a one-file archive and for a symlink on a live server (the tests build
 the tar with Python's `tarfile`; the swagger file only says the reply is a tar stream), and that a reader on a large
 Unraid server finishes its first pass in ten minutes.
+
+### CVE matching: Alpine images (phase 3c, part 2)
+
+Alpine images are matched against Alpine's security database, "secdb" [61]. The hub downloads it, as it does the other feeds; an
+image's reader sends only the package list it already sends.
+
+**What secdb is** (read from the files on 2026-11-24 [61]).
+
+- `https://secdb.alpinelinux.org/` lists `edge/` and one directory per release, `v3.2/` to `v3.24/`, plus `last-update` (a Unix
+  time, 11 bytes) and `license.txt`. A release has `main.json` and `community.json` (and the same as YAML). `edge/main.json`
+  exists; `v3.1/` and `v3.99/` answer 404.
+- The shape: an object with `reponame`, `distroversion`, `archs`, `urlprefix`, `apkurl` and `packages`, a list of objects
+  each holding one `pkg` with a `name` and `secfixes`, a mapping of a version to a list of entries (strings). v3.23's `main.json`
+  has 285 packages and is 99 KB; `community.json` has 461 and is 167 KB.
+- `name` is the origin (source) package. `openssl` is listed and `libcrypto3` and `libssl3` are not, and `docker_packages.py`
+  keeps each package's `o:` origin from the installed database, so a package is looked up by its origin.
+- A key is the version that fixed the CVEs under it, in apk's version format (`3.5.4-r0`). A CVE is open for an installed
+  version below it.
+- The key `"0"` is not a version. In v3.23, 32 packages in `main` and 16 in `community` have one. The Alpine maintainers write
+  the CVEs that never affected their package there; this is a habit, not a documented rule. Alpine's apk-tools list answered
+  the question "all false-positive CVEs are listed with the version 0?" with "it has become somewhat a norm to mark them as 0"
+  and added that the proper place is the `security-rejections` repository [62]. The APKBUILD manual has no entry for `secfixes` [62].
+  Those entries are ignored. Two CVEs (postgresql17 and 18, CVE-2026-14681) are under `"0"` and also under a fixed version; the
+  fixed version still counts.
+- An entry is a string and may carry text after the id: `"CVE-2021-27219 GHSL-2021-045"`, `"CVE-2020-11501 GNUTLS-SA-2020-03-31"`
+  (378 of 3,932 entries in `main`, 22 of 7,347 in `community`). The first word is the id. Entries whose first word is not a CVE id
+  (`ALPINE-13661`, `ZDI-CAN-22300`, `GHSA-...`, `RUSTSEC-...`; 21 and 25) cannot be ranked by KEV or EPSS and are dropped.
+- The same CVE can sit under several versions of one package (`intel-ucode`, `cacti`: 13 and 44 cases), a partial fix and then the
+  rest. The highest version is used: the installed one has to reach it.
+- There is no list of CVEs without a fix: secdb records fixes only. An Alpine image has fixable CVEs and no unfixed count, and the
+  page says so.
+- Updates: the files change when maintainers push `secfixes` data. On 2026-11-24 v3.23's `main.json` was modified 01:45 UTC and
+  its `community.json` six days earlier, v3.12's in September 2025, and `last-update` at 03:34. No schedule is published that I
+  found. Each file has `ETag` and `Last-Modified`.
+- Licence: the site's `license.txt` is Creative Commons Attribution-ShareAlike 4.0 International. DaemonSight downloads the
+  files, keeps the rows it needs to match and republishes nothing, and the Vulnerabilities page names the source. I read no
+  usage terms beyond that file (the project README at gitlab.alpinelinux.org/alpine/security/secdb was not reachable from here).
+
+**Fetching** (`cve/feeds.py`, `cve/run.py`). For each Alpine release the hub's images run (`v` plus major.minor of `VERSION_ID`,
+3.23.2 is `v3.23`) it fetches `main.json` and `community.json` from `secdb.alpinelinux.org` only, with `If-None-Match` and
+`If-Modified-Since`, at most once per `[cve] refresh_hours` (24) per file and an hour after an error. A download is capped at 20 MB
+(the real files are 0.1 to 0.2 MB), kept under `<data_dir>/cve/alpine-<release>-<repo>.json.gz` and loaded into the `apk` table of
+`cve.db` (schema 2; an older hub refuses a version 2 `cve.db`, which can be deleted and downloaded again) in one transaction per
+file. A failure (HTTP error, bad file, a version that does not parse) keeps the last good rows and the page shows
+"The last download failed (...); the copy from the earlier download is used". A release that no image runs any more is dropped:
+its rows, saved files and feed rows. HTTP 404 is an answer, not an error: the feed row says "absent", the page says "Alpine 3.x: not in
+Alpine's security database" and nothing is matched or raised for that release. An image whose `VERSION_ID` is not a plain
+release number (an edge image has `3.24.0_alpha...`) is "Release not named (edge?): not matched"; secdb has an `edge/`
+directory, but how an edge image names its snapshot was not checked, so it is not mapped. The Vulnerabilities page's Data feeds
+card lists each file.
+
+**Matching** (`cve/alpine.py`, `remote/docker_images.py`). Under the pseudo-host `docker:<system>:<image id>` (as for Debian) an
+Alpine image's packages are grouped by origin (`o:`, or the package's own name). One installed version per origin: when
+subpackages differ, the lowest is used and the row says so ("1 origin has subpackages at different versions, matched at the
+lowest (openssl)"). A version apk cannot parse is skipped and counted. A CVE is "fixable" when secdb lists a fixed version for
+that origin and the installed version is lower; the highest fixed version of the CVE counts. The rows go into the same `match`
+table (`source` is the origin, `state` is `fix`, `fixed` the version), so KEV and EPSS ranking, `cve_summary` and
+`docker.image_cves` work unchanged. Severity is the Debian images' rule: High when a fixable CVE is on KEV or at or above
+`[cve] epss_high`, otherwise Medium. The finding's title says the release (`web (Alpine 3.23): 4 fixable CVEs, 1 known exploited`),
+its detail says "Alpine's security database (secdb)", its fix says `apk upgrade` inside a container does not persist, and its
+basis stays the image repository and the sorted ids of the fixable CVEs. The matched rows are redone when any of the secdb files
+changed. CVE descriptions come from the Debian tracker's text, so an Alpine-only CVE has none.
+
+**Version order** is `cve/apkver.py`, written from apk-tools' `src/version.c` [63]: a number, more
+numbers after dots, an optional letter, any `_suffix` with optional digits, an optional `~` and hex digits, and an optional `-r` and digits; a number with a leading zero is compared as text; suffixes order `_alpha` < `_beta` < `_pre` < `_rc` < none < `_cvs`
+< `_svn` < `_git` < `_hg` < `_p`; a version that does not parse is compared as far as it does, as apk does. It was read at apk-tools
+v3.0.9 (commit `f419028ee18aabcfb405400f899572fb0a949331`, 2026-11-02, the apk-tools of Alpine 3.23: `main/apk-tools/APKBUILD` on
+`3.23-stable` has `pkgver=3.0.9`); `src/version.c` is identical at v3.0.10 and at master (`c7b05e07`, 2026-11-23), with `apk_blob_pull_uint` and
+`apk_blob_sort` from `src/blob.c` and the character classes from `src/ctype.c`. The test is apk-tools' own table, `test/unit/version.data` at that
+commit, copied to `tests/fixtures/cve/apk-version.data` (792 lines with comments and blanks; the 16 with `~` as an operator are apk's fuzzy dependency match
+and are skipped): all the rest pass, among them the 18446744073709551615 and 18446744073709551616 limits and the invalid versions. apk-tools is
+GPL-2.0-only, DaemonSight MIT: the Python is written from the rules, not copied from the C, and the table is data kept unchanged under a header
+that names its source. apk-tools 2.x (v2.14.13) has other code for the same job (leading zeros count as a negative number, no `~hash`
+token); the 3.x rules are used, and whether 2.x orders any version differently beyond leading zeros was not checked.
+
+**The page.** The Fixable CVEs cell shows the count with the KEV badge and the top EPSS score; there is no "no fix yet" line. The
+coverage card says how many Alpine images were matched and, per release, when secdb was last checked or why it was not. The (i)
+panel of an image names the secdb files, the matching `curl ... | jq` lookup for the top origin, the container's own
+`apk version -l '<'` (lists packages whose installed version is lower than the index's, per apk-version(8); `apk list --upgradable`
+lists the same, per apk-list(8) [64]; both need a package index, and `apk update` inside the container writes only there) and
+`apk version -t <a> <b>` to compare two versions. Each CVE links to `https://security.alpinelinux.org/vuln/<CVE>` [65].
+
+Not verified: the whole path on a live hub with a real Alpine container (tested against synthetic secdb files and a fake of the
+server, and the parser against the real v3.23 files on 2026-11-24, not a running hub); how an Alpine edge image's `VERSION_ID`
+looks; that `apk version -l '<'` inside a stock image prints what the page suggests without `apk update`; the secdb project's own README.
 
 ### Provider firewalls
 
@@ -2310,6 +2397,7 @@ The collector must stay light:
 - fail2ban 1.0.2 on Debian 12.
 - Fedora: `dnf needs-restarting -C -s` output (the parser takes lines naming `*.service`; not captured, since a container has no D-Bus), the JSON for "no reboot needed", the whole collector on a real Fedora 44 KDE host, and `install.sh` under SELinux enforcing. dnf5 was tested in `fedora:44` containers only.
 - CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
+- Alpine CVE matching: see "CVE matching: Alpine images" (not run on a live hub with a real Alpine container; edge images' `VERSION_ID` and `apk version -l '<'` output in a stock image were not seen).
 - CrowdSec: the read path was checked on a live firewall on 2026-11-24 (see "CrowdSec bans on an OPNsense firewall"). Still read from the source only: `null` for no decisions, `limit`, the 403 for a wrong key and the `duration` format. That the pf bouncer drops the states of a banned address is the owner's account, not read from its source.
 - Whether the Docker source works against Podman's Docker-compatible socket.
 - The Docker source on a real Docker host other than Unraid's.
@@ -2384,3 +2472,8 @@ The collector must stay light:
 58. Shodan Enterprise ("The Enterprise Data License provides rights to commercial use without attribution"): https://enterprise.shodan.io/
 59. CrowdSec Local API: `pkg/models/localapi_swagger.yaml` (`getDecisions`, `getDecisionsStream`, `Decision`, `securityDefinitions`), `pkg/apiserver/controllers/controller.go` (the `apiKeyAuth` and `jwtAuth` route groups), `controllers/v1/decisions.go` (`GetDecision`, `FormatDecisions`), `pkg/apiserver/middlewares/v1/api_key.go` (403 `access forbidden`, bouncers bound to an address), `pkg/database/decisions.go` and `decisionfilter.go` (`QueryDecisionWithFilter`, `applyDecisionFilter`), `pkg/types/ip.go`, `pkg/types/constants.go` (origins): https://github.com/crowdsecurity/crowdsec (`master`, read 2026-11-24)
 60. CrowdSec docs: Local API authentication (bouncer keys "can only read decisions"): https://docs.crowdsec.net/docs/next/local_api/authentication ; centralized allowlists: https://docs.crowdsec.net/docs/next/local_api/centralized_allowlists ; cscli: `bouncers add` (`cscli bouncers add MyBouncerName`), `decisions delete` (`-i`, `-r`), `decisions list` (`-i`, `-r`, `--origin`), `allowlists create` (`-d`), `allowlists add` (`-e`, `-d`), `alerts list` (`-i`), `alerts inspect` (`-d`): https://docs.crowdsec.net/docs/next/cscli/
+61. Alpine security database (secdb): https://secdb.alpinelinux.org/ (index, `last-update`, `license.txt`: Creative Commons Attribution-ShareAlike 4.0), `v3.23/main.json`, `v3.23/community.json`, `edge/main.json`, `v3.9/*.json`; read and counted on 2026-11-24
+62. The `"0"` key: Alpine apk-tools mailing list, "Question about secfixes in APKBUILD", 2024-11-16: https://lists.alpinelinux.org/~alpine/apk-tools/%3C20241116073528.75a751c2%40gmacedo.com%3E ; APKBUILD(5) of abuild, which has no `secfixes` entry: https://man.archlinux.org/man/extra/abuild/APKBUILD.5.en
+63. apk-tools (GPL-2.0-only): `src/version.c`, `src/blob.c` (`apk_blob_pull_uint`, `apk_blob_sort`), `src/ctype.c`, `test/unit/version.data` and `test/unit/version_test.c` at tag v3.0.9 (commit f419028ee18aabcfb405400f899572fb0a949331), https://gitlab.alpinelinux.org/alpine/apk-tools ; the apk-tools version of Alpine 3.23: https://gitlab.alpinelinux.org/alpine/aports/-/blob/3.23-stable/main/apk-tools/APKBUILD (`pkgver=3.0.9`)
+64. apk-version(8) (`--limit`/`-l` with `<`, `>`, `=`; `--test`/`-t`; `--check`/`-c`) and apk-list(8) (`--upgradable`/`-u`), `doc/apk-version.8.scd` and `doc/apk-list.8.scd` at apk-tools v3.0.9
+65. Alpine Security Tracker, one CVE: https://security.alpinelinux.org/vuln/CVE-2021-42375 (answers only when the request accepts `text/html`, `application/json` or `application/ld+json`; otherwise 406)

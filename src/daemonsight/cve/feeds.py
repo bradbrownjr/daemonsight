@@ -12,6 +12,10 @@ unchanged file costs one small request, by default every 24 hours:
   https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
   (CC0 1.0, see https://www.cisa.gov/sites/default/files/licenses/kev/license.txt).
 
+* Alpine's security database, https://secdb.alpinelinux.org/<release>/main.json and community.json, one pair per Alpine
+  release a container image runs (alpine.py). Unlike the three feeds above these files are chosen by what the hub's
+  images hold, so a Feed is made for each (`alpine_feed`) and the chore drops the ones no image needs any more.
+
 Requests carry only a generic User-Agent, "DaemonSight/<version>". Everything
 downloaded is untrusted text: it is size-capped, parsed with the standard
 library, stored as data, and escaped when shown. A download goes to a
@@ -35,7 +39,7 @@ from pathlib import Path
 import httpx
 
 from .. import __version__
-from . import store, tracker
+from . import alpine, store, tracker
 
 log = logging.getLogger("daemonsight.cve")
 
@@ -55,6 +59,8 @@ class Feed:
     gz_source: bool          # the download is itself a .gz file (EPSS); else it is JSON we gzip
     terms: str
     docs: str
+    release: str = ""        # Alpine only: "v3.23"
+    repo: str = ""           # Alpine only: "main" or "community"
 
 
 FEEDS = {
@@ -72,6 +78,32 @@ FEEDS = {
                 "CC0 1.0: https://www.cisa.gov/sites/default/files/licenses/kev/license.txt",
                 "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"),
 }
+
+
+ALPINE_HOST = "secdb.alpinelinux.org"
+ALPINE_REPOS = ("main", "community")
+ALPINE_PREFIX = "alpine-"
+ALPINE_MAX_BYTES = 20 << 20      # the real files are 0.1 to 0.2 MB
+
+
+def alpine_feed(release: str, repo: str) -> Feed:
+    """The feed for one secdb file. `release` is "v3.23", `repo` "main" or "community"."""
+    url = f"https://{ALPINE_HOST}/{release}/{repo}.json"
+    return Feed(f"{ALPINE_PREFIX}{release}-{repo}", f"Alpine security database {release} {repo}", url, (ALPINE_HOST,),
+                ALPINE_MAX_BYTES, False,
+                "The site's licence file is Creative Commons Attribution-ShareAlike 4.0 (https://secdb.alpinelinux.org/license.txt). "
+                "DaemonSight reads the files, keeps what it needs to match and does not republish them. Source: Alpine Linux security database",
+                "https://secdb.alpinelinux.org/", release, repo)
+
+
+def alpine_title(name: str) -> str:
+    """The title of an Alpine feed from its name ("alpine-v3.23-main"), for a row that has no Feed at hand."""
+    m = re.match(r"^" + ALPINE_PREFIX + r"(v[0-9.]+)-(main|community)$", name)
+    return f"Alpine security database {m.group(1)} {m.group(2)}" if m else name
+
+
+def alpine_feeds(release: str) -> list[Feed]:
+    return [alpine_feed(release, repo) for repo in ALPINE_REPOS]
 
 
 def cve_dir(data_dir: str) -> Path:
@@ -118,6 +150,10 @@ class FetchError(Exception):
     pass
 
 
+class NotFound(FetchError):
+    """HTTP 404. For Alpine this is an answer, not a failure: the release has no file in secdb."""
+
+
 def _allow_hosts(feed: Feed):
     async def check(response: httpx.Response) -> None:
         url = response.request.url
@@ -151,6 +187,8 @@ async def download(feed: Feed, row, dest: Path, client: httpx.AsyncClient | None
                     raise FetchError(f"answered by {hop.request.url.host}, which is not a source for this feed")
             if r.status_code == 304:
                 return None
+            if r.status_code == 404:
+                raise NotFound("HTTP 404")
             if r.status_code != 200:
                 raise FetchError(f"HTTP {r.status_code}")
             size = 0
@@ -235,6 +273,26 @@ def _flush_deb(conn, batch: list, descs: list) -> None:
     descs.clear()
 
 
+def load_alpine(conn: sqlite3.Connection, path: Path, feed: Feed) -> tuple[int, str]:
+    """Replace the `apk` rows of one release's file (main or community) with what the saved secdb file holds. The old rows
+    stay when the file does not parse. Returns (rows kept, note)."""
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        doc = json.load(fh)
+    rows = alpine.parse_secdb(doc)
+    if isinstance(doc.get("distroversion"), str) and doc["distroversion"] != feed.release:
+        raise alpine.SecdbError("the file is for another release than the one asked for")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM apk WHERE release = ? AND repo = ?", (feed.release, feed.repo))
+        conn.executemany("INSERT OR REPLACE INTO apk VALUES (?, ?, ?, ?, ?)",
+                         [(feed.release, feed.repo, origin, cve, fixed) for origin, cve, fixed in rows])
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    return len(rows), f"{len({r[0] for r in rows})} packages with CVEs fixed"
+
+
 def load_epss(conn: sqlite3.Connection, path: Path) -> tuple[int, str]:
     """All scores. The file starts with `#model_version:...,score_date:...`, then
     a `cve,epss,percentile` header. Returns (rows, note about the model and date)."""
@@ -313,6 +371,8 @@ def load_one(conn, feed: Feed, path: Path, releases: set[str]) -> tuple[int, str
         return rows, "releases: " + ", ".join(sorted(releases))
     if feed.name == "epss":
         return load_epss(conn, path)
+    if feed.release:
+        return load_alpine(conn, path, feed)
     return load_kev(conn, path)
 
 
@@ -328,6 +388,18 @@ async def refresh(conn_factory, data_dir: str, feed: Feed, releases: set[str], n
         dest = raw_path(data_dir, feed)
         try:
             info = await download(feed, row, dest, client)
+        except NotFound:
+            if not feed.release:
+                log.warning("CVE feed %s: HTTP 404", feed.name)
+                _record(conn, feed, checked_at=now, status="error", detail="HTTP 404")
+                return False
+            # secdb has no file for this release (too old, or not made yet): that is an answer, not a failure.
+            had = row["status"] != "absent"
+            conn.execute("DELETE FROM apk WHERE release = ? AND repo = ?", (feed.release, feed.repo))
+            dest.unlink(missing_ok=True)
+            _record(conn, feed, checked_at=now, ok_at=now, changed_at=now if had else row["changed_at"], status="absent",
+                    detail=None, etag=None, last_modified=None, size=None, rows=0, note="not in Alpine's security database")
+            return had
         except FetchError as exc:
             log.warning("CVE feed %s: %s", feed.name, exc)
             _record(conn, feed, checked_at=now, status="error", detail=str(exc)[:200])
@@ -350,6 +422,28 @@ async def refresh(conn_factory, data_dir: str, feed: Feed, releases: set[str], n
         return False
     finally:
         conn.close()
+
+
+def drop_alpine(conn_factory, data_dir: str, keep: set[str]) -> bool:
+    """Forget the secdb files of Alpine releases no image runs any more: their feed rows, `apk` rows and saved files.
+    Returns True when something was dropped."""
+    conn = conn_factory()
+    dropped = False
+    try:
+        for r in conn.execute("SELECT name FROM feed WHERE name LIKE ?", (ALPINE_PREFIX + "%",)).fetchall():
+            m = re.match(r"^" + ALPINE_PREFIX + r"(v[0-9.]+)-(main|community)$", r["name"])
+            if m and m.group(1) in keep:
+                continue
+            conn.execute("DELETE FROM feed WHERE name = ?", (r["name"],))
+            (cve_dir(data_dir) / f"{r['name']}.json.gz").unlink(missing_ok=True)
+            dropped = True
+        for (rel,) in conn.execute("SELECT DISTINCT release FROM apk").fetchall():
+            if rel not in keep:
+                conn.execute("DELETE FROM apk WHERE release = ?", (rel,))
+                dropped = True
+    finally:
+        conn.close()
+    return dropped
 
 
 def _load_in_thread(conn_factory, feed, path, releases):

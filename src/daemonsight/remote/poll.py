@@ -82,7 +82,7 @@ def _rule_inputs(conn, host: str, cfg: Config | None = None) -> dict[str, dict |
     out["release"] = release.stored(conn)
     s = snaps.get(docker_storage.SNAPSHOT)
     out["docker_storage"] = s.data if s and s.data else None
-    # What the CVE chore found in the Debian images (needs the CVE database, so only with the config).
+    # What the CVE chore found in the Debian and Alpine images (needs the CVE database, so only with the config).
     out["image_cves"] = docker_images.load_cves(cfg, conn, host, out["docker_storage"]) if cfg is not None else None
     return out
 
