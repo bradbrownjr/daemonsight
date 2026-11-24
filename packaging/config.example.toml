@@ -178,3 +178,5 @@
 # Add them in the web UI (Hosts, "Add a system"); this only switches reading on or off,
 # and the Settings page can too.
 # enabled = true
+# Hours a UniFi device may be offline before it is a finding (0.25 to 720). The Settings page can change it.
+# unifi_offline_hours = 2

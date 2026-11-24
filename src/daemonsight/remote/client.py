@@ -94,10 +94,13 @@ def normalize_url(raw: str, kind: str = "unraid") -> str:
     (Settings, Management Access, Use SSL/TLS). `kind` only picks the wording
     of the messages and the one path that may follow the address."""
     opn = kind == "opnsense"
+    uni = kind == "unifi"
     raw = (raw or "").strip()
     if not raw or len(raw) > 300 or any(ord(c) < 33 or ord(c) == 127 for c in raw):
         raise ValueError("Enter the firewall's address, for example https://fw.example.lan:8443 or https://192.0.2.1:8443."
                          if opn else
+                         "Enter the controller's address, for example https://unifi.example.lan or https://192.0.2.20:8443."
+                         if uni else
                          "Enter the server's address, for example https://tower.example.lan or https://192.0.2.10:4443.")
     if "://" not in raw:
         raw = "https://" + raw
@@ -111,13 +114,17 @@ def normalize_url(raw: str, kind: str = "unraid") -> str:
                          "in plain text. In OPNsense, System, Settings, Administration, set the web GUI protocol to HTTPS."
                          if opn else
                          "Use an https:// address. The API key is sent in a header, so it must not travel in "
+                         "plain text. UniFi OS serves its web UI and API over https."
+                         if uni else
+                         "Use an https:// address. The API key is sent in a header, so it must not travel in "
                          "plain text. In Unraid, Settings, Management Access, set Use SSL/TLS to Yes.")
     if parts.scheme != "https" or not parts.hostname:
         raise ValueError("The address must start with https://.")
     if parts.username or parts.password or parts.query or parts.fragment:
         raise ValueError("Leave out any user name, password, query or fragment.")
-    if parts.path not in ("", "/") + (() if opn else ("/graphql",)):
+    if parts.path not in ("", "/") + (() if opn or uni else ("/graphql",)):
         raise ValueError("Give only the firewall's address; DaemonSight adds /api/..." if opn else
+                         "Give only the controller's address; DaemonSight adds /proxy/network/integration/..." if uni else
                          "Give only the server's address; DaemonSight adds /graphql.")
     host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
     return f"https://{host}" + (f":{port}" if port else "")
@@ -491,21 +498,33 @@ class Rest:
     refuses any path that is not in `allowed`, compared as a whole string, so a bug elsewhere can't make it call an
     endpoint that acts (OPNsense has GET endpoints that do something, such as `/api/core/firmware/check` or
     `/api/tailscale/status/net`). No redirects are followed (the key would go to the new address), a reply is capped
-    at MAX_RESPONSE, and the key and secret are scrubbed from every message."""
+    at MAX_RESPONSE, and the key and secret are scrubbed from every message.
 
-    def __init__(self, base_url: str, key: str, secret: str, http: httpx.AsyncClient, allowed: frozenset[str]):
+    UniFi (remote/unifi.py) uses the same class with `header="X-API-KEY"` (the key goes in that header, no secret),
+    `noun="controller"` for the messages, and `patterns`: whole-path regular expressions for the endpoints that carry
+    an id or a page query (`/v1/sites/<uuid>/devices?offset=0&limit=200`). A path is allowed when it equals one of
+    `allowed` or matches a pattern in full, so the check is still a whitelist of whole strings; nothing is ever
+    built from a reply and sent back."""
+
+    def __init__(self, base_url: str, key: str, secret: str | None, http: httpx.AsyncClient, allowed: frozenset[str],
+                 *, header: str | None = None, noun: str = "firewall", patterns: tuple[re.Pattern, ...] = ()):
         self.base = base_url.rstrip("/")
         self._key, self._secret = key, secret
         self._http = http
         self._allowed = frozenset(allowed)
-        cred = base64.b64encode(f"{key}:{secret}".encode()).decode()
-        self._headers = {"Authorization": "Basic " + cred, "Accept": "application/json", "User-Agent": USER_AGENT}
+        self._patterns = tuple(patterns)
+        self._noun = noun
+        if header:
+            self._headers = {header: key, "Accept": "application/json", "User-Agent": USER_AGENT}
+        else:
+            cred = base64.b64encode(f"{key}:{secret}".encode()).decode()
+            self._headers = {"Authorization": "Basic " + cred, "Accept": "application/json", "User-Agent": USER_AGENT}
 
     async def aclose(self) -> None:
         await self._http.aclose()
 
     def check_allowed(self, path: str) -> None:
-        if path not in self._allowed:
+        if path not in self._allowed and not any(p.fullmatch(path) for p in self._patterns):
             raise ValueError("only the listed read-only endpoints may be requested")
 
     async def get(self, path: str):
@@ -518,24 +537,27 @@ class Rest:
                 async for chunk in r.aiter_bytes():
                     body += chunk
                     if len(body) > MAX_RESPONSE:
-                        raise RemoteError("http", "The firewall's reply was larger than 8 MiB; ignored.", path)
+                        raise RemoteError("http", f"The {self._noun}'s reply was larger than 8 MiB; ignored.", path)
                 status = r.status_code
         except RemoteError:
             raise
         except httpx.HTTPError as exc:
             raise self._transport_error(exc, path) from None
         if 300 <= status < 400:
-            raise RemoteError("http", "The firewall redirected the request. Redirects are not followed (the key "
+            raise RemoteError("http", f"The {self._noun} redirected the request. Redirects are not followed (the key "
                                       "would go to the new address). Use the address the web GUI answers on.", path)
         if status == 401:
-            raise RemoteError("auth", "The firewall refused the API key or secret (HTTP 401).", path)
+            raise RemoteError("auth", f"The {self._noun} refused the API key" + (" or secret" if self._secret else "")
+                              + " (HTTP 401).", path)
         if status == 403:
             raise RemoteError("forbidden", f"The user may not read {path} (HTTP 403).", path)
         if status == 404:
-            raise RemoteError("missing", f"The firewall has no {path} (HTTP 404). The plugin is not installed, or this "
-                                         "version of it is too old.", path)
+            raise RemoteError("missing", f"The {self._noun} has no {path} (HTTP 404). " +
+                              ("The plugin is not installed, or this version of it is too old." if self._noun == "firewall" else
+                               "This version of the application is too old for it, or the address is not the application's."),
+                              path)
         if status != 200:
-            raise RemoteError("http", f"The firewall answered HTTP {status} for {path}.", path)
+            raise RemoteError("http", f"The {self._noun} answered HTTP {status} for {path}.", path)
         try:
             return json.loads(body)
         except ValueError:
@@ -545,11 +567,11 @@ class Rest:
         text = scrub(str(exc), self._key, self._secret)
         clip = "".join(c for c in text[:200] if c.isprintable())
         if isinstance(exc, httpx.ConnectError) and ("CERTIFICATE_VERIFY_FAILED" in text or "certificate" in text.lower()):
-            return RemoteError("tls", "The firewall's certificate was not accepted: " + clip +
-                               " If you pinned a certificate and the firewall's has changed, test the connection "
+            return RemoteError("tls", f"The {self._noun}'s certificate was not accepted: " + clip +
+                               f" If you pinned a certificate and the {self._noun}'s has changed, test the connection "
                                "again and confirm the new fingerprint.", path)
         if isinstance(exc, httpx.TimeoutException):
-            return RemoteError("unreachable", "The firewall did not answer in time.", path)
+            return RemoteError("unreachable", f"The {self._noun} did not answer in time.", path)
         if isinstance(exc, httpx.ConnectError):
             return RemoteError("unreachable", "Could not connect: " + clip, path)
         return RemoteError("unreachable", f"{type(exc).__name__}: {clip}", path)

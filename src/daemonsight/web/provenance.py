@@ -29,6 +29,7 @@ SECTION_READ = {
     "firewall": "iptables-save and ip6tables-save, and nft -j list ruleset for native nft tables",
     "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
     "opnsense": "The OPNsense REST API, read by the hub with GET requests only (a dedicated user's API key)",
+    "unifi": "The UniFi Network Integration API, read by the hub with GET requests only (the API key of a View Only admin)",
     "cve": "The hub matches this host's installed packages against the Debian security tracker (Ubuntu: Canonical's "
            "OVAL data), EPSS scores, CISA's KEV list and CISA's SSVC ratings (CVE Services); the host downloads nothing",
     "outside": "Shodan, asked by the hub about this host's public addresses: its free InternetDB, or the Shodan API "
@@ -494,9 +495,9 @@ def forward(f: dict) -> dict:
 PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/services": "Services",
              "/fail2ban": "fail2ban", "/packages": "Packages", "/vulnerabilities": "Vulnerabilities",
              "/disks": "Array & disks", "/containers": "Containers", "/docker": "Docker storage", "/images": "Container images", "/vms": "VMs", "/notifications": "Notifications",
-             "/firewall": "Firewall", "/vpn": "VPN", "/network": "Gateways & interfaces"}
+             "/firewall": "Firewall", "/vpn": "VPN", "/network": "Gateways & interfaces", "/devices": "Devices", "/wifi": "Wi-Fi"}
 
-RULE_SOURCE = {"unraid": "unraid", "opnsense": "opnsense", "remote": "remote", "svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
+RULE_SOURCE = {"unraid": "unraid", "opnsense": "opnsense", "unifi": "unifi", "remote": "remote", "svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
                "jail": "fail2ban", "firewall": "firewall", "pkg": "packages", "sys": "system", "os": "system", "collector": "events",
                "cve": "cve", "outside": "outside"}
 
@@ -844,3 +845,74 @@ def opnsense_row(title: str, source: str, url: str | None, extra: list[dict] | N
     entries += extra or []
     entries.append(plain("Read from", f"{', '.join(opnsense.PATHS[k] for k in src.paths)} (GET)"))
     return {"title": title, "read": f"The hub's reading of {src.title.lower()}: see the card's panel for the request", "entries": entries}
+
+
+# --- UniFi Network (read by the hub over REST, GET only) -----------------------------------------------------------
+
+UNIFI_CURL = {
+    "info": "/v1/info", "sites": "/v1/sites?offset=0&limit=200", "pending": "/v1/pending-devices?offset=0&limit=200",
+    "devices": "/v1/sites/SITE_ID/devices?offset=0&limit=200", "stats": "/v1/sites/SITE_ID/devices/DEVICE_ID/statistics/latest",
+    "clients": "/v1/sites/SITE_ID/clients?offset=0&limit=0", "wifi": "/v1/sites/SITE_ID/wifi/broadcasts?offset=0&limit=200",
+    "zones": "/v1/sites/SITE_ID/firewall/zones?offset=0&limit=200", "policies": "/v1/sites/SITE_ID/firewall/policies?offset=0&limit=200",
+}
+
+
+UNIFI_NOTES = {
+    "unifi_info": [plain("Newer version", "The API reports only the installed version, so DaemonSight cannot tell whether a newer one "
+                                           "exists. Check for updates in the UniFi app"),
+                   plain("Clients", "Only their count is read (limit=0): no client is listed by name, MAC or address")],
+    "unifi_devices": [plain("Firmware updates", "The API gives a yes or no (firmwareUpdatable), not the version the update brings"),
+                      plain("Down for", "The API gives no outage time. The hub counts from when it first saw the state, or from the "
+                                        "device's last heartbeat when that is earlier")],
+    "unifi_wifi": [plain("Passwords", "Never read. The list holds only each network's security type; the detail of one network, "
+                                       "which carries its passphrase, is never requested")],
+    "unifi_gateway": [plain("Port forwards", "The API lists none. Firewall policies are read instead, and only on a site with a gateway")],
+}
+
+
+def unifi_section(source: str, url_: str | None = None, interval: int = 60) -> dict:
+    """The panel for one UniFi source: the exact GET requests, how often, where the same thing is in the UniFi web UI, and curl
+    commands with a placeholder ($KEY: the real key is never shown anywhere)."""
+    from ..remote import unifi
+    src = unifi.SOURCES[source]
+    every = f"{max(unifi.SLOW_SECONDS, interval) // 60} min" if src.tier == unifi.SLOW else f"{interval} s"
+    base = (url_ or "https://CONTROLLER") + unifi.PREFIX
+    entries = [plain("UniFi web UI", src.menu), plain("How often", f"The hub reads it every {every}"),
+               plain("Who may read it", "The admin the key belongs to. The hub's key should be a View Only admin's"),
+               plain("The API", f"UniFi Network {unifi.SPEC_URL.split('/')[4]}: {unifi.SPEC_URL}")]
+    entries += UNIFI_NOTES.get(source, [])
+    for k in src.paths:
+        entries.append(text("The same read-only request, with the key in $KEY",
+                            f"curl -s -H \"X-API-KEY: $KEY\" {q(base + UNIFI_CURL[k])}"))
+    if url_:
+        entries.append(plain("curl and a self-signed certificate", "add --cacert with the certificate you pinned, or -k on a network you trust"))
+    return {"title": src.title, "read": "UniFi Network Integration API, GET only: " + ", ".join(unifi.SHOWN[k] for k in src.paths),
+            "entries": entries}
+
+
+def unifi_row(title: str, source: str, url_: str | None, extra: list[dict] | None = None) -> dict:
+    """The panel for one table row: which source it came from, and where in the UniFi web UI it can be changed."""
+    from ..remote import unifi
+    src = unifi.SOURCES[source]
+    entries = [plain("UniFi web UI", src.menu)] + (extra or [])
+    entries.append(plain("Read from", f"{', '.join(unifi.SHOWN[k] for k in src.paths)} (GET)"))
+    return {"title": title, "read": f"The hub's reading of {src.title.lower()}: see the card's panel for the request", "entries": entries}
+
+
+def unifi_updates() -> dict:
+    """The panel of the firmware card: what the API says about an update, and why there is no CVE list."""
+    from ..remote import unifi
+    return {"title": "Firmware updates and their CVEs",
+            "read": "The device list's firmwareUpdatable flag. The UniFi Network API names no version for the update, and gives no "
+                    "advisory or CVE for it",
+            "entries": [plain("Why no CVEs are listed", "Ubiquiti publishes its Security Advisory Bulletins as pages on its community "
+                                                         "site, with no feed or documented API, and the UniFi API does not say which "
+                                                         "version an update brings. There is nothing reliable to match, and DaemonSight "
+                                                         "does not guess"),
+                        plain("What would change it", "A feed of advisories with the fixed firmware version for each device model, "
+                                                      "and an API that names the version an update brings. DaemonSight does not guess a match"),
+                        url("Release notes and security advisory bulletins", unifi.RELEASES_URL, unifi.RELEASES_URL),
+                        url("The API's device fields", unifi.SPEC_URL, unifi.SPEC_URL),
+                        plain("If a match existed", "A UniFi device is a network device, so it would count as exposed; its CVEs would get "
+                                                    "their deadline from CISA BOD 26-04 like every other finding"),
+                        *prioritisation()]}

@@ -12,6 +12,7 @@ from .test_web import client, login, seeded  # noqa: F401 (fixture)
 PAGE_KEYS = {"": {"overview", "exposure", "routes", "services", "packages", "vulnerabilities", "fail2ban", "report"},
              "unraid": {"overview", "disks", "containers", "docker", "images", "vms", "notifications", "report"},
              "opnsense": {"overview", "firewall", "vpn", "network", "report"},
+             "unifi": {"overview", "devices", "wifi", "report"},
              "hub": {"hosts"}}
 
 

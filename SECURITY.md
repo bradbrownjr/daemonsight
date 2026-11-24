@@ -201,8 +201,8 @@ the password and secret it was made with.
 
 ## Remote sources
 
-The hub reads an Unraid server over its GraphQL API and an OPNsense firewall
-over its REST API. The hub makes these connections, which is the one exception to
+The hub reads an Unraid server over its GraphQL API, an OPNsense firewall
+over its REST API and a UniFi Network controller over its Integration API. The hub makes these connections, which is the one exception to
 "nothing connects to a host". A cloud provider's firewall is planned and will
 follow the same rules.
 
@@ -312,6 +312,32 @@ follow the same rules.
   the fields it names: Caddy's reply includes the DNS provider API key and the
   ACME e-mail, WireGuard's includes public keys (cut to 8 characters), and
   Tailscale's lists peer names (only a count is kept).
+
+- **UniFi keys are not read-only, and the hub cannot check.** A UniFi API key has the
+  power of the admin who made it, and the Integration API has no call that
+  reports it (the only call that is not about a site, a device or a client is
+  `GET /v1/info`, which gives the version). So Test connection does not and
+  cannot show the key's role; it says so on the page, and DaemonSight never
+  tries a write to find out. Make the key as a dedicated local admin with the
+  View Only role. Protection is in two places. The hub's client sends GET only
+  (the same class as for OPNsense), to a fixed list of path patterns: the list
+  endpoints for sites, devices, pending devices, Wi-Fi networks, firewall zones
+  and policies, a device's statistics, and a client list asked only for its
+  count (`limit=0`). It refuses any other path before anything is sent, so no
+  detail, action, voucher or client-identity path can be requested; it follows
+  no redirects and caps a reply at 8 MiB. Tests fail on any other method and
+  any path outside the list. And the key's admin can only view. Whether a View
+  Only admin can make a key at all, and what that key can do, was not checked
+  against a controller; see the unverified list in docs/DESIGN.md, "UniFi
+  Network".
+- **UniFi key.** Stored as one line in `<data>/remotes/<id>.key`, mode 0600, with
+  the same rules as the other keys: never in the database, a page, a log line, an
+  event or a request URL, and panels show a `$KEY` placeholder. It goes only in
+  the `X-API-KEY` header. A Wi-Fi network's passphrase is never read: the hub asks
+  for the list of networks, which carries only the security type, never for one
+  network's detail, which carries the passphrase. The parsers copy named fields
+  only, so a passphrase that did arrive would be dropped. Clients are counted
+  and never named. The key is in a backup of the data folder like the others.
 
 ## The Docker reader
 

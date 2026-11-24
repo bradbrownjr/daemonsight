@@ -87,7 +87,7 @@ GROUPS = {
                "intro": "Scheduled backups of the database, config file and secrets. The folder is set in the "
                         "config file only.", "note": ""},
     "remote": {"title": "Remote systems", "hub_only": True,
-               "intro": "Reading systems that have no collector (Unraid and OPNsense) over their API. Systems are added "
+               "intro": "Reading systems that have no collector (Unraid, OPNsense and UniFi Network) over their API. Systems are added "
                         "under Hosts, Add a system; each one sets its own read interval there.", "note": ""},
 }
 
@@ -152,7 +152,10 @@ FIELDS: tuple[Field, ...] = (
     Field("backup.keep", "Keep the newest", "backup", "int",
           "How many backups to keep; older ones are deleted.", 1, 365, unit="backups"),
     Field("remote.enabled", "Read remote systems", "remote", "bool",
-          "Off stops all reading of Unraid systems. Their last data stays on the pages."),
+          "Off stops all reading of Unraid, OPNsense and UniFi systems. Their last data stays on the pages."),
+    Field("remote.unifi_offline_hours", "UniFi device offline for", "remote", "float",
+          "A UniFi device the controller shows as offline, disconnected or isolated for this long is a High finding for a "
+          "gateway or access point, Medium for a switch.", 0.25, 720, unit="hours"),
 )
 BY_KEY = {f.key: f for f in FIELDS}
 

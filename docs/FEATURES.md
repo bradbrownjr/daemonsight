@@ -112,6 +112,26 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   live (disk usage, temperature, parity checks) are not repeated as findings but
   stay listed on the Notifications page.
 
+## UniFi Network
+
+- **Read over its API.** The hub polls the UniFi Network Integration API with
+  one key, no agent. The API has no read-only key and no call that says what a
+  key may do, so the key belongs to a local admin with the View Only role and
+  DaemonSight sends GET only, to a fixed list of endpoints. Test connection
+  says plainly that the key's role cannot be checked.
+- **Pages.** Devices (model, firmware, state, how long one has been down),
+  devices waiting for adoption, Wi-Fi networks with their security type, the
+  controller version, clients as a count, and on a site with a gateway its
+  firewall policies. A Wi-Fi password is never read.
+- **Findings.** A firmware update waiting (one finding for all devices), a
+  device offline for 2 hours or more (a setting), a device waiting for
+  adoption, an open Wi-Fi network that is not a guest portal, WEP or original
+  WPA if a controller reports them, and a gateway policy that lets the internet
+  in.
+- **CVEs.** Not listed. The API says an update exists, not which version it
+  brings, and Ubiquiti publishes its advisories as web pages with no feed. The
+  Updates card says so and links the release notes.
+
 ## OPNsense and CrowdSec
 
 - **Read over its API.** The hub polls an OPNsense firewall with a dedicated
@@ -204,7 +224,7 @@ DaemonSight checks one question: what is exposed or out of date, and what do I d
 | | Metrics and uptime monitors (Netdata, Uptime Kuma) | SIEMs and host agents (Wazuh) | DaemonSight |
 |---|---|---|---|
 | Main job | Health, load, availability | Log analysis, intrusion detection, compliance | Exposure, patching and change findings |
-| Needs an agent on every system | Often | Yes | A collector on Linux hosts only; none on Unraid or OPNsense |
+| Needs an agent on every system | Often | Yes | A collector on Linux hosts only; none on Unraid, OPNsense or UniFi |
 | Cross-checks (a public port with no firewall rule or jail, a route with a dead upstream) | No | Not as one finding | Yes |
 | Logs and alerts | Yes | Yes | Not yet: planned (see [DESIGN.md](DESIGN.md#phases)) |
 

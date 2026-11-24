@@ -181,7 +181,27 @@ def _opnsense_host(cfg: Config, snaps: dict) -> dict:
     }
 
 
+def _unifi_host(cfg: Config, snaps: dict) -> dict:
+    """The header facts for a UniFi Network controller the hub reads over its API."""
+    info = snaps.get("unifi_info")
+    d = info.data if info and info.data and info.data.get("available") is not False else {}
+    seen = info or snaps.get("unifi_devices")
+    now = time.time()
+    fresh = seen is not None and now - seen.taken_at < cfg.collector.interval_system * 4
+    ago = fmt_ago(seen.taken_at) if seen else "never"
+    return {
+        "id": cfg.host_id, "kind": cfg.kind, "kind_label": "UniFi Network",
+        "os": f"UniFi Network {d['version']}" if d.get("version") else "UniFi Network",
+        "kernel": None, "virt": None,
+        "support": {"status": "supported", "label": "", "plain": True, "badge": "bg-secondary-lt"},
+        "uptime": None, "collected_ago": ago, "fresh": fresh,
+        "status_text": f"Read {ago}" if fresh else f"Not reachable \u00b7 last read {ago}",
+    }
+
+
 def _host(cfg: Config, snaps: dict) -> dict:
+    if cfg.kind == "unifi":
+        return _unifi_host(cfg, snaps)
     if cfg.kind == "unraid":
         return _unraid_host(cfg, snaps)
     if cfg.kind == "opnsense":
@@ -1222,7 +1242,8 @@ def hosts_menu(conn) -> list[dict]:
 def _remote_row(conn, h, r, now: float, findings, findings_v) -> dict:
     """A Hosts page row for a system the hub reads over its API."""
     opn = r["kind"] == "opnsense"
-    snap = db.get_snapshot(conn, h["id"], "opnsense_firmware" if opn else "unraid_system")
+    uni = r["kind"] == "unifi"
+    snap = db.get_snapshot(conn, h["id"], "opnsense_firmware" if opn else "unifi_info" if uni else "unraid_system")
     data = snap.data if snap and snap.data and snap.data.get("available") is not False else {}
     if not r["enabled"]:
         state, badge = "Disabled", "bg-secondary-lt"
@@ -1235,8 +1256,8 @@ def _remote_row(conn, h, r, now: float, findings, findings_v) -> dict:
     host = urlsplit(r["url"]).netloc
     from ..remote import release
     ver = data.get("version")
-    latest = release.stored(conn) if not opn else None
-    label = "OPNsense" if opn else "Unraid"
+    latest = release.stored(conn) if not (opn or uni) else None
+    label = "OPNsense" if opn else "UniFi Network" if uni else "Unraid"
     return {
         "id": h["id"], "kind": r["kind"], "kind_label": f"{label} {ver} \u00b7 API" if ver else f"{label} \u00b7 API",
         "os_update": (data.get("new_version") or "") if opn and data.get("count") else (latest["version"] if release.newer(latest, ver) else ""),

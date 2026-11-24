@@ -687,16 +687,15 @@ Per the core rule in "Goal", these gaps are on the roadmap:
   pending updates and Debian CVEs with no wider API role. Proxmox's own
   packages (`pve-*`, `proxmox-*`) aren't in Debian's tracker; research whether
   Proxmox publishes advisories for them before building.
-- **UniFi, FortiGate, Meraki, Aruba, XCP-ng:** each design lists where its
+- **UniFi:** done as far as it can be: Ubiquiti publishes no machine-readable
+  advisory data, so the card says so and links the release notes (see "UniFi
+  Network").
+- **FortiGate, Meraki, Aruba, XCP-ng:** each design lists where its
   firmware or patch advisories come from, or says none exist.
 
-#### Next (in use by the owner)
+#### Built
 
-**UniFi.** Reads the UniFi Network Integration API (`X-API-KEY`): devices with state and firmware, Wi-Fi networks
-with their security type, clients as a count, and the controller version. Key: a dedicated local admin with the
-View Only role (the API does not say a key can be made read-only, so this is documented, not checked). Findings:
-firmware update waiting, a device offline, an open Wi-Fi network that is not a guest network, a device waiting
-for adoption; on a site with a gateway, port forwards and firewall policies as for OPNsense. See [UniFi](planned-sources.md#unifi-next-the-owner-runs-it).
+**UniFi Network** is built; see "UniFi Network" under "Remote sources".
 
 #### Staged, built when someone needs it
 
@@ -1811,7 +1810,7 @@ like the CVE loop, polls each enabled system. Systems are added, edited,
 disabled and removed in the hub's web UI (Hosts, "Add a system"); there is no
 config file entry for them. `[remote] enabled = false`, or "Read remote systems"
 on the Settings page, switches the polling off; the loop reads it every pass. Keys are files under the hub's data folder, never in the database or
-`config.toml`, and the client sends only reads. Unraid and OPNsense are done.
+`config.toml`, and the client sends only reads. Unraid, OPNsense and UniFi are done.
 
 ### OPNsense
 
@@ -2335,6 +2334,96 @@ source, not the swagger file, and an older CrowdSec that ignores it would only r
 size); the status for a wrong key (403, from `api_key.go`). The docs name no version in which allowlists arrived (the swagger
 on `master` has them). LAPI TLS: a `https://` address is checked against the usual authorities only; pinning a self-signed LAPI
 certificate is not built.
+
+### UniFi Network
+
+Done, and not yet seen against a live controller (see "Unverified" below). The hub reads the UniFi Network Integration
+API with one API key in the `X-API-KEY` header. Every request is a GET. Each source is stored as a `unifi_*` snapshot,
+polled by `remote/poll.py`, turned into findings by `remote/unifi_rules.py`, and shown on the controller's own pages
+(Overview, Devices, Wi-Fi, Report).
+
+**Sources.** The API is Ubiquiti's published OpenAPI document for UniFi Network 11.0.97
+(https://developer.ui.com/network/v11.0.97/openapi.json, read 2026-11-24; the list of operations is in
+https://developer.ui.com/network/v11.0.97/llms.txt, which also states that all APIs use the `X-API-KEY` header). A local
+console serves it at `https://<console>/proxy/network/integration`. Lists are paged with `offset` and `limit` (at most
+200); the hub reads at most 5 pages of a list and 10 sites.
+
+| Snapshot | Reads | Cadence |
+|----------|-------|---------|
+| `unifi_info` | `/v1/info` (application version), `/v1/sites`, and per site `/clients` asked with `limit=0`, which gives only the count | the interval |
+| `unifi_devices` | `/v1/sites/{siteId}/devices` (name, model, state, firmware, `firmwareUpdatable`, `supported`, features), `/v1/pending-devices`, and for a device that is not online `/devices/{deviceId}/statistics/latest` (`lastHeartbeatAt`; at most 20 a poll) | the interval |
+| `unifi_wifi` | `/v1/sites/{siteId}/wifi/broadcasts` (name, enabled, security type, bands, hotspot type) | 5 minutes, or the interval if longer |
+| `unifi_gateway` | only when a site has a device with the `gateway` feature: `/firewall/zones` and `/firewall/policies` | 5 minutes, or the interval if longer |
+
+The whitelist is these path patterns and nothing else, each compared as a whole string with its query. A detail path,
+an action path (restart, upgrade, adopt), a voucher, a client list with names and any other query are refused before a
+request is sent. It is the same `Rest` class as OPNsense, with the key in a header and a list of patterns where
+OPNsense has a list of strings.
+
+**What the key can do, and what Test checks.** The document declares no security scheme, so it says nothing about a
+key's scope, and it has no "who am I" operation: the only call that is not about a site, a device or a client is
+`GET /v1/info`, which returns the version. Third-party write-ups say a key has the permissions of the admin who made it
+(https://artofwifi.net/blog/unifi-api-authentication-local-admin-vs-api-key-vs-site-manager); Ubiquiti's help article
+(https://help.ui.com/hc/en-us/articles/30076656117655) describes making a key in the Network app under Integrations. So
+there is no read-only key, and DaemonSight cannot check what a key may do. Test connection reads the version, sites,
+devices and Wi-Fi list, reports "Connected. The key is accepted and can read.", and always shows that it cannot check the
+key is read-only, that it never tries a write, and that the key should belong to a local admin with the View Only role.
+It refuses a key that cannot read the sites or cannot read any of the devices and Wi-Fi networks, and a controller with
+no sites.
+
+**Secrets.** The Wi-Fi list carries only each network's security type. The detail of one network carries `passphrase`
+and `presharedKeys` (the `...DetailDto` schemas in the document), and the whitelist never allows that path. The parser
+copies named fields only, so a passphrase that did arrive in a list would be dropped; a test feeds one and checks it is in
+no table. Clients are counted (`limit=0`) and never listed: a client's name, MAC and address are not read.
+
+**Findings.** Each has a "What to do" list with the UI path, and an accept basis (what an acceptance is tied to, so the
+finding returns as Changed when that changes).
+
+| Rule | Severity | Raised when | Accept basis |
+|------|----------|-------------|--------------|
+| `unifi.fw_update` | low; medium once the hub has seen an update waiting for 30 days | any device has `firmwareUpdatable`; one finding for all, listing them | the set of devices and their firmware versions |
+| `unifi.device_offline` | high for an access point or gateway, medium for other devices | state OFFLINE, CONNECTION_INTERRUPTED or ISOLATED for the offline setting or longer (2 hours by default, Settings, Remote systems) | the device |
+| `unifi.pending_adoption` | medium | a device in `pending-devices` | the device's MAC |
+| `unifi.wifi_open` | high | an enabled network with security type OPEN that is not a hotspot portal (a guest portal is open on purpose) | the network |
+| `unifi.wifi_legacy` | medium | an enabled network with a WEP or original WPA type; the 11.0.97 enum lists neither, so this fires only if a controller reports one | the network |
+| `unifi.gateway_forward` | medium | gateway sites only: an enabled ALLOW firewall policy from the External zone into another zone that UniFi did not define itself | the policy |
+
+The API has no offline time, so the hub counts from its first sight of the state, or from the device's last heartbeat
+when that is earlier, so an outage that began before the hub looked is dated correctly at the first poll.
+
+**Updates and CVEs.** The core rule is that an update comes with the CVEs it fixes. For UniFi this cannot be done, and the
+card says so. The API gives a flag (`firmwareUpdatable`) and no target version, so a pending update cannot be matched to
+anything. Ubiquiti publishes its security advisories as "Security Advisory Bulletins" posts on community.ui.com, with no
+feed or API to read them from, and releases at https://community.ui.com/releases. CVE.org holds records for the Network
+Application (with version ranges), but there is no list to discover them from and nothing maps a device's firmware to one.
+So DaemonSight does not guess a mapping, does not rank anything with `cve/priority.py`, and invents no CVE. The Overview's
+Firmware updates card lists the devices with an update waiting, links the release notes and states that Ubiquiti
+publishes no machine-readable advisory data; its (i) panel gives the reasons and the CISA BOD 26-04 entries a mapping
+would use (network devices count as exposed). A follow-up could match the Network Application's own version against its
+CVE.org records, which would cover the controller and not the devices.
+
+**What the API does not give.** There is no latest controller version, so there is no "controller is out of date"
+finding and the page says it cannot tell. There is no NAT or port-forward operation, so the gateway rule reads firewall
+policies and the page says it lists no port forwards. There is no target firmware version (above). Unsupported-device,
+WPA3-only and WAN-down findings were left out: the first two are not requested and WAN-down needs an endpoint this
+version's document does not list for it.
+
+**Pages.** Overview (findings, a Firmware updates card, at a glance, recent changes), Devices (controller and sites,
+devices, devices waiting for adoption, gateway firewall), Wi-Fi (networks with security type, bands and guest portal) and
+Report. Each table has (i) panels naming the GET request with a `$KEY` placeholder; Manage on the Hosts page opens the
+edit page.
+
+**TLS.** UniFi OS presents a self-signed certificate unless one is installed, so the certificate pin applies as for the
+other systems.
+
+**Unverified.** Nothing here has been run against a controller; replies are synthetic, in the shape of the 11.0.97
+document. Only a live controller can confirm: that a View Only admin can create an Integrations key at all, and that its
+key can read everything above and cannot write; what `statistics/latest` returns for an offline device (the heartbeat
+dating depends on it); the name of the zone for the internet ("External") and whether the policies UniFi makes for a port
+forward appear as ALLOW policies from it; the menu names used in the how-tos (Admins, Integrations, Devices, Settings, WiFi,
+Policy Table), taken from Ubiquiti's help pages and the app; the port and address of a standalone self-hosted Network
+application (only UniFi OS consoles and UniFi OS Server are assumed); and whether the 10.x controllers the owner runs serve
+every endpoint of the 11.0.97 document.
 
 ### Unraid
 

@@ -7,7 +7,7 @@
 
 <h1 align="center">DaemonSight</h1>
 
-<p align="center"><strong>Self-hosted security dashboard for Linux servers, Docker, Unraid and OPNsense</strong></p>
+<p align="center"><strong>Self-hosted security dashboard for Linux servers, Docker, Unraid, OPNsense and UniFi</strong></p>
 
 <p align="center">
   <a href="https://github.com/bradbrownjr/daemonsight/actions/workflows/image.yml"><img src="https://github.com/bradbrownjr/daemonsight/actions/workflows/image.yml/badge.svg" alt="Hub image build status"></a>
@@ -23,7 +23,7 @@
 ## What it is
 
 DaemonSight is a self-hosted dashboard for home-lab and small-business admins
-who run a VPS, Docker hosts, Unraid or an OPNsense firewall. It shows each
+who run a VPS, Docker hosts, Unraid, an OPNsense firewall or UniFi Wi-Fi. It shows each
 server's attack surface (what the internet can reach), the packages and
 container images with known CVEs, and what changed, all from one hub. It reads
 the tools already on each server, checks them against each other and says what
@@ -37,8 +37,8 @@ one list of what to fix, without a SIEM.
 - One place for findings across all your hosts, each with the command that fixes it.
 - What the internet can actually reach: listening ports, Caddy routes, port forwards and, if you turn it on, Shodan.
 - Every update finding gets a deadline from CISA BOD 26-04 (exposure, KEV, SSVC), not a CVSS score.
-- Read-only and least-privilege by design: a Viewer-only key for Unraid, GET-only calls to OPNsense.
-- No agent on Unraid or OPNsense; the hub reads their APIs.
+- Read-only and least-privilege by design: a Viewer-only key for Unraid, GET-only calls to OPNsense and UniFi.
+- No agent on Unraid, OPNsense or UniFi; the hub reads their APIs.
 - Accepted findings stay visible with a label, and come back if what you accepted changes.
 
 ## What it monitors
@@ -52,6 +52,7 @@ one list of what to fix, without a SIEM.
 | Container image CVEs | Debian, Alpine and Ubuntu images |
 | Unraid | GraphQL API, Viewer-only key |
 | OPNsense and CrowdSec | REST API, GET only, and the project's changelog, with the FreeBSD and GitHub advisories it names, for the CVEs a pending update fixes; CrowdSec Local API, read-only key |
+| UniFi Network | Integration API, GET only, with a View Only admin's key: devices, firmware updates, Wi-Fi security, clients as a count |
 | Seen from outside | Shodan InternetDB or API (off by default) |
 
 Details, and how it differs from general monitors and SIEMs: [docs/FEATURES.md](docs/FEATURES.md).

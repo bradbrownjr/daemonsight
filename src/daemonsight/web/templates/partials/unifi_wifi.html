@@ -1,0 +1,36 @@
+{% from "_macros.html" import src, status_cell with context %}
+<div id="live" hx-get="{{ base }}/partials/wifi" hx-trigger="every 30s" hx-swap="outerHTML">
+{% if v %}
+<section class="card mb-4" id="networks" aria-labelledby="wifi-title" data-section{% if not v.networks %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="wifi-title">Wi-Fi networks</h2>{{ src("src-wifi", v.src.wifi) }}
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.networks|length }} total</div>
+  </div>
+  {% if v.wifi_state.state != 'ok' %}
+  <div class="card-body text-secondary">{{ v.wifi_state.reason }}</div>
+  {% elif not v.networks %}
+  <div class="card-body text-secondary">No Wi-Fi networks are configured.</div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table" data-table="unifi-wifi">
+      <thead><tr><th data-sort="text">Network</th><th data-sort="text">Site</th><th data-sort="text">On</th><th data-sort="text">Security</th><th data-sort="text">Bands</th><th data-sort="text">Guest portal</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for n in v.networks %}
+        <tr id="{{ n.anchor }}" data-row>
+          <td data-label="Network"><strong>{{ n.name }}</strong>{{ src("src-w-" ~ loop.index, n.src) }}</td>
+          <td data-label="Site">{{ n.site or '—' }}</td>
+          <td data-label="On"><span class="badge {{ 'bg-green-lt' if n.enabled else 'bg-secondary-lt' }}">{{ 'on' if n.enabled else 'off' }}</span></td>
+          <td data-label="Security"><span class="badge {{ 'bg-red-lt' if n.weak else 'bg-secondary-lt' }}">{{ n.security }}</span></td>
+          <td data-label="Bands">{{ n.bands }}</td>
+          <td data-label="Guest portal">{{ n.guest }}</td>
+          <td data-label="Status" data-v="{{ n.status.label if n.status else '' }}">{{ status_cell(n.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No networks match the filter.</div>
+</section>
+{% endif %}
+</div>
