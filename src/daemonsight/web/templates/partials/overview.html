@@ -109,11 +109,12 @@
     {% if cv.rows %}
     <div class="table-responsive">
       <table class="table table-vcenter card-table" data-table="{{ table }}">
-        <thead><tr><th data-sort="text">CVE</th><th data-sort="num">EPSS</th><th data-sort="text">KEV</th><th data-sort="text">Fixed in</th><th data-sort="text">Changelog line</th></tr></thead>
+        <thead><tr><th data-sort="text">CVE</th><th data-sort="num">Fix within</th><th data-sort="num">EPSS</th><th data-sort="text">KEV</th><th data-sort="text">Fixed in</th><th data-sort="text">Changelog line</th></tr></thead>
         <tbody>
           {% for c in cv.rows %}<tr data-row>
             <td class="font-monospace" data-label="CVE"><a href="{{ c.url }}" target="_blank" rel="noopener noreferrer">{{ c.cve }}</a></td>
-            <td data-v="{{ c.epss_v }}" data-label="EPSS">{{ c.epss_text }}</td>
+            <td data-v="{{ c.fix.v }}" data-label="Fix within"><span class="badge {{ c.fix.badge }}" title="{{ c.fix.title }}">{{ c.fix.text }}</span>{% if c.fix.triage %} <span class="badge bg-red-lt" title="This row also asks for forensic triage">+ triage</span>{% endif %}{% if c.fix.estimated %} <span class="text-secondary small" title="CISA has not rated this CVE: estimated by DaemonSight">est.</span>{% endif %}</td>
+            <td data-v="{{ c.epss_v }}" data-label="EPSS">{{ c.epss_text }}{% if c.cvss %}<div class="text-secondary small">{{ c.cvss }}, information only</div>{% endif %}</td>
             <td data-v="{{ 0 if c.kev else 1 }}" data-label="KEV">{% if c.kev %}<span class="badge bg-red text-red-fg" title="{{ c.kev_name }}">KEV</span>{% else %}—{% endif %}</td>
             <td data-label="Fixed in"><a href="{{ c.changelog }}" target="_blank" rel="noopener noreferrer">{{ c.release }}</a>{% if c.date %}<div class="text-secondary small">{{ c.date }}</div>{% endif %}</td>
             <td data-label="Changelog line" class="text-wrap">{{ c.line }}{% if c.via %}<div class="text-secondary small">via {% for v in c.via %}{% if v.url %}<a href="{{ v.url }}" target="_blank" rel="noopener noreferrer">{{ v.label }}</a>{% else %}{{ v.label }}{% endif %}{{ ', ' if not loop.last }}{% endfor %}</div>{% endif %}</td>
@@ -151,6 +152,7 @@
       {% if cv.headline %}<strong>{{ cv.headline }}</strong>{% if cv.kev %} <span class="badge bg-red text-red-fg" title="On CISA's Known Exploited Vulnerabilities list">{{ cv.kev }} exploited (KEV)</span>{% endif %}
       {% else %}<span class="text-secondary">{{ cv.text }}</span>{% endif %}
       {{ src_button("src-fw-cves", "CVEs this update fixes") }}
+      {% if cv.deadline %}<div class="mt-1">{{ cv.deadline }}{% if cv.why %}<details class="small text-secondary"><summary>Why this deadline</summary><ol class="ps-4 mb-1">{% for l in cv.why %}<li>{{ l }}</li>{% endfor %}</ol></details>{% endif %}</div>{% endif %}
       {% if cv.error %}<div class="text-red small mt-1">{{ cv.error }}</div>{% endif %}
       {% if cv.note %}<div class="text-secondary small mt-1">{{ cv.note }}</div>{% endif %}
     </div>

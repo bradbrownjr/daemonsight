@@ -13,11 +13,12 @@ Per image the analysis gives:
   updates and is shown, not counted.
 * `docker.image_cves`: one finding per Debian, Ubuntu or Alpine image that has CVEs the Debian tracker, Canonical's Ubuntu OVAL
   (cve/ubuntu.py) or Alpine's secdb (cve/alpine.py) lists as fixed in a newer version of a package the image holds. A fix that
-  exists only in Ubuntu Pro's ESM archives is not one an image can take, so it is counted and shown, never raised. Severity as for a host (cve/match.py, `package_findings`): High when a fixable CVE is on
-  CISA's KEV list or has an EPSS score at or above `[cve] epss_high`, otherwise Medium. CVEs with no fix yet are counted
-  and shown as information; they do not raise the finding, because updating the image cannot fix them. (A host's
-  `cve.package` also raises High for an unfixed KEV CVE, since the host's owner may mitigate it; an image has nothing
-  to apply.) Alpine's secdb only records fixes, so an Alpine image has no unfixed count.
+  exists only in Ubuntu Pro's ESM archives is not one an image can take, so it is counted and shown, never raised. Severity and
+  deadline as for a host (cve/priority.py, CISA BOD 26-04): the worst fixable CVE of the image, rated for the image's exposure
+  (cve/exposure.py `image_exposures`: exposed when a running container from it publishes a port that an OPNsense port forward or
+  Caddy site sends the internet to). CVEs with no fix yet are counted and shown as information; they do not raise the finding,
+  because updating the image cannot fix them. (A host's `cve.package` also raises for an unfixed KEV CVE, since the host's owner
+  may mitigate it; an image has nothing to apply.) Alpine's secdb only records fixes, so an Alpine image has no unfixed count.
 
 The CVE chore (cve/run.py) matches each image under the pseudo-host id `docker:<host>:<image id>`, which cannot clash
 with a real host (a host id has no colon). `load_cves` reads those matches; poll.py gives them to `evaluate` at each
@@ -30,7 +31,7 @@ from datetime import date
 from functools import cmp_to_key
 
 from .. import distro, findings as rules
-from ..cve import alpine, apkver, ubuntu
+from ..cve import alpine, apkver, exposure as cve_exposure, priority, ubuntu
 from ..findings import Finding, digest
 from . import docker_storage as ds
 
@@ -48,13 +49,13 @@ HOWTO_CVES_ALPINE = "\n".join((
     "Update the image: on Unraid, open the Docker tab, press Check for Updates, then apply the update. Or pull a newer tag of the same app",
     "Running apk upgrade inside the container does not help: the change is lost when the container is created again",
     "If no newer image exists, the app's maintainer has not rebuilt it yet. Ask them to, or look for an alternative image",
-    "The CVEs are listed on the Container images page, each with its exploit score and whether it is on CISA's KEV list",
+    "The CVEs are listed on the Container images page, each with its deadline, exploit probability and whether it is on CISA's KEV list",
     "The finding goes away when the image no longer holds the vulnerable package versions"))
 HOWTO_CVES = "\n".join((
     "Update the image: on Unraid, open the Docker tab, press Check for Updates, then apply the update. Or pull a newer tag of the same app",
     "Running apt upgrade inside the container does not help: the change is lost when the container is created again",
     "If no newer image exists, the app's maintainer has not rebuilt it yet. Ask them to, or look for an alternative image",
-    "The CVEs are listed on the Container images page, each with its exploit score and whether it is on CISA's KEV list",
+    "The CVEs are listed on the Container images page, each with its deadline, exploit probability and whether it is on CISA's KEV list",
     "The finding goes away when the image no longer holds the vulnerable package versions"))
 
 
@@ -243,21 +244,25 @@ def _ubuntu_state(cdb, release: str) -> dict:
 
 def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
     """What the CVE chore found for this system's Debian, Ubuntu and Alpine images, for `evaluate` and the page:
-    {"enabled", "available", "epss_high", "feed_at", "alpine": {release: {"state", "ok_at", "error"}},
-    "ubuntu": {codename: {...the same}}, "images": {image id: {"matched": bool, "cves": [...], "note": str}}}.
+    {"enabled", "available", "epss_automatable", "feed_at", "alpine": {release: {"state", "ok_at", "error"}},
+    "ubuntu": {codename: {...the same}}, "images": {image id: {"matched": bool, "cves": [...], "note": str, "exposure": cve/exposure.Exposure}}}.
     None when the stored summary has no package lists."""
     if not data or not data.get("image_packages"):
         return None
     from .. import settings
     from ..cve import match, store
     eff = settings.effective(cfg, state_conn)
-    out = {"enabled": eff.cve.enabled, "available": False, "epss_high": eff.cve.epss_high, "feed_at": None, "alpine": {},
+    priority.use(eff.data_dir)
+    out = {"enabled": eff.cve.enabled, "available": False, "epss_automatable": eff.cve.epss_automatable, "feed_at": None, "alpine": {},
            "ubuntu": {}, "images": {}}
     if not eff.cve.enabled:
         return out
     cdb = store.connect_reader(cfg.cve_db_path)
     if cdb is None:
         return out
+    from .. import db
+    snap = db.get_snapshot(state_conn, host, "unraid_docker")
+    exposures = cve_exposure.image_exposures(state_conn, host, data, snap.data if snap and snap.data else None)
     try:
         out["available"] = True
         feed = cdb.execute("SELECT ok_at FROM feed WHERE name = 'debian'").fetchone()
@@ -282,6 +287,7 @@ def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
             row = cdb.execute("SELECT note FROM matched WHERE host = ?", (ph,)).fetchone()
             done = row is not None and not pending
             out["images"][e["image_id"]] = {"matched": done, "note": (row["note"] or "") if row else "",
+                                            "exposure": exposures.get(e["image_id"]) or cve_exposure.unknown([]),
                                             "cves": match.host_cves(cdb, ph, ("fix", "esm", "nofix")) if done else []}
     finally:
         cdb.close()
@@ -299,16 +305,19 @@ def _ref(iid: str, containers: list[dict], images: dict[str, dict]) -> str:
     return ds.image_name(img) if img else ds.short_id(iid)
 
 
-def cve_summary(cves: list[dict], epss_high: float) -> dict:
-    """Counts and the worst CVEs of one image's matches, ranked as a host's are (KEV, then EPSS)."""
+def cve_summary(cves: list[dict], epss_automatable: float, exposure=None) -> dict:
+    """Counts and the worst CVEs of one image's matches, most urgent first (CISA BOD 26-04 timeline, then EPSS: cve/priority.py),
+    each gaining its "rating". `exposure` is the image's (cve/exposure.Exposure). The image's severity is its worst fixable CVE's."""
     from ..cve import match
-    fixable = sorted((c for c in cves if c["state"] == "fix"), key=match.rank_key)
+    exposure = exposure or cve_exposure.unknown([])
+    priority.attach(cves, exposure.exposed, epss_automatable)
+    fixable = [c for c in cves if c["state"] == "fix"]
     unfixed = [c for c in cves if c["state"] == "nofix"]
-    esm = sorted((c for c in cves if c["state"] == "esm"), key=match.rank_key)   # Ubuntu: fixed only in the Pro archives
+    esm = [c for c in cves if c["state"] == "esm"]       # Ubuntu: fixed only in the Pro archives
     kev = [c for c in fixable if c["kev"]]
-    hot = [c for c in fixable if not c["kev"] and (c["epss"] or 0) >= epss_high]
-    return {"fixable": fixable, "unfixed": len(unfixed), "esm": esm, "kev": kev, "hot": hot,
-            "severity": "high" if kev or hot else "medium" if fixable else None}
+    worst = fixable[0] if fixable else None
+    return {"fixable": fixable, "unfixed": len(unfixed), "esm": esm, "kev": kev, "worst": worst, "exposure": exposure,
+            "severity": worst["rating"].severity if worst else None}
 
 
 def analyze(data: dict | None, unraid_docker: dict | None = None, cves: dict | None = None,
@@ -325,7 +334,7 @@ def analyze(data: dict | None, unraid_docker: dict | None = None, cves: dict | N
             by_image.setdefault(c["image_id"], []).append(c)
     rows = []
     counts = {"read": 0, "stopped": 0, "waiting": 0, "failed": 0, "other_os": 0, "debian": 0, "ubuntu": 0, "alpine": 0}
-    epss_high = (cves or {}).get("epss_high", 0.10)
+    epss_auto = (cves or {}).get("epss_automatable", 0.04)
     for e in data["image_packages"]:
         iid = e["image_id"]
         cs = by_image.get(iid, [])
@@ -368,9 +377,10 @@ def analyze(data: dict | None, unraid_docker: dict | None = None, cves: dict | N
             elif kind == "ubuntu" and (cves.get("ubuntu") or {}).get(row["ubuntu_release"], {}).get("state") == "absent":
                 row["cve"] = {"state": "absent", "release": row["ubuntu_release"], "label": os_name(e["os"])}
             else:
-                row["cve"] = {"state": "matched", "note": m.get("note") or "", **cve_summary(m["cves"], epss_high)}
+                row["cve"] = {"state": "matched", "note": m.get("note") or "", **cve_summary(m["cves"], epss_auto, m.get("exposure"))}
         rows.append(row)
-    rows.sort(key=lambda r: (r["support"]["status"] not in ("eol", "ended"), -(len((r["cve"] or {}).get("fixable") or [])), r["name"].lower()))
+    rows.sort(key=lambda r: (r["support"]["status"] not in ("eol", "ended"),
+                             (r["cve"]["worst"]["rating"].order if (r["cve"] or {}).get("worst") else (10 ** 7,)), r["name"].lower()))
     return {"rows": rows, "counts": counts, "generated": data.get("generated"), "cves": cves,
             "eol": [r for r in rows if r["support"]["status"] in ("eol", "ended")]}
 
@@ -401,18 +411,19 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
         c = r["cve"]
         if not c or c["state"] != "matched" or not c["fixable"]:
             continue
-        fixable, kev, hot = c["fixable"], c["kev"], c["hot"]
+        fixable, kev = c["fixable"], c["kev"]
         n = len(fixable)
+        top = c["worst"]["rating"]
         title = f"{r['name']} ({r['os_name']}): {n} fixable {_plural(n, 'CVE', 'CVEs')}"
         if kev:
             title += f", {len(kev)} known exploited"
-        elif hot:
-            title += f", {len(hot)} with a high exploit score"
+        title += "; " + top.deadline.split(" (")[0][0].lower() + top.deadline.split(" (")[0][1:]
         label = "Ubuntu priority" if r["kind"] == "ubuntu" else "Debian urgency"
-        top = ", ".join(match._describe(x, label) for x in fixable[:SHOWN_CVES]) + (f" and {n - SHOWN_CVES} more" if n > SHOWN_CVES else "")
+        shown = ", ".join(match._describe(x, label) for x in fixable[:SHOWN_CVES]) + (f" and {n - SHOWN_CVES} more" if n > SHOWN_CVES else "")
         source = {"alpine": "Alpine's security database (secdb)", "ubuntu": "Canonical's Ubuntu OVAL data"}.get(r["kind"], "Debian's security tracker")
-        detail = (f"The image holds package versions that {source} lists as fixed in newer ones ({r['os_name']}). "
-                  f"Top CVEs: {top}.")
+        lead, why = match.finding_text(c["worst"], c["exposure"].why)
+        detail = (f"{lead} The image holds package versions that {source} lists as fixed in newer ones ({r['os_name']}). "
+                  f"Top CVEs: {shown}.")
         if c["unfixed"]:
             detail += f" {c['unfixed']} more in the image have no fix yet; they are listed on the page and raise nothing."
         if c.get("esm"):
@@ -420,6 +431,6 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
                        "they are listed on the page and raise nothing.")
         out.append(Finding("docker.image_cves", r["name"], c["severity"], title[:300], detail[:3900],
                            f"{LINK}#{r['anchor']}", None, f"{r['repo']}:{digest(x['cve'] for x in fixable)}",
-                           HOWTO_CVES_ALPINE if r["kind"] == "alpine" else HOWTO_CVES))
-    out.sort(key=lambda f: (f.severity != "high", f.rule, f.title))
+                           "\n".join(((HOWTO_CVES_ALPINE if r["kind"] == "alpine" else HOWTO_CVES).split("\n") + why))[:3900]))
+    out.sort(key=lambda f: (priority.SEV_ORDER.index(f.severity), f.rule, f.title))
     return out

@@ -77,8 +77,9 @@ GROUPS = {
                 "note_links": (("Shodan plans and pricing", "https://developer.shodan.io/pricing"),
                                ("InternetDB and its terms", "https://internetdb.shodan.io/"))},
     "cve": {"title": "CVE checks", "hub_only": True,
-            "intro": "Downloads the Debian security tracker, FIRST's EPSS scores and CISA's KEV list, and matches "
-                     "each host's packages against them.", "note": ""},
+            "intro": "Downloads the Debian security tracker, FIRST's EPSS scores, CISA's KEV list and CISA's SSVC ratings (from the "
+                     "CVE Services record of each matched CVE), matches each host's packages against them, and sets each "
+                     "finding's deadline by CISA BOD 26-04.", "note": ""},
     "retention": {"title": "Retention", "hub_only": False,
                   "intro": "How long the database keeps history. On a hub this applies to every host's rows. "
                            "0 keeps it for good.", "note": ""},
@@ -129,9 +130,11 @@ FIELDS: tuple[Field, ...] = (
           "next pass."),
     Field("cve.refresh_hours", "Check every", "cve", "float",
           "Hours between checks of each feed. An unchanged file costs one small request.", 1, 720, unit="hours"),
-    Field("cve.epss_high", "EPSS score for High", "cve", "float",
-          "A fixable CVE with an EPSS score at or above this makes its package's finding High. FIRST: "
-          "\"There is no universal threshold\"; 0.10 is the figure it says is commonly cited.", 0.01, 1.0),
+    Field("cve.epss_automatable", "EPSS probability for Automatable", "cve", "float",
+          "CISA rates whether an attacker can automate a CVE's exploitation. Where CISA has not rated a CVE, DaemonSight "
+          "estimates it: automatable when the CVE's EPSS probability is at or above this (marked \"estimated by DaemonSight\"). "
+          "FIRST: the threshold is \"a very localized effort\"; the \"EPSS equivalent effort level\" of patching every CVSS "
+          "Critical is \"approximately the 90th percentile (>=0.04)\". It only matters for CVEs CISA has not rated.", 0.001, 1.0),
     Field("retention.metrics_hours", "Keep chart points for", "retention", "int",
           "Chart points, about one a second per host. 0 keeps them for good.", 0, 87600, unit="hours"),
     Field("retention.events_days", "Keep Recent changes for", "retention", "int",
@@ -180,6 +183,9 @@ READ_ONLY: tuple[tuple[str, str, str], ...] = (
 )
 
 MAX_ADDRESSES = 100
+
+# A setting's old name: a value stored under it is used for the new one until the new one is saved.
+LEGACY = {"cve.epss_high": "cve.epss_automatable"}
 
 
 # --- reading values ---------------------------------------------------------------------
@@ -323,11 +329,14 @@ def overrides(conn) -> dict[str, object]:
     except sqlite3.Error:        # no table yet (a database no hub has migrated)
         return {}
     out = {}
+    names = {r["key"] for r in rows}
     for r in rows:
-        f = BY_KEY.get(r["key"])
+        f = BY_KEY.get(LEGACY.get(r["key"], r["key"]))
         if f is None:
             log.warning("Ignoring unknown setting %r in the database", r["key"])
             continue
+        if r["key"] in LEGACY and f.key in names:
+            continue                       # the new name is saved: the old row is stale
         try:
             out[f.key] = valid_stored(f, json.loads(r["value"]))
         except (ValueError, TypeError) as exc:
@@ -401,6 +410,9 @@ def save(conn, base: Config, changes: dict[str, object], by: str, now: float | N
             old = get(current, f)
             if value == old:
                 continue
+            for old, new in LEGACY.items():
+                if new == key:
+                    conn.execute("DELETE FROM settings WHERE key = ?", (old,))
             conn.execute("INSERT INTO settings (key, value, changed_at, changed_by) VALUES (?, ?, ?, ?) "
                          "ON CONFLICT (key) DO UPDATE SET value = excluded.value, "
                          "changed_at = excluded.changed_at, changed_by = excluded.changed_by",
@@ -423,6 +435,9 @@ def reset(conn, base: Config, key: str, by: str, now: float | None = None) -> bo
     conn.execute("BEGIN IMMEDIATE")
     try:
         gone = conn.execute("DELETE FROM settings WHERE key = ?", (key,)).rowcount > 0
+        for old, new in LEGACY.items():
+            if new == key and conn.execute("DELETE FROM settings WHERE key = ?", (old,)).rowcount:
+                gone = True
         if gone:
             new = file_value(base, f)
             origin = "config file" if source_of(base, f, {}) == FILE else "default"

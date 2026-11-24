@@ -107,12 +107,16 @@
 [cve]
 # CVE matching, on the hub only (docs/INSTALL.md, "CVE matching"). Also on the
 # Settings page, which wins over this file and needs no restart. The hub
-# downloads the Debian security tracker, EPSS scores and CISA's KEV list.
+# downloads the Debian security tracker, EPSS scores, CISA's KEV list and CISA's
+# SSVC ratings (from each matched CVE's record at cveawg.mitre.org). Each finding's
+# deadline comes from CISA BOD 26-04 (docs/DESIGN.md, "Prioritisation").
 # enabled = true
 # refresh_hours = 24
-# A fixable CVE with an EPSS score at or above this makes a package's finding
-# high. FIRST: "no universal threshold"; 0.10 is commonly cited (about the 95th percentile).
-# epss_high = 0.10
+# Where CISA has not rated whether a CVE is automatable, DaemonSight estimates it:
+# yes when the CVE's EPSS probability is at or above this. FIRST (first.org/epss/using-epss):
+# "approximately the 90th percentile (>=0.04)" matches the effort of patching every CVSS
+# Critical. Replaces the old epss_high, which an existing file may still use (read as this).
+# epss_automatable = 0.04
 
 [outside]
 # Shodan's outside view, on the hub only (docs/INSTALL.md, "Outside checks"). Turn

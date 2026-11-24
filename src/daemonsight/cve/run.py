@@ -19,9 +19,11 @@ from functools import partial
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import advisories, alpine, feeds, match, opnsense, store, ubuntu
+from . import advisories, alpine, exposure, feeds, match, opnsense, priority, records, store, ubuntu
 
 log = logging.getLogger("daemonsight.cve")
+
+EXPOSURE_EVERY = 600      # seconds between two looks at each host's exposure (a change makes the findings dirty)
 
 
 def _inventories(conn) -> dict[str, dict]:
@@ -118,7 +120,11 @@ class Chore:
         self.factory = partial(store.connect, cfg.cve_db_path)
         self.dirty = True              # recompute findings (first pass, and whenever data changed)
         self.last_gen: str | None = None
-        self._epss_high: float | None = None
+        self._epss_auto: float | None = None
+        self._table_sig: tuple | None = None
+        self._rec_gen: str | None = None
+        self._exposures: dict[str, exposure.Exposure] = {}
+        self._exposure_at = 0.0
 
     async def run_once(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
@@ -128,9 +134,14 @@ class Chore:
             clear_findings(self.state, now)
             self.dirty = True          # recompute everything when it is turned on again
             return
-        if self.cfg.cve.epss_high != self._epss_high:
-            self._epss_high = self.cfg.cve.epss_high
-            self.dirty = True          # the High threshold moved
+        if self.cfg.cve.epss_automatable != self._epss_auto:
+            self._epss_auto = self.cfg.cve.epss_automatable
+            self.dirty = True          # the Automatable estimate moved
+        table = priority.use(self.cfg.data_dir)
+        sig = (table.source, table.version, table.name)
+        if sig != self._table_sig:
+            self._table_sig = sig
+            self.dirty = True          # another priority table (data/priority, or an override file)
         invs = _inventories(self.state)
         # Debian, Ubuntu and Alpine container images are matched like hosts, under pseudo-host ids, and their releases are loaded too.
         imgs = _image_inventories(self.state)
@@ -193,7 +204,47 @@ class Chore:
             self.dirty = True
         # Hosts that are gone (revoked) leave rows behind; drop them.
         await asyncio.to_thread(self._forget, set(every) | set(opn) | set(unseen))
+        await self._fetch_records(now)
         await self._findings(invs, now)
+
+    async def _fetch_records(self, now: float) -> None:
+        """CISA's SSVC rating of the CVEs the hub has matched (records.py): the ones due, up to a cap in one pass. A record that
+        was read changes the ratings, so the findings are worked out again."""
+        conn = await asyncio.to_thread(self.factory)
+        try:
+            try:
+                got = await records.resolve(conn, now, self.client)
+            except Exception:
+                log.exception("CVE Services lookup failed")
+                return
+            gen = records.generation(conn)
+        finally:
+            conn.close()
+        if gen != self._rec_gen:
+            self._rec_gen = gen
+            self.dirty = True
+        if got["asked"]:
+            log.info("CVE Services: asked %d, read %d, no record %d, failed %d, still due %d",
+                     got["asked"], got["read"], got["absent"], got["failed"], got["waiting"])
+
+    def _host_exposures(self, invs: dict[str, dict], now: float) -> dict[str, exposure.Exposure]:
+        """Each host's exposure (cve/exposure.py), worked out again every `EXPOSURE_EVERY` seconds and whenever the findings are;
+        a change makes the findings dirty. Reads state.db, so it runs on the event loop's thread."""
+        if not self.dirty and now - self._exposure_at < EXPOSURE_EVERY and set(self._exposures) == set(invs):
+            return self._exposures
+        from ..web import views
+        out = {}
+        for host in invs:
+            try:
+                out[host] = exposure.host_exposure(self.state, views.host_config(self.state, self.cfg, host), host)
+            except Exception:
+                log.exception("Exposure check failed for %s", host)
+                out[host] = self._exposures.get(host) or exposure.unknown([])
+        self._exposure_at = now
+        if {h: (e.exposed, e.why) for h, e in out.items()} != {h: (e.exposed, e.why) for h, e in self._exposures.items()}:
+            self.dirty = True
+        self._exposures = out
+        return out
 
     async def _refresh_alpine(self, conn, releases: set[str], now: float) -> bool:
         """Alpine's security database: main and community for each release an image runs, each file asked again at most once
@@ -325,10 +376,11 @@ class Chore:
             conn.close()
         stale_f = match.stale_finding(stale, titles)
         packages: dict[str, list[Finding]] = {}
+        exposures = self._host_exposures(invs, now)
         if self.dirty:
             packages = await asyncio.to_thread(self._package_findings, invs,
                                                {h: _pending_names(self.state, h) for h in invs},
-                                               {h for h in invs if _reboot_pending(self.state, h)})
+                                               {h for h in invs if _reboot_pending(self.state, h)}, dict(exposures))
         for host in invs:
             if self.dirty:
                 _set_cve_findings(self.state, host, now, packages.get(host, []), "cve.package")
@@ -336,7 +388,7 @@ class Chore:
         self.dirty = False
 
     def _package_findings(self, invs: dict[str, dict], pending: dict[str, set[str]],
-                          rebooting: set[str] = frozenset()) -> dict[str, list[Finding]]:
+                          rebooting: set[str] = frozenset(), exposures: dict | None = None) -> dict[str, list[Finding]]:
         conn = self.factory()
         out = {}
         try:
@@ -344,7 +396,8 @@ class Chore:
                 bins = {s: b for s, _v, b in inv.get("sources", [])}
                 out[host] = match.package_findings(
                     match.host_cves(conn, host, ("fix", "esm", "nofix")), bins, pending.get(host, set()),
-                    self.cfg.cve.epss_high, inv.get("backend", "apt"), host in rebooting,
+                    (exposures or {}).get(host) or exposure.unknown([]),
+                    self.cfg.cve.epss_automatable, inv.get("backend", "apt"), host in rebooting,
                     "ubuntu" if inv.get("os_id") == "ubuntu" else "debian")
         finally:
             conn.close()

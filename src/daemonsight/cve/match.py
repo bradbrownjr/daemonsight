@@ -188,6 +188,12 @@ def _fixed_version(cves: list[dict], state: str = "fix") -> str | None:
     return best
 
 
+def counted(items: list[dict]) -> list[dict]:
+    """The CVEs of one package that raise its finding: a fix (or an ESM fix) for a CVE, or a known-exploited CVE that nothing
+    fixes yet. An unfixed CVE that is not in the KEV catalog is listed, never raised."""
+    return [c for c in items if (c["state"] in ("fix", "esm") or (c["state"] == "nofix" and c["kev"]))]
+
+
 def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:]
 
@@ -262,12 +268,12 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
         fixes = [c for c in items if c["state"] == "fix"]
         esms = [c for c in items if c["state"] == "esm"]
         # What raises the finding: a fix (or an ESM fix) for a CVE, or a known-exploited CVE that nothing fixes yet.
-        counted = [c for c in items if c["state"] in ("fix", "esm") or c["kev"]]
-        if not counted:
+        raised = counted(items)
+        if not raised:
             continue
-        top = priority.worst(c["rating"] for c in counted)
-        worst = next(c for c in counted if c["rating"] is top)
-        kev = [c for c in counted if c["kev"]]
+        top = priority.worst(c["rating"] for c in raised)
+        worst = next(c for c in raised if c["rating"] is top)
+        kev = [c for c in raised if c["kev"]]
         if kev:
             base = (f"{src}: {kev[0]['cve']} is being exploited (CISA KEV)" if len(kev) == 1
                     else f"{src}: {len(kev)} CVEs are being exploited (CISA KEV)")
