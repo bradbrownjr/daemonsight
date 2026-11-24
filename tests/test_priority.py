@@ -268,3 +268,20 @@ def test_findings_name_the_directive_from_the_file_not_from_code(tmp_path):
     finally:
         priority._current = None
     assert "CISA BOD 27-01" in f.detail and "CISA BOD 27-01" in f.howto and "BOD 26-04" not in f.detail + f.howto
+
+
+def test_table_sha256_is_optional_and_checked():
+    import json as _json
+    from importlib import resources
+    doc = _json.loads(resources.files("daemonsight.data").joinpath("priority", priority.BUNDLED).read_text())
+    assert len(priority.parse(doc).table_sha256) == 64
+    del doc["directive"]["table_sha256"]
+    assert priority.parse(doc).table_sha256 == ""
+    for bad in ("ABC", "g" * 64, 5, "A" * 64):
+        doc["directive"]["table_sha256"] = bad
+        with pytest.raises(priority.TableError, match="table_sha256"):
+            priority.parse(doc)
+    doc["directive"]["unknown"] = "x"
+    del doc["directive"]["table_sha256"]
+    with pytest.raises(priority.TableError, match="unknown keys"):
+        priority.parse(doc)

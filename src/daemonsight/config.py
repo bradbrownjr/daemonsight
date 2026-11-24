@@ -105,6 +105,9 @@ class CveConfig:
     # localized effort"; for the effort of patching every CVSS Critical, the "EPSS equivalent effort level is approximately
     # the 90th percentile (>=0.04)". Replaces the old `epss_high`, which a config file may still name (it is read as this).
     epss_automatable: float = 0.04
+    # Once a day, fetch the prioritisation table the DaemonSight repository publishes (cve/priority_fetch.py), so a directive that
+    # replaces BOD 26-04 reaches this hub without a release. Data only, checked strictly. Off: only the bundled table is used.
+    priority_updates: bool = True
 
 
 @dataclass

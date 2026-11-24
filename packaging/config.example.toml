@@ -117,6 +117,11 @@
 # "approximately the 90th percentile (>=0.04)" matches the effort of patching every CVSS
 # Critical. Replaces the old epss_high, which an existing file may still use (read as this).
 # epss_automatable = 0.04
+# Once a day, fetch the prioritisation table the DaemonSight repository publishes
+# (raw.githubusercontent.com/bradbrownjr/daemonsight, src/daemonsight/data/priority/), so a directive
+# that replaces BOD 26-04 reaches this hub without a release. Data only, checked strictly, never
+# run. false: use only the table bundled with this version (and remove a fetched one).
+# priority_updates = true
 
 [outside]
 # Shodan's outside view, on the hub only (docs/INSTALL.md, "Outside checks"). Turn

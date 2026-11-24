@@ -11,7 +11,7 @@ from dataclasses import replace
 from .. import db, distro, findings as rules, hub, outside as outside_mod, shodan as shodan_mod
 from ..collector.sources.caddy import is_local
 from .. import cve as _cve  # noqa: F401 (package)
-from ..cve import exposure as cve_exposure, feeds as cve_feeds, match as cve_match, priority, store as cve_store, ubuntu as cve_ubuntu
+from ..cve import exposure as cve_exposure, feeds as cve_feeds, match as cve_match, priority, priority_fetch, store as cve_store, ubuntu as cve_ubuntu
 from . import provenance as prov
 from ..config import Config, ExposureConfig
 
@@ -1003,6 +1003,22 @@ def _feed_rows(cdb, now: float, refresh_hours: float) -> list[dict]:
     return out
 
 
+def _priority_card(cfg: Config, now: float) -> dict:
+    """The data feeds card's line for the prioritisation table in force: which directive and version, where it came from (bundled
+    with this version, fetched from the DaemonSight repository, or a file placed by hand) and when, and the last fetch's error."""
+    d = priority_fetch.describe(cfg.data_dir, cfg.cve.priority_updates)
+    t = d["table"]
+    origin = {"bundled": "Bundled with this version", "fetched": "Fetched from the DaemonSight repository",
+              "file": "From a table file you placed in the data folder"}[d["origin"]]
+    when = f" {fmt_ago(d['when'], now)}" if d["when"] else ""
+    if d["enabled"]:
+        checked = f"Checked {fmt_ago(d['checked_at'], now)}" if d["checked_at"] else "Not checked yet"
+    else:
+        checked = "Fetching updates is off (Settings, CVE checks)"
+    return {"title": f"{t.name}, {t.table_name}", "version": t.version, "origin": origin, "when": when, "date": t.date,
+            "checked": checked, "error": d["error"], "note": d["note"], "url": t.url}
+
+
 def vulnerabilities(conn, cfg: Config) -> dict:
     host = cfg.host_id
     snaps = db.get_snapshots(conn, host)
@@ -1025,6 +1041,7 @@ def vulnerabilities(conn, cfg: Config) -> dict:
     cdb = cve_store.connect_reader(cfg.cve_db_path)
     try:
         out["feeds"] = _feed_rows(cdb, now, cfg.cve.refresh_hours)
+        out["priority"] = _priority_card(cfg, now)
         if inv is None:
             out["message"] = ("This host hasn't sent its package list. The collector needs to be updated to a "
                               "version that sends it.")

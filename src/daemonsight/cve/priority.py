@@ -47,6 +47,7 @@ SEV_ORDER = SEVERITIES
 INPUTS = {"exposed": ("yes", "no"), "kev": ("yes", "no"), "automatable": ("yes", "no"), "impact": ("total", "partial")}
 TOP_KEYS = {"version", "directive", "inputs", "rows", "severity", "triage_steps"}
 DIRECTIVE_KEYS = {"name", "title", "table_name", "url", "guidance_url", "table_url", "date"}
+DIRECTIVE_OPTIONAL = {"table_sha256"}   # SHA-256 of the image at table_url: what scripts/check_directive.py compares
 ROW_KEYS = {"row", "exposed", "kev", "automatable", "impact", "timeline", "days", "triage"}
 UPGRADE = "upgrade"            # the severity map's key for "fix on system upgrade" (days null)
 TOTAL, PARTIAL = "total", "partial"
@@ -82,6 +83,7 @@ class Table:
     severity: dict              # days (int) or None -> severity
     triage_steps: tuple
     source: str = "bundled"     # "bundled", or the override file's path
+    table_sha256: str = ""      # SHA-256 of the table image at table_url ("" when the file has none)
 
     def lookup(self, exposed: bool, kev: bool, automatable: bool, impact: str) -> Row:
         return self.rows[(exposed, kev, automatable, impact)]
@@ -102,11 +104,11 @@ def _url(v, what: str) -> str:
     return v
 
 
-def _keys(d, want: set, what: str) -> None:
+def _keys(d, want: set, what: str, optional: set = frozenset()) -> None:
     if not isinstance(d, dict):
         raise TableError(f"{what} must be an object")
-    if set(d) != want:
-        extra, missing = sorted(set(d) - want), sorted(want - set(d))
+    if not want <= set(d) <= want | optional:
+        extra, missing = sorted(set(d) - want - optional), sorted(want - set(d))
         raise TableError(f"{what} has " + "; ".join(x for x in (f"unknown keys {extra}" if extra else "", f"missing keys {missing}" if missing else "") if x))
 
 
@@ -123,10 +125,13 @@ def parse(doc, source: str = "bundled") -> Table:
     _keys(doc, TOP_KEYS, "the file")
     version = _int(doc["version"], "version", 1, 10 ** 6)
     d = doc["directive"]
-    _keys(d, DIRECTIVE_KEYS, "directive")
+    _keys(d, DIRECTIVE_KEYS, "directive", DIRECTIVE_OPTIONAL)
     name, title = _text(d["name"], "directive.name", 60), _text(d["title"], "directive.title", 200)
     table_name = _text(d["table_name"], "directive.table_name", 60)
     urls = {k: _url(d[k], f"directive.{k}") for k in ("url", "guidance_url", "table_url")}
+    sha = d.get("table_sha256", "")
+    if sha != "" and not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)):
+        raise TableError("directive.table_sha256 must be 64 lowercase hex digits")
     date = _text(d["date"], "directive.date", 10)
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
         raise TableError("directive.date must be YYYY-MM-DD")
@@ -180,7 +185,7 @@ def parse(doc, source: str = "bundled") -> Table:
     if not isinstance(steps, list) or not 1 <= len(steps) <= 10:
         raise TableError("triage_steps must be a list of 1 to 10 texts")
     steps = tuple(_text(s, "a triage step", 300) for s in steps)
-    return Table(version, name, title, table_name, urls["url"], urls["guidance_url"], urls["table_url"], date, rows, severity, steps, source)
+    return Table(version, name, title, table_name, urls["url"], urls["guidance_url"], urls["table_url"], date, rows, severity, steps, source, sha)
 
 
 def _bundled() -> Table:
