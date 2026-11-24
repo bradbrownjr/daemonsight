@@ -1,0 +1,47 @@
+# Remake the README screenshots (docs/images) when the web UI changes, and commit them.
+# Actions are pinned to commits; the comment names the release (same pins as image.yml).
+name: Screenshots
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/daemonsight/web/**"
+      - "scripts/screenshots.py"
+      - ".github/workflows/screenshots.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One run at a time, and a newer push waits instead of racing the commit.
+concurrency:
+  group: screenshots
+  cancel-in-progress: false
+
+jobs:
+  screenshots:
+    # Skip the push this workflow made itself.
+    if: ${{ !contains(github.event.head_commit.message, 'Update UI screenshots') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install -r requirements.txt
+          python -m pip install -e ".[screenshots]"
+          python -m playwright install --with-deps chromium
+      - run: python scripts/screenshots.py
+      - name: Commit changed screenshots
+        run: |
+          if [ -z "$(git status --porcelain docs/images)" ]; then
+            echo "Screenshots are up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/images
+          git commit -m "Update UI screenshots [skip ci]"
+          git push

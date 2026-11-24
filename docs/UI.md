@@ -221,6 +221,10 @@ These apply to every page. Owner rules, kept as written.
   (Owner.)
 - **Look at every screenshot** and fix what is off. A passing test does not show
   a crooked left edge.
+- **Screenshots.** CI remakes the README pictures when the web UI changes. To
+  see them before you push, run `python scripts/screenshots.py --out /tmp/shots`
+  (needs `pip install -e .[screenshots]`); it also shows the sample hub at both
+  widths. See DESIGN.md, "Screenshots".
 - **Run the tests** (`pytest -q`). `tests/test_sections.py` proves every
   registry anchor exists and that the phone list has one toggle per page, with
   ids that match.

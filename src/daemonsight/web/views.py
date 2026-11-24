@@ -332,7 +332,7 @@ def overview(conn, cfg: Config) -> dict:
     if fb is not None:
         js = fb.get("jails", [])
         banned = sum(j["banned_now"] or 0 for j in js if isinstance(j.get("banned_now"), int))
-        glance.append({"title": "fail2ban", "value": f"{len(js)} jails", "alert": None,
+        glance.append({"title": "fail2ban", "value": f"{len(js)} jail{'' if len(js) == 1 else 's'}", "alert": None,
                        "note": f"{banned} {'address' if banned == 1 else 'addresses'} banned"})
     fw = _snap_data(snaps, "firewall")
     if fw is not None:

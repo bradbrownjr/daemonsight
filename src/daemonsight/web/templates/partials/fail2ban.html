@@ -5,7 +5,7 @@
 <section class="card mb-4" id="jails" aria-labelledby="jails-title" data-section{% if not v.jails %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="jails-title">Jails</h2>{{ src_button("src-fail2ban", "fail2ban") }}
-    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.jails|length }} jails{% if v.version %} · fail2ban {{ v.version }}{% endif %}</div>
+    <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.jails|length }} jail{{ '' if v.jails|length == 1 else 's' }}{% if v.version %} · fail2ban {{ v.version }}{% endif %}</div>
   </div>
   {% if v.f2b_state.state != 'ok' %}
   <div class="card-body text-secondary">{{ v.f2b_state.reason }}</div>

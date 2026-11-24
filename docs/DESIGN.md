@@ -466,6 +466,10 @@ a Caddy site, a forward or a jail (the row's `id` is built by
 filter that hides it and flashes it once; the flash is off under
 `prefers-reduced-motion`.
 
+### Screenshots
+
+The README pictures (`docs/images/*.png`) come from `scripts/screenshots.py`. It starts the web app as a hub with sample data (made-up hosts and documentation addresses), reusing the fakes in `tests/` (Unraid, OPNsense, Docker reader, CrowdSec) so the pictures and the tests describe the same servers, and photographs it with Playwright's Chromium in the dark theme. The clock, the date and the version string are frozen and animation is off, so a run with the same code gives the same files. The `Screenshots` workflow runs it on pushes to main that touch `src/daemonsight/web/`, the script or the workflow, and commits any changed images. To preview locally: `pip install -e .[screenshots]`, `playwright install chromium`, `python scripts/screenshots.py`. A new page that deserves a picture is a new `shoot` line in the script.
+
 ### Layout and wording rules
 
 The layout and wording rules live in [UI.md](UI.md).
