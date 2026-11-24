@@ -20,7 +20,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse
 from .. import db, hub
 from ..config import Config
 from . import views
-from ..remote import crowdsec, docker_storage, opnsense, poll, roles, store, unraid
+from ..remote import crowdsec, docker_storage, opnsense, poll, roles, store, unifi, unraid
 from ..remote.client import (Net, RemoteError, clean_fingerprint, fingerprint, fmt_fingerprint, normalize_url)
 
 log = logging.getLogger("daemonsight.remote")
@@ -273,7 +273,10 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                     form["pin_confirm"] = ""
                     return ctx, None
                 form["pin_confirm"] = fmt_fingerprint(fp)
-            result = (await opnsense.probe(net, url, key, secret, tls, pem) if two else await unraid.probe(net, url, key, tls, pem))
+            if kind == "unifi":
+                result = await unifi.probe(net, url, key, tls, pem)
+            else:
+                result = (await opnsense.probe(net, url, key, secret, tls, pem) if two else await unraid.probe(net, url, key, tls, pem))
         except RemoteError as exc:
             if exc.kind == "tls" and tls == "verify":
                 # Probably Unraid's self-signed certificate. Offer to pin it; nothing was sent beyond the handshake.
@@ -285,9 +288,13 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                     return ctx, None
                 except RemoteError:
                     pass
-            problems.append(opnsense.error_text(exc, key, secret) if two else unraid.error_text(exc, key))
+            problems.append(opnsense.error_text(exc, key, secret) if two else
+                            unifi.error_text(exc, key) if kind == "unifi" else unraid.error_text(exc, key))
             return ctx, None
-        if two:
+        if kind == "unifi":
+            ctx["result"] = {"ok": result.ok, "problem": result.problem, "roles": [], "key_name": "", "warnings": [],
+                             "facts": list(result.facts) if result.ok else [], "sources": result.sources, "note": result.note}
+        elif two:
             ctx["result"] = {"ok": result.ok, "problem": result.problem, "roles": [], "key_name": "", "warnings": [],
                              "facts": _facts_opnsense(result) if result.ok else [], "sources": result.sources}
         else:

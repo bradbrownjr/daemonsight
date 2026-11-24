@@ -1,6 +1,6 @@
 # Planned sources
 
-Designs for API systems DaemonSight does not read yet. Nothing here is built. Researched 2026-11-24; verify each fact again before building.
+Designs for API systems DaemonSight does not read yet. UniFi was built from this design and has moved to docs/DESIGN.md, "UniFi Network"; everything else here is not built. Researched 2026-11-24; verify each fact again before building.
 
 Scope to confirm with the owner: "Proxmox and its addons" is read here as Proxmox VE (PVE), Proxmox Backup Server (PBS), Proxmox Mail Gateway (PMG) and Proxmox Datacenter Manager (PDM), plus the community Helper-Scripts. The owner confirmed the helper scripts. PMG and PDM are still a scope guess.
 
@@ -8,14 +8,14 @@ Scope to confirm with the owner: "Proxmox and its addons" is read here as Proxmo
 
 | Order | Source | Why | Estimate (my guess, from the size of the Unraid and OPNsense work) |
 |-------|--------|-----|------|
-| 1 | UniFi (in use) | The owner runs it; the API is documented and the spec is public | 3 to 4 days |
+| Built | UniFi | See docs/DESIGN.md, "UniFi Network" | done |
 | 2 | Proxmox VE, with the helper-script overlay | Most used; most of the findings people care about | 6 to 8 days, plus 2 to 3 for the helper scripts |
 | 3 | PBS | Pairs with PVE; the Audit role is read-only and covers everything needed | 3 days |
 | 4 | XCP-ng through Xen Orchestra | Only worth it once someone runs it | 5 to 6 days |
 | 5 | FortiGate, Meraki, Aruba | Roadmap only | 5, 5 and 6 to 8 days |
 | Later or never | PMG, PDM | PMG has no confirmed API tokens; PDM mostly repeats PVE and PBS | see below |
 
-Shared work for the Proxmox, XCP-ng and UniFi sources (done once, in `remote/client.py`):
+Shared work for the Proxmox and XCP-ng sources (the header form and path templates were done for UniFi in `remote/client.py`; the cookie and the reply cutting are still to do):
 
 - `Rest` today sends HTTP basic auth and checks a path against a fixed set of whole strings. These APIs need three more things: a token header (`Authorization: PVEAPIToken=...`, `PBSAPIToken=...`, `X-API-KEY`), a cookie for Xen Orchestra, and paths with a variable part (node name, VM id). Proposal: a `Rest` option for the header form, and a whitelist of path templates where each variable part has a strict pattern (node: `[A-Za-z0-9-]+`, vmid: digits, uuid: hex and dashes), still compared as a whole and still GET only. Query strings are listed per template, not free.
 - The certificate pin already covers a self-signed certificate. For the appliance's own certificate expiry, read it from the TLS handshake (the hub already fetches it for pinning) instead of from an API call. This avoids privileges that some products ask for (PBS needs Sys.Modify for its certificate call, see below).
@@ -345,65 +345,9 @@ Pages: kind `xcp`: Overview, Hosts and pools, VMs (power, tools, snapshots, back
 
 ---
 
-## UniFi (next; the owner runs it)
+## UniFi
 
-### What is known on the owner's setup
-
-From the maintainer's test controller (verified 2026-09-28): UniFi OS Server on Unraid at `https://192.168.1.2:8443`, Network app 10.6.106, one site, two Nano HD APs (U7NHD, firmware 6.7.57), one SSID (WPA2 personal), no UniFi gateway; both the Integration API (`/proxy/network/integration/v1`) and the legacy API (`/proxy/network/api/s/default/...`) accept the same `X-API-KEY`.
-
-### Auth
-
-Header `X-API-KEY`. The official OpenAPI spec for Network 10.1.84 is https://developer.ui.com/network/v10.1.84/openapi.json (read 2026-11-24). It lists two servers, the cloud connector and `https://{consoleIP}/proxy/network/integration` for a local console, and declares no security scheme (so scope is not in the spec).
-
-Scope of the key: the spec does not say. Third-party sources say a key "inherits" the permissions of the admin who made it (https://artofwifi.net/blog/unifi-api-authentication-local-admin-vs-api-key-vs-site-manager and a connector page, https://www.elastic.co/docs/reference/kibana/connectors-kibana/unifi-action-type), and that a read-only admin may see fewer fields (for example a Wi-Fi password). I found no official statement that a local key can be made read-only, and Ubiquiti's help article returned HTTP 403 to my fetch (https://help.ui.com/hc/en-us/articles/30076656117655). Unverified. Plan: the owner creates a dedicated local admin with the View Only role, signs in as it, and creates the key there; the form says this. The Integration API has no "who am I" call in the spec (only `GET /v1/info`), so the hub cannot check the key's power and it is documented, as for OPNsense. The first build step is to test, on the owner's controller with a read-only admin, that the key can read and that a POST is refused.
-
-Do not read the Wi-Fi detail objects: the overview carries only the security type; the detail DTO carries the passphrase (`IntegrationWifiWpa2PersonalSecurityConfigurationDetailDto` and others in the spec). The whitelist uses the list endpoint only.
-
-### Whitelist (all GET, Integration API; paginated with `offset` and `limit`, maximum 200)
-
-| Template | Gives |
-|----------|-------|
-| `/v1/info` | `applicationVersion` |
-| `/v1/sites` | site ids |
-| `/v1/sites/{siteId}/devices` | per device `name`, `model`, `macAddress`, `ipAddress`, `state` (ONLINE, OFFLINE, PENDING_ADOPTION, UPDATING, GETTING_READY, ADOPTING, DELETING, CONNECTION_INTERRUPTED, ISOLATED, U5G_INCORRECT_TOPOLOGY), `firmwareVersion`, `firmwareUpdatable`, `supported`, `features` |
-| `/v1/sites/{siteId}/devices/{deviceId}/statistics/latest` | `uptimeSec`, `lastHeartbeatAt`, CPU and memory (optional; one call per device) |
-| `/v1/sites/{siteId}/clients` | connected clients (count only is kept; names, MACs and IPs are dropped) |
-| `/v1/sites/{siteId}/wifi/broadcasts` | per SSID: `name`, `enabled`, `securityConfiguration.type` (OPEN, WPA2_PERSONAL, WPA3_PERSONAL, WPA2_WPA3_PERSONAL, and the enterprise forms), `broadcastingFrequenciesGHz`, `hotspotConfiguration` |
-| `/v1/sites/{siteId}/networks` | networks and VLANs (for the guest network) |
-| `/v1/pending-devices` | devices waiting for adoption |
-| gateway sites only: `/v1/sites/{siteId}/wans`, `/firewall/zones`, `/firewall/policies`, `/acl-rules`, `/vpn/servers`, `/vpn/site-to-site-tunnels` | WAN, firewall policies, VPN |
-
-No endpoint for "controller update available" is in the spec: `info` has only the version. I recall the legacy `stat/sysinfo` carrying an update flag; that is unverified and must be probed on the owner's controller before the rule is written. Port forwards: the spec lists no NAT endpoint; the legacy `rest/portforward` is the likely source (unverified; the maintainer's test controller notes say legacy firewall endpoints return empty or 400 with no gateway).
-
-### TLS
-
-UniFi OS Server presents a self-signed certificate (the maintainer's test controller uses `curl -k`), so the pin applies. Port 8443.
-
-### Findings
-
-| Rule | Sev | Raised when | Fix or how-to |
-|------|-----|-------------|---------------|
-| `unifi.fw_update` | low; medium once the hub has seen it waiting over 30 days | a device has `firmwareUpdatable` | howto: Network, Devices, select, Update. Restarting an AP drops its clients; do it off hours. No fix command (the API's restart and upgrade actions are writes; the hub does not send them) |
-| `unifi.device_offline` | high for an AP, after N hours (default 2) | `state` is OFFLINE, CONNECTION_INTERRUPTED or ISOLATED, timed by the hub from first sight | howto: power, cable and PoE, then adopt again |
-| `unifi.device_unsupported` | low | `supported` false | howto |
-| `unifi.pending_adoption` | medium | a device in `pending-devices` that the owner did not expect | howto: adopt or remove; an unknown device on the network is worth a look |
-| `unifi.wifi_open` | high | an enabled SSID with type `OPEN` that is not a guest network (not a hotspot or captive portal) | howto: set WPA2 or WPA3; accept if it is a deliberate open network |
-| `unifi.wifi_wpa3` | low (off by default) | SSID is WPA2 personal only, no WPA3 | howto; many older devices need WPA2, so this is accept-friendly |
-| `unifi.wifi_legacy` | medium | WPA or WEP (cannot be seen in the Integration API enum; the legacy `rest/wlanconf` may show it; unverified) | build only if the legacy probe shows it |
-| `unifi.controller_old` | low | the app version is older than the latest (needs a source: see above; unverified) | howto: update UniFi OS Server on Unraid (container image) |
-| `unifi.gateway_forward` | as `opnsense.nat` | gateway sites only: port forwards or firewall policies that allow internet to inside | same how-to style as OPNsense |
-| `unifi.gateway_wan_down` | high | gateway only: WAN not up | howto |
-
-### Pages
-
-Kind `unifi` in `web/sections.py`:
-
-- Overview: Findings, At a glance (devices online of total, SSIDs, clients, controller version), Recent changes.
-- Devices: table (name, model, state, firmware, update flag, last heartbeat).
-- Wi-Fi: SSIDs (name, security, bands, guest, enabled) and networks; this is where an open SSID shows. A gateway section appears only on sites with a gateway device.
-- Report: as the others.
-
-Cadence: `interval` for devices and state, 5 minutes for Wi-Fi, networks and the app version. Snapshots `unifi_devices`, `unifi_wifi`, `unifi_info`.
+Built. See docs/DESIGN.md, "UniFi Network", for the source, the whitelist, the findings and what is unverified.
 
 ---
 
@@ -441,7 +385,7 @@ Estimates assume the shared client work above is done. Everything here is resear
 2. Confirm scope: PMG and PDM. My recommendation is skip PDM, defer PMG.
 3. Helper-scripts catalog: is an outbound daily call to community-scripts.org acceptable (Settings switch, default off)? The alternative is no app names or OS end-of-life, only the tag count.
 4. Does the owner run Xen Orchestra with XCP-ng? If not, XCP-ng is not worth building (XAPI direct needs root).
-5. UniFi: will the owner create a View Only local admin and a key from it, and let the build test that a write is refused? Also, which API do they want for "controller is out of date" (needs a probe)?
+5. ~~UniFi~~ Built. Open: whether a View Only admin can make a key and what it can do (needs a live controller); the legacy API may show a latest controller version (not probed).
 6. Aruba: is a documented POST for token refresh acceptable?
 7. Thresholds: are 85% and 95% for storage, 3 and 7 days for backups, and 2 hours for an offline AP the right defaults?
 
@@ -461,7 +405,7 @@ Estimates assume the shared client work above is done. Everything here is resear
 - Helper-Scripts: https://github.com/community-scripts/ProxmoxVE (README, SECURITY.md, ct scripts, PR 15007, PR 15009), https://github.com/community-scripts/core (core/build.func, ui/advanced.func, ui/defaults.func, ui/menu.func, pve/backend.func, docs/updates.md), https://community-scripts.org/api/update-info?slug=adguard, https://db.community-scripts.org/api/collections/script_scripts/records
 - XCP-ng and XO: https://docs.xcp-ng.org/management/users-permissions/, https://docs.xcp-ng.org/management/updates/, https://docs.xen-orchestra.com/automation/restapi, https://github.com/vatesfr/xen-orchestra (docs/docs/automation/restapi.md, docs/docs/security/user-management/rbac.md, @xen-orchestra/rest-api/src)
 - XAPI and XenServer RBAC: https://xapi-project.github.io/xen-api/usage.html, https://docs.xenserver.com/en-us/xenserver/8/users/rbac-roles-permissions, https://docs.xenserver.com/en-us/xenserver/8/users/rbac-overview
-- UniFi: https://developer.ui.com/network/v10.1.84/openapi.json, https://artofwifi.net/blog/unifi-api-authentication-local-admin-vs-api-key-vs-site-manager, https://www.elastic.co/docs/reference/kibana/connectors-kibana/unifi-action-type, https://help.ui.com/hc/en-us/articles/30076656117655 (403 on fetch)
+- UniFi: moved to docs/DESIGN.md, "UniFi Network"
 - FortiGate: https://docs.fortinet.com/document/fortigate/7.4.6/administration-guide/940602, https://community.fortinet.com/fortigate-3/technical-tip-how-to-create-a-rest-api-admin-user-and-assign-it-to-an-admin-profile-130221, https://docs.fortinet.com/document/fortigate-private-cloud/7.2.0/kvm-administration-guide/504166/fortigate-vm-evaluation-license
 - Meraki: https://github.com/meraki/openapi (openapi/spec3.json), https://documentation.meraki.com/General_Administration/Other_Topics/Cisco_Meraki_Dashboard_API, https://developer.cisco.com/meraki/api-v1/rate-limit/, https://blogs.cisco.com/cisco-devnet/handsonmerakiapi01/, https://developer.cisco.com/meraki
 - Aruba: https://developer.arubanetworks.com/new-central/docs/generating-and-managing-access-tokens, https://developer.arubanetworks.com/central/docs/api-oauth-access-token, https://arubanetworking.hpe.com/techdocs/new-central/content/get-started/rbac.htm

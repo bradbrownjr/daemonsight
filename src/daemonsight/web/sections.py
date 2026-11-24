@@ -35,6 +35,12 @@ SECTIONS: dict[str, dict[str, list[tuple[str, str]]]] = {
         "network": [("gateways", "Gateways"), ("interfaces", "Interfaces and their roles"), ("services", "Services")],
         "report": [("steps", "Steps"), ("decide", "Decide"), ("all", "All findings"), ("accepted", "Accepted")],
     },
+    "unifi": {
+        "overview": [("findings", "Findings"), ("updates", "Firmware updates"), ("glance", "At a glance"), ("events", "Recent changes")],
+        "devices": [("controller", "Controller"), ("devices", "Devices"), ("pending", "Waiting for adoption"),
+                    ("gateway", "Gateway firewall")],
+        "report": [("steps", "Steps"), ("decide", "Decide"), ("all", "All findings"), ("accepted", "Accepted")],
+    },
     # Hosts' menu is the hosts themselves, then "Recent hub changes" (base.html builds it from menu_hosts); the
     # registry holds the fixed tail only, as the fallback when no host list is passed.
     "hub": {

@@ -109,6 +109,8 @@
       {% set sections = [('overview', '/', 'Overview'), ('disks', '/disks', 'Array & disks'), ('containers', '/containers', 'Containers'), ('docker', '/docker', 'Docker storage'), ('images', '/images', 'Container images'), ('vms', '/vms', 'VMs'), ('notifications', '/notifications', 'Notifications'), ('report', '/report', 'Report')] %}
       {% elif host and host.kind == 'opnsense' %}
       {% set sections = [('overview', '/', 'Overview'), ('firewall', '/firewall', 'Firewall'), ('vpn', '/vpn', 'VPN'), ('network', '/network', 'Gateways & interfaces'), ('report', '/report', 'Report')] %}
+      {% elif host and host.kind == 'unifi' %}
+      {% set sections = [('overview', '/', 'Overview'), ('devices', '/devices', 'Devices'), ('wifi', '/wifi', 'Wi-Fi'), ('report', '/report', 'Report')] %}
       {% else %}
       {% set sections = [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('packages', '/packages', 'Packages'), ('vulnerabilities', '/vulnerabilities', 'Vulnerabilities'), ('fail2ban', '/fail2ban', 'fail2ban'), ('report', '/report', 'Report')] %}
       {% endif %}

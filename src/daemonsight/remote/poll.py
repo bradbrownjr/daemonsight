@@ -18,6 +18,10 @@ Per system, one poll:
      last data, and shows its age and error on the page; it never ends the poll.
   3. Rules (unraid_rules.py) make the open `unraid.*` findings match.
 
+A UniFi Network controller is polled over REST too (`poll_unifi`): the site list every time, then the sources that are
+due (unifi.SOURCES), each a few GETs through the GET-only client with the key in X-API-KEY; unifi_rules.py makes the open
+`unifi.*` findings match.
+
 An OPNsense firewall is polled the same way but over REST (`poll_opnsense`): each source of opnsense.SOURCES that is
 due is one GET (or two) through the GET-only client; a source the user may not read (403) stores "needs privilege X"
 and the others carry on; opnsense_rules.py makes the open `opnsense.*` findings match.
@@ -40,14 +44,14 @@ import time
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import crowdsec, docker_images, docker_storage, opnsense, release, roles, store, unraid
+from . import crowdsec, docker_images, docker_storage, opnsense, release, roles, store, unifi, unraid
 from .client import Graph, Net, RemoteError, Rest
 
 log = logging.getLogger("daemonsight.remote")
 UNREACHABLE_AFTER_INTERVALS = 3
 UNREACHABLE_MIN_SECONDS = 180
 MAX_PARALLEL = 4
-RULE_PREFIX = {"unraid": ("unraid.", "docker."), "opnsense": ("opnsense.", "crowdsec.")}
+RULE_PREFIX = {"unraid": ("unraid.", "docker."), "opnsense": ("opnsense.", "crowdsec."), "unifi": ("unifi.",)}
 
 
 HOWTO_UNREACHABLE_OPNSENSE = "\n".join((
@@ -55,6 +59,13 @@ HOWTO_UNREACHABLE_OPNSENSE = "\n".join((
     "Open Hosts and Edit this system: check its address (https, with the web GUI's port) and that the key and secret are still right",
     "In OPNsense, System \u2192 Access \u2192 Users shows whether the user and its API key still exist",
     "If you pinned its certificate and the firewall's certificate changed, pin the new one in the same form",
+    "The finding goes away at the next good read"))
+
+HOWTO_UNREACHABLE_UNIFI = "\n".join((
+    "Check that the controller is on and reachable: ping its address from the machine the hub runs on",
+    "Open Hosts and Edit this system: check its address (https, with its port) and that the API key is still right",
+    "In the UniFi Network app, Integrations lists the keys; a key stops working when its admin is removed or changed",
+    "If you pinned its certificate and the controller's certificate changed, pin the new one in the same form",
     "The finding goes away at the next good read"))
 
 HOWTO_UNREACHABLE = "\n".join((
@@ -111,7 +122,7 @@ def _set_unreachable(conn, row, now: float, error: str | None) -> None:
                         f"The hub has not read this system for {int(now - base)} seconds (last good read: {since}). "
                         f"Last error: {error} Check that it is on, that its address and key are right "
                         "(Hosts, Edit) and, for a pinned certificate, that it hasn't changed.", "/", None, None,
-                        HOWTO_UNREACHABLE_OPNSENSE if row["kind"] == "opnsense" else HOWTO_UNREACHABLE)
+                        {"opnsense": HOWTO_UNREACHABLE_OPNSENSE, "unifi": HOWTO_UNREACHABLE_UNIFI}.get(row["kind"], HOWTO_UNREACHABLE))
     change = db.set_finding(conn, host, now, f, rule="remote.unreachable", key="unreachable")
     if change == "opened":
         db.add_event(conn, host, now, "remote_unreachable", f.title, severity="high", detail=error, link="/")
@@ -144,7 +155,12 @@ def _record_success(conn, row, now: float, system: dict | None, cfg: Config | No
 def reconcile(conn, host: str, kind: str, now: float, cfg: Config | None = None) -> None:
     """Make the open findings of this kind of system match what its stored readings say now, with events. `cfg` lets
     an Unraid system's image CVE findings read the CVE database; without it they are not evaluated."""
-    current = opnsense_rules_evaluate(conn, host, now, cfg) if kind == "opnsense" else unraid_rules_evaluate(conn, host, now, cfg)
+    if kind == "opnsense":
+        current = opnsense_rules_evaluate(conn, host, now, cfg)
+    elif kind == "unifi":
+        current = unifi_rules_evaluate(conn, host, now, cfg)
+    else:
+        current = unraid_rules_evaluate(conn, host, now, cfg)
     for change, f in db.reconcile_findings(conn, host, now, current, only_prefix=RULE_PREFIX.get(kind, ("unraid.", "docker."))):
         if change == "opened":
             db.add_event(conn, host, now, "finding_opened", f.title, severity=f.severity, detail=f.detail, link=f.link)
@@ -155,6 +171,22 @@ def reconcile(conn, host: str, kind: str, now: float, cfg: Config | None = None)
 def unraid_rules_evaluate(conn, host: str, now: float, cfg: Config | None = None) -> list[Finding]:
     from . import unraid_rules
     return unraid_rules.evaluate(_rule_inputs(conn, host, cfg), now)
+
+
+def unifi_inputs(conn, host: str) -> dict[str, dict | None]:
+    """Each UniFi source's stored data by short name, None when it can't be read."""
+    snaps = db.get_snapshots(conn, host)
+    out: dict[str, dict | None] = {}
+    for name in unifi.SOURCES:
+        s = snaps.get(name)
+        out[name.removeprefix(unifi.SNAPSHOT_PREFIX)] = s.data if s and s.data and s.data.get("available") is not False else None
+    return out
+
+
+def unifi_rules_evaluate(conn, host: str, now: float, cfg: Config | None = None) -> list[Finding]:
+    from . import unifi_rules
+    hours = settings.effective(cfg, conn).remote.unifi_offline_hours if cfg is not None else unifi_rules.DEFAULT_OFFLINE_HOURS
+    return unifi_rules.evaluate(unifi_inputs(conn, host), now, hours)
 
 
 def opnsense_inputs(conn, host: str) -> dict[str, dict | None]:
@@ -281,6 +313,9 @@ async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -
     host = row["id"]
     if row["kind"] == "opnsense":
         await poll_opnsense(conn, cfg, row, net, now)
+        return
+    if row["kind"] == "unifi":
+        await poll_unifi(conn, cfg, row, net, now)
         return
     key = store.read_key(cfg.data_dir, host)
     if key is None:
@@ -425,6 +460,46 @@ async def poll_opnsense(conn, cfg: Config, row, net: Net, now: float) -> None:
         db.add_metrics(conn, host, now, {"mem.percent": results["opnsense_system"][2]["memory"].get("percent")})
     fwd = snaps.get("opnsense_firmware")
     version = fwd.data.get("version") if fwd and fwd.data and fwd.data.get("available") is not False else None
+    _record_success(conn, current, now, {"version": version}, cfg)
+
+
+async def poll_unifi(conn, cfg: Config, row, net: Net, now: float) -> None:
+    """One poll of one UniFi controller. Never raises. A source the key's admin may not read stores why and the rest go on;
+    a refused key, a TLS failure or a controller that can't be reached at all ends the poll."""
+    host = row["id"]
+    key = store.read_key(cfg.data_dir, host)
+    if key is None:
+        if store.get(conn, host) is not None:
+            _record_failure(conn, row, now, "The API key file is missing or unreadable. Edit the system and enter the key again.")
+        return
+    try:
+        rest = unifi.make_rest(row["url"], key, net.http(row["tls"], row["tls_cert"]))
+    except RemoteError as exc:
+        _record_failure(conn, row, now, unifi.error_text(exc, key))
+        return
+    try:
+        try:
+            results = await unifi.read_all(rest, db.get_snapshots(conn, host), now, row["interval"])
+        finally:
+            await rest.aclose()
+    except RemoteError as exc:
+        current = store.get(conn, host)
+        if current is not None and current["enabled"]:
+            _record_failure(conn, current, now, unifi.error_text(exc, key))
+        return
+    except Exception as exc:  # a bug here must not stop the other systems
+        log.exception("Reading %s failed", host)
+        current = store.get(conn, host)
+        if current is not None:
+            _record_failure(conn, current, now, f"Unexpected error: {type(exc).__name__}")
+        return
+    current = store.get(conn, host)
+    if current is None or not current["enabled"]:   # removed or disabled while we waited
+        return
+    for name, (ok, error, data) in results.items():
+        _put_source(conn, host, name, now, ok, error, data)
+    info = db.get_snapshot(conn, host, "unifi_info")
+    version = info.data.get("version") if info and info.data and info.data.get("available") is not False else None
     _record_success(conn, current, now, {"version": version}, cfg)
 
 

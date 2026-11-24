@@ -137,8 +137,9 @@ class OutsideConfig:
 class RemoteConfig:
     """On the hub: read systems that have no collector (Unraid) over their
     own API. The systems are added in the web UI (Hosts, Add a system); this
-    only switches the polling on or off."""
+    only switches the polling on or off, and sets how long a UniFi device may be offline before it is a finding."""
     enabled: bool = True
+    unifi_offline_hours: float = 2.0
 
 
 @dataclass

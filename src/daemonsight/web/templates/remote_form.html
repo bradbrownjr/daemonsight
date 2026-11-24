@@ -6,6 +6,9 @@
 {% set never_help = {"title": "Addresses that must never be banned",
   "read": "Add the services you depend on, for example the address range of an AI provider or of a backup target. DaemonSight ships no vendor ranges. A ban on any of these opens a High finding with the command that ends it. Use a single address (192.0.2.7) or a network (198.51.100.0/24), 50 at most. A public network wider than /16 (IPv6: /48) is refused, because asking what lies inside it could return much of CrowdSec's community blocklist.",
   "entries": []} %}
+{% set unifi_help = {"title": "A UniFi key is as powerful as its admin",
+  "read": "The UniFi Network API has no read-only key and no call that says what a key may do, so DaemonSight cannot check it. Make the key as a dedicated local admin with the View Only role: that role is what limits it. DaemonSight sends only GET requests and refuses any other, and its Test never writes anything to find out. If the key was made by an owner or a super admin, it can change the network, and so could anyone who got hold of it. The Wi-Fi password is not read: DaemonSight asks for the list of networks, which holds only each one's security type, never the detail that carries the password.",
+  "entries": []} %}
 <div class="mb-4">
   <div class="page-pretitle">Systems the hub reads over their API</div>
   <h1 class="page-title">{% if existing %}Edit {{ existing.id }}{% else %}Add a system{% endif %}</h1>
@@ -24,6 +27,7 @@
       <div class="btn-group" role="group" aria-label="Kind of system" id="kind">
         <a class="btn{{ ' active' if kind == 'unraid' }}" href="/remotes/new?kind=unraid"{% if kind == 'unraid' %} aria-current="page"{% endif %}>Unraid · GraphQL API</a>
         <a class="btn{{ ' active' if kind == 'opnsense' }}" href="/remotes/new?kind=opnsense"{% if kind == 'opnsense' %} aria-current="page"{% endif %}>OPNsense · REST API</a>
+        <a class="btn{{ ' active' if kind == 'unifi' }}" href="/remotes/new?kind=unifi"{% if kind == 'unifi' %} aria-current="page"{% endif %}>UniFi Network · REST API</a>
       </div>
       <input type="hidden" name="kind" value="{{ kind }}">
       {% endif %}
@@ -33,17 +37,17 @@
       {% if existing %}
       <input type="text" class="form-control" id="name" value="{{ existing.id }}" disabled>
       {% else %}
-      <input type="text" class="form-control" id="name" name="name" value="{{ f.name }}" required maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,62}" aria-describedby="name-hint" title="Letters, digits, . _ and -; no spaces" placeholder="{{ 'firewall' if kind == 'opnsense' else 'tower' }}">
-      <div class="form-hint" id="name-hint">Letters, digits, <code>.</code> <code>_</code> and <code>-</code>, no spaces; start with a letter or digit; 63 characters at most. For example <code>{{ 'OPNsense-Firewall' if kind == 'opnsense' else 'Unraid-Tower' }}</code>. It is part of the system's page address and can't be changed later.</div>
+      <input type="text" class="form-control" id="name" name="name" value="{{ f.name }}" required maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,62}" aria-describedby="name-hint" title="Letters, digits, . _ and -; no spaces" placeholder="{{ 'firewall' if kind == 'opnsense' else 'unifi' if kind == 'unifi' else 'tower' }}">
+      <div class="form-hint" id="name-hint">Letters, digits, <code>.</code> <code>_</code> and <code>-</code>, no spaces; start with a letter or digit; 63 characters at most. For example <code>{{ 'OPNsense-Firewall' if kind == 'opnsense' else 'UniFi-Network' if kind == 'unifi' else 'Unraid-Tower' }}</code>. It is part of the system's page address and can't be changed later.</div>
       {% endif %}
     </div>
     <div class="mb-3">
       <label class="form-label" for="url">Address</label>
-      <input type="text" class="form-control" id="url" name="url" value="{{ f.url }}" required maxlength="300" placeholder="{{ 'https://fw.example.lan:8443' if kind == 'opnsense' else 'https://tower.example.lan:4443' }}" inputmode="url">
-      <div class="form-hint">{% if kind == 'opnsense' %}Where the OPNsense web GUI answers over https, with its port.{% else %}Where the Unraid web UI answers over https.{% endif %}</div>
+      <input type="text" class="form-control" id="url" name="url" value="{{ f.url }}" required maxlength="300" placeholder="{{ 'https://fw.example.lan:8443' if kind == 'opnsense' else 'https://unifi.example.lan' if kind == 'unifi' else 'https://tower.example.lan:4443' }}" inputmode="url">
+      <div class="form-hint">{% if kind == 'opnsense' %}Where the OPNsense web GUI answers over https, with its port.{% elif kind == 'unifi' %}Where the UniFi OS web UI answers over https, with its port if it is not 443.{% else %}Where the Unraid web UI answers over https.{% endif %}</div>
     </div>
     <div class="mb-3">
-      <label class="form-label" for="key">{% if kind == 'opnsense' %}API key{% else %}API key (Viewer role){% endif %}</label>
+      <label class="form-label" for="key">{% if kind == 'opnsense' %}API key{% elif kind == 'unifi' %}API key (made by a View Only admin) {{ src("src-unifi-key", unifi_help) }}{% else %}API key (Viewer role){% endif %}</label>
       <input type="password" class="form-control" id="key" name="key" autocomplete="new-password" maxlength="200" spellcheck="false"{% if not existing and not f.pending %} required{% endif %}>
       {% if kind == 'opnsense' %}
       <label class="form-label mt-2" for="secret">API secret</label>
@@ -54,7 +58,7 @@
       </div>
       {% else %}
       <div class="form-hint">
-        {% if existing %}Leave empty to keep the saved key.{% else %}A key with the <strong>Viewer</strong> role only.{% endif %}
+        {% if existing %}Leave empty to keep the saved key.{% elif kind == 'unifi' %}From Integrations, signed in as the View Only admin.{% else %}A key with the <strong>Viewer</strong> role only.{% endif %}
         {% if f.pending %}<br>Held in memory for ten minutes, so Save needs no retyping.{% endif %}
       </div>
       {% endif %}
@@ -62,15 +66,15 @@
     <div class="mb-3">
       <label class="form-label" id="tls-label">Certificate</label>
       <div role="radiogroup" aria-labelledby="tls-label">
-        <label class="form-check"><input class="form-check-input" type="radio" name="tls" value="verify"{% if f.tls != 'pin' %} checked{% endif %}><span class="form-check-label">Check it against the usual authorities ({% if kind == 'opnsense' %}a certificate from a public or your own authority{% else %}a myunraid.net or custom certificate{% endif %})</span></label>
-        <label class="form-check"><input class="form-check-input" type="radio" name="tls" value="pin"{% if f.tls == 'pin' %} checked{% endif %}><span class="form-check-label">Trust only one certificate ({% if kind == 'opnsense' %}the firewall's self-signed certificate{% else %}Unraid's self-signed certificate{% endif %}): you confirm its fingerprint below</span></label>
+        <label class="form-check"><input class="form-check-input" type="radio" name="tls" value="verify"{% if f.tls != 'pin' %} checked{% endif %}><span class="form-check-label">Check it against the usual authorities ({% if kind == 'opnsense' %}a certificate from a public or your own authority{% elif kind == 'unifi' %}a certificate from a public or your own authority{% else %}a myunraid.net or custom certificate{% endif %})</span></label>
+        <label class="form-check"><input class="form-check-input" type="radio" name="tls" value="pin"{% if f.tls == 'pin' %} checked{% endif %}><span class="form-check-label">Trust only one certificate ({% if kind == 'opnsense' %}the firewall's self-signed certificate{% elif kind == 'unifi' %}the controller's self-signed certificate{% else %}Unraid's self-signed certificate{% endif %}): you confirm its fingerprint below</span></label>
       </div>
       <input type="hidden" name="pin_confirm" value="{{ f.pin_confirm }}">
     </div>
     <div class="mb-3">
       <label class="form-label" for="interval">Read every (seconds)</label>
       <input type="number" class="form-control" id="interval" name="interval" value="{{ f.interval }}" min="30" max="3600" required>
-      <div class="form-hint">{% if kind == 'opnsense' %}Rules, port forwards, Caddy sites and firmware are read every five minutes whatever this says.{% else %}SMART status and notifications are read every five minutes whatever this says.{% endif %}</div>
+      <div class="form-hint">{% if kind == 'opnsense' %}Rules, port forwards, Caddy sites and firmware are read every five minutes whatever this says.{% elif kind == 'unifi' %}Wi-Fi networks and the gateway's firewall are read every five minutes whatever this says.{% else %}SMART status and notifications are read every five minutes whatever this says.{% endif %}</div>
       <div class="form-hint">30 to 3600.</div>
     </div>
     {% if kind == 'unraid' %}
@@ -157,7 +161,7 @@
     <div class="alert alert-success mb-0" role="status">The server presented the certificate you pinned.<div class="font-monospace small mt-1">SHA-256 {{ cert.fp }}</div></div>
     {% else %}
     <div class="alert alert-warning mb-2" role="status">
-      {% if cert.offer %}This server's certificate isn't signed by an authority DaemonSight trusts, which is normal for a self-signed certificate such as {% if kind == 'opnsense' %}OPNsense's{% else %}Unraid's{% endif %} own.
+      {% if cert.offer %}This server's certificate isn't signed by an authority DaemonSight trusts, which is normal for a self-signed certificate such as {% if kind == 'opnsense' %}OPNsense's{% elif kind == 'unifi' %}UniFi OS's{% else %}Unraid's{% endif %} own.
       {% elif cert.changed %}The server's certificate is not the one you pinned. It may have been renewed, or something is in the way.
       {% else %}Check this fingerprint before you trust the certificate.{% endif %}
       <div class="mt-2">Fingerprint (SHA-256):</div>
@@ -172,7 +176,8 @@
   {% if result %}
   <div class="card-body border-top" id="result">
     {% if result.ok %}
-    <div class="alert alert-success mb-3" role="status">{% if kind == 'opnsense' %}Connected. The key is accepted.{% else %}Connected. The key has the {{ result.roles|join(', ') if result.roles else 'no' }} role only.{% endif %}</div>
+    <div class="alert alert-success mb-3" role="status">{% if kind == 'opnsense' %}Connected. The key is accepted.{% elif kind == 'unifi' %}Connected. The key is accepted and can read.{% else %}Connected. The key has the {{ result.roles|join(', ') if result.roles else 'no' }} role only.{% endif %}</div>
+    {% if result.note %}<div class="text-secondary small mb-3" id="key-note">{{ result.note }}</div>{% endif %}
     <div class="datagrid">
       {% for label, value in result.facts %}
       <div class="datagrid-item"><div class="datagrid-title">{{ label }}</div><div class="datagrid-content">{{ value }}</div></div>
@@ -182,7 +187,22 @@
     {% else %}
     <div class="alert alert-danger mb-0" role="alert"><strong>Not saved.</strong> {{ result.problem }}{% if result.roles %}<div class="mt-1">Roles on this key: {{ result.roles|join(', ') }}.</div>{% endif %}</div>
     {% endif %}
-    {% if result.sources %}
+    {% if result.sources and kind == 'unifi' %}
+    <div class="subheader mt-3">What this admin may read</div>
+    <div class="table-responsive">
+      <table class="table table-sm card-table" id="privileges">
+        <thead><tr><th>Source</th><th>Where in UniFi</th><th>Result</th></tr></thead>
+        <tbody>
+          {% for s in result.sources %}
+          <tr><td>{{ s.title }}</td><td>{{ s.menu }}</td>
+            <td>{% if s.state == 'ok' %}<span class="badge bg-green-lt">Readable</span>
+              {% elif s.state == 'forbidden' %}<span class="badge bg-orange-lt">Not allowed</span>
+              {% else %}<span class="badge bg-red-lt">Error</span> <span class="small">{{ s.note }}</span>{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif result.sources %}
     <div class="subheader mt-3">What this user may read</div>
     <div class="table-responsive">
       <table class="table table-sm card-table" id="privileges">
@@ -221,7 +241,7 @@
 <div class="card mb-4">
   <div class="card-header"><h2 class="card-title">Remove</h2></div>
   <div class="card-body">
-    <p>Removing {{ existing.id }} deletes its saved API key, its history and its findings. {% if existing.kind == 'opnsense' %}Nothing changes on the firewall. Delete the user's API key there too (System → Access → Users).{% else %}Nothing changes on the Unraid server. Revoke the key there too (Settings → Management Access → API Keys).{% endif %}</p>
+    <p>Removing {{ existing.id }} deletes its saved API key, its history and its findings. {% if existing.kind == 'opnsense' %}Nothing changes on the firewall. Delete the user's API key there too (System → Access → Users).{% elif existing.kind == 'unifi' %}Nothing changes on the controller. Delete the API key there too (Integrations) and remove the View Only admin if nothing else uses it.{% else %}Nothing changes on the Unraid server. Revoke the key there too (Settings → Management Access → API Keys).{% endif %}</p>
     <form method="post" action="/remotes/{{ existing.id }}/remove" class="d-flex flex-wrap gap-2 align-items-end">
       <div><label class="form-label" for="confirm">Type the name to confirm</label><input type="text" class="form-control" id="confirm" name="confirm" autocomplete="off" placeholder="{{ existing.id }}"></div>
       <button type="submit" class="btn btn-outline-danger">Remove {{ existing.id }}</button>

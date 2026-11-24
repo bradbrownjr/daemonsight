@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% from "_macros.html" import src %}
+{% block title %}Wi-Fi · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · UniFi Network API: Wi-Fi networks</div>
+  <h1 class="page-title">Wi-Fi</h1>
+</div>
+{% include "partials/unifi_wifi.html" %}
+{% endblock %}

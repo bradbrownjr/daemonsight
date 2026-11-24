@@ -137,7 +137,41 @@
     {% endif %}
 {% endmacro %}
 
-{% if v.firmware %}
+{% if v.unifi %}
+  {% set u = v.unifi %}
+  <section class="card mt-4" id="updates" aria-labelledby="updates-title" data-section{% if not u.count %} data-empty{% endif %}>
+    <div class="card-header">
+      <h2 class="card-title" id="updates-title">Firmware updates</h2>{{ src("src-updates", u.src) }}
+      <div class="card-actions text-secondary"><span class="ds-shown"></span>{{ u.count }} waiting</div>
+    </div>
+    {% if u.state.state != 'ok' %}
+    <div class="card-body text-secondary">{{ u.state.reason }}</div>
+    {% elif not u.count %}
+    <div class="card-body text-secondary">No device has a firmware update waiting.</div>
+    {% else %}
+    <div class="card-body" id="updates-cves">{{ u.short }} <a href="{{ u.releases }}" target="_blank" rel="noopener noreferrer">Release notes</a></div>
+    <div class="table-responsive">
+      <table class="table table-vcenter card-table" data-table="unifi-updates">
+        <thead><tr><th data-sort="text">Device</th><th data-sort="text">Type</th><th data-sort="text">Model</th><th data-sort="text">Firmware now</th><th data-sort="text">Waiting</th></tr></thead>
+        <tbody>
+          {% for r in u.rows %}
+          <tr data-row>
+            <td data-label="Device"><a href="{{ base }}/devices#{{ r.anchor }}" class="fw-bold text-reset">{{ r.name }}</a></td>
+            <td data-label="Type">{{ r.kind }}</td>
+            <td data-label="Model">{{ r.model }}</td>
+            <td data-label="Firmware now">{{ r.firmware }}</td>
+            <td data-label="Waiting">{{ r.since }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    <div class="card-body text-secondary ds-nomatch">No devices match the filter.</div>
+  </section>
+  {% endif %}
+
+  {% if v.firmware %}
   {{ src_panel("src-firmware", v.src.firmware) }}
   <section class="card mt-4" id="firmware" aria-labelledby="firmware-title" data-section>
     <div class="card-header">

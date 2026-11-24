@@ -157,7 +157,7 @@ restarting:
 | CVE checks | Enabled, check every N hours, the EPSS probability that stands in for CISA's Automatable rating |
 | Retention | Chart points (hours), Recent changes (days), cleared findings (days); 0 keeps for good |
 | Backups | Hours between scheduled backups (blank is automatic, 0 is off), how many to keep |
-| Remote systems | Whether the hub reads Unraid and OPNsense systems at all |
+| Remote systems | Whether the hub reads Unraid, OPNsense and UniFi systems at all, and how long a UniFi device is offline before it is a finding |
 
 Each setting shows its default, the range it accepts and where its current
 value comes from:
@@ -555,7 +555,7 @@ The **Manage** button at the end of each row opens the host's page:
   findings, CVE matches and the token) and asks you to type the name. Nothing
   changes on the host; stop its collector there.
 
-For an Unraid or OPNsense system, Manage opens its edit page, where it can be
+For an Unraid, OPNsense or UniFi system, Manage opens its edit page, where it can be
 changed, disabled or removed.
 
 ### CVE matching
@@ -927,6 +927,53 @@ see the network note under "Add an Unraid server".
 The poller runs with the hub. To stop all remote reading, turn off "Read remote
 systems" on the Settings page, or set `[remote] enabled = false` in
 `config.toml` and restart.
+
+### Add a UniFi Network controller
+
+The hub reads the UniFi Network Integration API with one API key. No agent runs
+on the controller. UniFi has no read-only key and the API cannot say what a key
+may do, so DaemonSight cannot check it. It sends GET requests only, but the
+key could do more than that, so make it as a dedicated admin that can only
+view. The Add a system form has these steps behind its (i) button, with links
+to Ubiquiti's help pages
+(https://help.ui.com/hc/en-us/articles/30076656117655,
+https://help.ui.com/hc/en-us/articles/28692158912279,
+https://developer.ui.com/network/v11.0.97/gettingstarted).
+
+1. In the UniFi Network app, open Admins in the left bar and select the + at
+   the top right. Add a local admin such as `daemonsight` with the View Only
+   role. Leave Remote Management off unless you need it, and finish the
+   invitation so the admin can sign in.
+2. Sign in to the Network app as that admin, open Integrations and create an
+   API key. It is shown once.
+3. On the hub, press the + in the header ("Add a system"), choose UniFi Network
+   and give it a name: letters, digits, `.`, `_` and `-`, no spaces, starting
+   with a letter or digit, 63 characters at most. It is part of the system's page
+   address and can't be changed later. Then enter the console's address (HTTPS
+   only, for example `https://unifi.example.lan`, with its port if it is not
+   443; UniFi OS Server on Unraid uses 8443 by default) and paste the key.
+4. Press Test connection. It shows the controller version, how many sites and
+   devices it found, whether there is a gateway, and says that it cannot check
+   the key's role. A key that cannot read the sites or any devices is refused.
+5. The console presents a self-signed certificate unless you installed one, so
+   the test shows its SHA-256 fingerprint. Compare it with the console's, then
+   choose to trust it. Nothing is sent until you do.
+6. Save. The first read happens within a few seconds, and the controller
+   appears on the Hosts page as "UniFi Network · API" with Overview, Devices,
+   Wi-Fi and Report pages.
+
+The hub reads every minute by default (30 to 3600 seconds). Wi-Fi networks and
+the gateway's firewall policies are read every 5 minutes, or at the interval if
+that is longer. A device offline for 2 hours or more is a finding; change the
+2 hours on the Settings page (Remote systems, "UniFi device offline for"). The
+hub counts from when it first saw the state, or from the device's last
+heartbeat when that is earlier. Edit, Remove and the certificate pin work as for
+Unraid; delete the key and the admin in UniFi as well when you remove the system.
+A key from a View Only admin may be refused for some pages; Test connection and
+the page then say which source it could not read, and the others still work.
+
+If the hub is an Unraid container and Test connection can't reach the console,
+see the network note under "Add an Unraid server".
 
 ### Read CrowdSec bans from an OPNsense firewall
 

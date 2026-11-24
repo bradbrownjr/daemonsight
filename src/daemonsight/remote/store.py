@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 
-KINDS = {"unraid": "Unraid", "opnsense": "OPNsense"}
+KINDS = {"unraid": "Unraid", "opnsense": "OPNsense", "unifi": "UniFi Network"}
 TWO_PART = frozenset({"opnsense"})      # kinds whose credential is a key and a secret
 
 # The privileges the OPNsense user needs, by their names in the firewall's own `ACL.xml` files (opnsense/core
@@ -83,6 +83,28 @@ GUIDES = {
         "links": [
             ("OPNsense docs: API keys", "https://docs.opnsense.org/development/how-tos/api.html"),
             ("OPNsense docs: local users and privileges", "https://docs.opnsense.org/manual/how-tos/user-local.html"),
+        ],
+    },
+    "unifi": {
+        "title": "Making a UniFi key",
+        "steps": [
+            "The UniFi Network API has no read-only key. A key has the power of the admin who makes it, so make it as a "
+            "dedicated admin with the View Only role, not as your own admin or the owner. DaemonSight sends only GET "
+            "requests and refuses any other, but it cannot check the key's role: the Network API has no call that reports it.",
+            "In the UniFi Network app, go to Admins in the left bar and select the + at the top right (Ubiquiti: Adding "
+            "Admins in UniFi). Add a local admin, for example daemonsight, with the View Only role. Leave Remote "
+            "Management off unless you need it, and finish the invitation so the admin can sign in.",
+            "Sign in to the Network app as that admin and open Integrations, then create an API key. The key is shown "
+            "once. Paste it here.",
+            "Address: the https address of the UniFi OS console or UniFi OS Server, with its port if it is not 443. It "
+            "presents a self-signed certificate unless you installed one, so you confirm its fingerprint below.",
+            "Test connection, check what it found, then Save. Test only reads: it never writes anything to find out what "
+            "the key may do.",
+        ],
+        "links": [
+            ("Ubiquiti: Getting Started with the Official UniFi API", "https://help.ui.com/hc/en-us/articles/30076656117655"),
+            ("Ubiquiti: Adding Admins in UniFi", "https://help.ui.com/hc/en-us/articles/28692158912279"),
+            ("UniFi Network API reference", "https://developer.ui.com/network/v11.0.97/gettingstarted"),
         ],
     },
 }
@@ -242,7 +264,7 @@ def delete_reader_token(data_dir, remote_id: str) -> bool:
 def clean_key(raw: str | None) -> str:
     key = (raw or "").strip()
     if not KEY_RE.match(key):
-        raise ValueError("The API key is missing or has characters an Unraid key doesn't have.")
+        raise ValueError("The API key is missing or has characters an API key doesn't have (printable characters, no spaces).")
     return key
 
 
