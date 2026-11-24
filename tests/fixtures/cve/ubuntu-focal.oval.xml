@@ -1,0 +1,135 @@
+<oval_definitions xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5" xmlns:ind-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#independent" xmlns:oval="http://oval.mitre.org/XMLSchema/oval-common-5" xmlns:unix-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#unix" xmlns:linux-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://oval.mitre.org/XMLSchema/oval-common-5 oval-common-schema.xsd   http://oval.mitre.org/XMLSchema/oval-definitions-5 oval-definitions-schema.xsd   http://oval.mitre.org/XMLSchema/oval-definitions-5#independent independent-definitions-schema.xsd   http://oval.mitre.org/XMLSchema/oval-definitions-5#unix unix-definitions-schema.xsd  http://oval.mitre.org/XMLSchema/oval-definitions-5#linux linux-definitions-schema.xsd">
+  <generator>
+    <oval:product_name>Canonical OVAL Generator</oval:product_name>
+    <oval:product_version>2</oval:product_version>
+    <oval:schema_version>5.11.1</oval:schema_version>
+    <oval:timestamp>2026-11-19T20:35:19</oval:timestamp>
+  </generator>
+  <!-- A trimmed copy of Canonical's focal CVE OVAL file (https://security-metadata.canonical.com/oval/com.ubuntu.focal.cve.oval.xml.bz2, read 2026-11-24, Creative Commons Attribution-ShareAlike 4.0): the definitions below are verbatim, the kernel ones cut to three flavors, and the tests, objects, states and variables sections the reader does not use are left out. -->
+  <definitions>
+    <definition id="oval:com.ubuntu.focal:def:100" class="inventory" version="1">
+      <metadata>
+        <title>Check that Ubuntu 20.04 LTS (focal) is installed.</title>
+        <description />
+      </metadata>
+      <criteria>
+        <criterion test_ref="oval:com.ubuntu.focal:tst:100" comment="The host is part of the unix family." />
+        <criterion test_ref="oval:com.ubuntu.focal:tst:101" comment="The host is running Ubuntu 20.04 LTS (focal)." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.focal:def:201211480000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2012-1148 on Ubuntu 20.04 LTS (focal) - low</title>
+        <affected family="unix">
+          <platform>Ubuntu 20.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2012-1148" ref_url="https://www.cve.org/CVERecord?id=CVE-2012-1148" />
+        <reference source="USN" ref_id="USN-1527-1" ref_url="https://ubuntu.com/security/notices/USN-1527-1" />
+        <reference source="USN" ref_id="USN-1527-2" ref_url="https://ubuntu.com/security/notices/USN-1527-2" />
+        <reference source="USN" ref_id="USN-1613-1" ref_url="https://ubuntu.com/security/notices/USN-1613-1" />
+        <reference source="USN" ref_id="USN-1613-2" ref_url="https://ubuntu.com/security/notices/USN-1613-2" />
+        <reference source="USN" ref_id="USN-5455-1" ref_url="https://ubuntu.com/security/notices/USN-5455-1" />
+        <reference source="USN" ref_id="USN-7307-1" ref_url="https://ubuntu.com/security/notices/USN-7307-1" />
+        <description>Memory leak in the poolGrow function in expat/lib/xmlparse.c in expat before 2.1.0 allows context-dependent attackers to cause a denial of service (memory consumption) via a large number of crafted XML files that cause improperly-handled reallocation failures when expanding entities.  Update Instructions:  Run `sudo pro fix CVE-2012-1148` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  libxmltok1 - 1.2-4ubuntu0.20.04.1~esm5 Available with Ubuntu Pro: https://ubuntu.com/pro</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Low</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2012-07-03T00:00:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2012-1148" priority="low" public="20120703" usns="1527-1,1527-2,1613-1,1613-2,5455-1,7307-1">CVE-2012-1148</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.focal:def:100" comment="Ubuntu 20.04 LTS (focal) is installed" />
+        <criteria operator="OR">
+          <criterion test_ref="oval:com.ubuntu.focal:tst:201211480000000" comment="libxmltok source package in esm-apps/focal, is affected and has been fixed (note: '1.2-4ubuntu0.20.04.1~esm5')." />
+          <criterion test_ref="oval:com.ubuntu.focal:tst:200935600000000" comment="swish-e source package in esm-apps/focal, might be affected and may need fixing." />
+        </criteria>
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.focal:def:201637090000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2016-3709 on Ubuntu 20.04 LTS (focal) - medium</title>
+        <affected family="unix">
+          <platform>Ubuntu 20.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2016-3709" ref_url="https://www.cve.org/CVERecord?id=CVE-2016-3709" />
+        <reference source="USN" ref_id="USN-5548-1" ref_url="https://ubuntu.com/security/notices/USN-5548-1" />
+        <description>Possible cross-site scripting vulnerability in libxml after commit 960f0e2.  Update Instructions:  Run `sudo pro fix CVE-2016-3709` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  libxml2 - 2.9.10+dfsg-5ubuntu0.20.04.4 libxml2-utils - 2.9.10+dfsg-5ubuntu0.20.04.4 python-libxml2 - 2.9.10+dfsg-5ubuntu0.20.04.4 python3-libxml2 - 2.9.10+dfsg-5ubuntu0.20.04.4 No subscription required</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Medium</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2022-07-28T17:15:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2016-3709" priority="medium" public="20220728" cvss_score="6.1" cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N" cvss_severity="medium" usns="5548-1">CVE-2016-3709</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.focal:def:100" comment="Ubuntu 20.04 LTS (focal) is installed" />
+        <criterion test_ref="oval:com.ubuntu.focal:tst:201637090000000" comment="libxml2 source package in focal, is affected and has been fixed (note: '2.9.10+dfsg-5ubuntu0.20.04.4')." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.focal:def:2019175670000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2019-17567 on Ubuntu 20.04 LTS (focal) - medium</title>
+        <affected family="unix">
+          <platform>Ubuntu 20.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2019-17567" ref_url="https://www.cve.org/CVERecord?id=CVE-2019-17567" />
+        <description>Apache HTTP Server versions 2.4.6 to 2.4.46 mod_proxy_wstunnel configured on an URL that is not necessarily Upgraded by the origin server was tunneling the whole connection regardless, thus allowing for subsequent requests on the same connection to pass through with no HTTP validation, authentication or authorization possibly configured.</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Medium</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2021-06-10T07:15:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2019-17567" priority="medium" public="20210610" cvss_score="5.3" cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N" cvss_severity="medium">CVE-2019-17567</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.focal:def:100" comment="Ubuntu 20.04 LTS (focal) is installed" />
+        <criterion test_ref="oval:com.ubuntu.focal:tst:2019175670000000" comment="apache2 source package in esm-infra/focal, might be affected and may need fixing." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.focal:def:2024425160000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2024-42516 on Ubuntu 20.04 LTS (focal) - medium</title>
+        <affected family="unix">
+          <platform>Ubuntu 20.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2024-42516" ref_url="https://www.cve.org/CVERecord?id=CVE-2024-42516" />
+        <reference source="USN" ref_id="USN-7639-1" ref_url="https://ubuntu.com/security/notices/USN-7639-1" />
+        <reference source="USN" ref_id="USN-7639-2" ref_url="https://ubuntu.com/security/notices/USN-7639-2" />
+        <reference source="USN" ref_id="USN-8338-1" ref_url="https://ubuntu.com/security/notices/USN-8338-1" />
+        <description>HTTP response splitting in the core of Apache HTTP Server allows an attacker who can manipulate the Content-Type response headers of applications hosted or proxied by the server can split the HTTP response. This vulnerability was described as CVE-2023-38709 but the patch included in Apache HTTP Server 2.4.59 did not address the issue. Users are recommended to upgrade to version 2.4.64, which fixes this issue.  Update Instructions:  Run `sudo pro fix CVE-2024-42516` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  apache2 - 2.4.41-4ubuntu3.23+esm2 apache2-bin - 2.4.41-4ubuntu3.23+esm2 apache2-data - 2.4.41-4ubuntu3.23+esm2 apache2-suexec-custom - 2.4.41-4ubuntu3.23+esm2 apache2-suexec-pristine - 2.4.41-4ubuntu3.23+esm2 apache2-utils - 2.4.41-4ubuntu3.23+esm2 libapache2-mod-md - 2.4.41-4ubuntu3.23+esm2 libapache2-mod-proxy-uwsgi - 2.4.41-4ubuntu3.23+esm2 Available with Ubuntu Pro (Infra-only): https://ubuntu.com/pro</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Medium</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2025-07-10T17:15:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2024-42516" priority="medium" public="20250710" cvss_score="7.5" cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N" cvss_severity="high" usns="7639-1,7639-2,8338-1">CVE-2024-42516</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.focal:def:100" comment="Ubuntu 20.04 LTS (focal) is installed" />
+        <criterion test_ref="oval:com.ubuntu.focal:tst:2024425160000000" comment="apache2 source package in esm-infra/focal, is affected and has been fixed (note: '2.4.41-4ubuntu3.23+esm2')." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.focal:def:202545980000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2025-4598 on Ubuntu 20.04 LTS (focal) - medium</title>
+        <affected family="unix">
+          <platform>Ubuntu 20.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2025-4598" ref_url="https://www.cve.org/CVERecord?id=CVE-2025-4598" />
+        <reference source="USN" ref_id="USN-7559-1" ref_url="https://ubuntu.com/security/notices/USN-7559-1" />
+        <description>A vulnerability was found in systemd-coredump. This flaw allows an attacker to force a SUID process to crash and replace it with a non-SUID binary to access the original's privileged process coredump, allowing the attacker to read sensitive data, such as /etc/shadow content, loaded by the original process. A SUID binary or process has a special type of permission, which allows the process to run with the file owner's permissions, regardless of the user executing the binary. This allows the process to access more restricted data than unprivileged users or processes would be able to. An attacker can leverage this flaw by forcing a SUID process to crash and force the Linux kernel to recycle the process PID before systemd-coredump can analyze the /proc/pid/auxv file. If the attacker wins the race condition, they gain access to the original's SUID process coredump file. They can read sensitive content loaded into memory by the original binary, affecting data confidentiality.  Update Instructions:  Run `sudo pro fix CVE-2025-4598` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  libnss-myhostname - 245.4-4ubuntu3.24+esm1 libnss-mymachines - 245.4-4ubuntu3.24+esm1 libnss-resolve - 245.4-4ubuntu3.24+esm1 libnss-systemd - 245.4-4ubuntu3.24+esm1 libpam-systemd - 245.4-4ubuntu3.24+esm1 libsystemd0 - 245.4-4ubuntu3.24+esm1 libudev1 - 245.4-4ubuntu3.24+esm1 systemd - 245.4-4ubuntu3.24+esm1 systemd-container - 245.4-4ubuntu3.24+esm1 systemd-coredump - 245.4-4ubuntu3.24+esm1 systemd-journal-remote - 245.4-4ubuntu3.24+esm1 systemd-sysv - 245.4-4ubuntu3.24+esm1 systemd-tests - 245.4-4ubuntu3.24+esm1 systemd-timesyncd - 245.4-4ubuntu3.24+esm1 udev - 245.4-4ubuntu3.24+esm1 Available with Ubuntu Pro (Infra-only): https://ubuntu.com/pro</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Medium</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2025-05-30T14:15:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2025-4598" priority="medium" public="20250530" cvss_score="4.7" cvss_vector="CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:N/A:N" cvss_severity="medium" usns="7559-1">CVE-2025-4598</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.focal:def:100" comment="Ubuntu 20.04 LTS (focal) is installed" />
+        <criterion test_ref="oval:com.ubuntu.focal:tst:202545980000000" comment="systemd source package in esm-infra/focal, is affected and has been fixed (note: '245.4-4ubuntu3.24+esm1')." />
+      </criteria>
+    </definition>
+  </definitions>
+</oval_definitions>

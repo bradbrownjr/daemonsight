@@ -42,8 +42,9 @@ socket, the fail2ban socket and the firewall needs it.
   names only, so a reply can't run code.
 - **What it sends about packages.** With `[upload]` set, the list of
   installed packages (source name, version and binary package names) and the
-  release name from `/etc/os-release`; on Fedora, the pending security
-  advisories instead. That tells the hub, and anyone who reads its database,
+  release name from `/etc/os-release` (on Ubuntu, also which Ubuntu Pro ESM
+  services are on, read from the apt source files they write); on Fedora, the
+  pending security advisories instead. That tells the hub, and anyone who reads its database,
   which versions of what the host runs. The collector downloads no
   vulnerability data.
 - **Secrets in container logs and command lines are masked** before
@@ -446,7 +447,10 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
 - **CVE matching downloads public files.** The hub fetches the Debian
   security tracker, FIRST's EPSS scores and CISA's KEV list over HTTPS, and,
   when a container image on an Unraid server is Alpine, that release's
-  `main.json` and `community.json` from `secdb.alpinelinux.org`, and, while an
+  `main.json` and `community.json` from `secdb.alpinelinux.org`, and, for each
+  Ubuntu release a host or an image runs, Canonical's CVE OVAL file
+  (`https://security-metadata.canonical.com/oval/com.ubuntu.<release>.cve.oval.xml.bz2`,
+  about 12 MB, Creative Commons Attribution-ShareAlike 4.0), and, while an
   OPNsense firewall has a release update pending, the OPNsense project's
   changelog: one 0.6 MB tarball of its repository from `codeload.github.com`
   (`/opnsense/changelog/tar.gz/refs/heads/master`, BSD 2-Clause), read for the
@@ -454,7 +458,7 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   Requests carry
   the User-Agent `DaemonSight/<version>` and nothing about your hosts. A
   redirect may only stay on the feed's own host, each download has a size
-  cap, files are written atomically and parsed with the standard library
+  cap (the bzip2 files are also capped once decoded), files are written atomically and parsed with the standard library
   (no code is run from them). The changelog tarball is never extracted: it is
   read as a stream and only plain files named `community/<series>/<release>`
   are read, each capped. A failed download keeps the last good data.
@@ -515,7 +519,7 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
 - **Feed text is untrusted.** CVE descriptions and names come from other
   people's files. They are cut to a fixed length when stored and shown only
   through autoescaped templates, and the links they produce go to
-  `security-tracker.debian.org` (Alpine images: `security.alpinelinux.org`),
+  `security-tracker.debian.org` (Alpine images: `security.alpinelinux.org`; Ubuntu: `ubuntu.com/security`),
   built from a CVE id that matched a strict pattern. A bad feed can give wrong findings but can't run anything.
 - **Refusals are logged** as `Refused upload from <address>: <reason>`.
   The fail2ban filter counts only bad tokens.

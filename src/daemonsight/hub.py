@@ -187,6 +187,8 @@ class InventoryIn(BaseModel):
     os_id: Annotated[str, Field(max_length=40)] | None = None
     version_id: Annotated[str, Field(max_length=40)] | None = None
     codename: Annotated[str, Field(pattern=r"^[a-z0-9._-]{1,40}$")] | None = None
+    # Ubuntu: the Ubuntu Pro ESM services the host has on ("infra", "apps"); None when the collector did not look
+    esm: list[Literal["infra", "apps"]] | None = Field(default=None, max_length=2)
     # apt: [source package, source version, [binary packages]]
     sources: list[tuple[PkgName, PkgVersion, list[PkgName]]] = Field(default_factory=list, max_length=20_000)
     # dnf: pending security advisories

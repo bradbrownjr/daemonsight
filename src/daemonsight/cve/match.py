@@ -1,5 +1,7 @@
 """Match a host's installed packages against the Debian security tracker, and
-turn the result into findings.
+turn the result into findings. (Ubuntu is matched in ubuntu.py, into the same
+`match` table, with the extra state `esm`: a fix that exists only in Ubuntu
+Pro's ESM archives and is not available to a host without Pro.)
 
 For one installed source package at version V on release R, each tracker row
 (R, source, CVE) gives a state:
@@ -21,12 +23,13 @@ bin/tracker_data.py in https://salsa.debian.org/security-tracker-team/security-t
 
 from __future__ import annotations
 
+import sqlite3
 import time
 
 from ..findings import Finding, anchor, digest, upgrade_cmd
 from . import debver
 
-STATES = ("fix", "nofix", "minor", "undetermined")
+STATES = ("fix", "esm", "nofix", "minor", "undetermined")
 MINOR_URGENCY = ("unimportant", "end-of-life")
 TRACKER_URL = "https://security-tracker.debian.org/tracker/"
 MAX_FINDINGS = 100
@@ -41,7 +44,7 @@ MATCH_VERSION = 2
 def release_of(inv: dict) -> str | None:
     """The Debian release an inventory is from. Raspberry Pi OS (raspbian) is
     Debian under its own name, looked up by codename as distro.py does.
-    Ubuntu and other derivatives are not matched yet."""
+    Ubuntu is matched by cve/ubuntu.py (its own data); other derivatives are not matched."""
     if inv.get("backend") == "apt" and inv.get("os_id") in ("debian", "raspbian") and inv.get("codename"):
         return inv["codename"]
     return None
@@ -141,28 +144,38 @@ def pct(score: float | None) -> str:
 def rank_key(c: dict):
     """Worst first: on the KEV list, then the higher EPSS score, then a fix
     over none, then the CVE id."""
-    return (not c["kev"], -(c["epss"] or 0), c["state"] != "fix", c["cve"])
+    return (not c["kev"], -(c["epss"] or 0), {"fix": 0, "esm": 1}.get(c["state"], 2), c["cve"])
 
 
 def host_cves(conn, host: str, states: tuple[str, ...] = STATES) -> list[dict]:
     """Every stored match for a host, with EPSS score, KEV flag and description."""
     marks = ",".join("?" for _ in states)
     out = []
-    for r in conn.execute(
-            "SELECT m.source, m.cve, m.state, m.installed, m.fixed, m.urgency, e.score AS epss, e.pct AS pctile, "
-            "k.cve IS NOT NULL AS kev, k.name AS kev_name, k.ransomware AS ransomware, c.descr AS descr "
-            "FROM match m LEFT JOIN epss e ON e.cve = m.cve LEFT JOIN kev k ON k.cve = m.cve "
-            f"LEFT JOIN cve c ON c.id = m.cve WHERE m.host = ? AND m.state IN ({marks})", (host, *states)):
+    # Ubuntu's CVE text is in its own table (the Debian tracker's is replaced whole on each load). A reader that meets a
+    # cve.db from before that table existed (the chore has not migrated it yet) just goes without the text.
+    for descr in ("COALESCE(c.descr, u.descr)", "c.descr"):
+        join = "LEFT JOIN ubu_cve u ON u.cve = m.cve " if "u." in descr else ""
+        try:
+            rows = conn.execute(
+                "SELECT m.source, m.cve, m.state, m.installed, m.fixed, m.urgency, e.score AS epss, e.pct AS pctile, "
+                f"k.cve IS NOT NULL AS kev, k.name AS kev_name, k.ransomware AS ransomware, {descr} AS descr "
+                "FROM match m LEFT JOIN epss e ON e.cve = m.cve LEFT JOIN kev k ON k.cve = m.cve "
+                f"LEFT JOIN cve c ON c.id = m.cve {join}WHERE m.host = ? AND m.state IN ({marks})", (host, *states)).fetchall()
+            break
+        except sqlite3.OperationalError:
+            if descr == "c.descr":
+                raise
+    for r in rows:
         d = dict(r)
         d["kev"] = bool(d["kev"])
         out.append(d)
     return out
 
 
-def _fixed_version(cves: list[dict]) -> str | None:
+def _fixed_version(cves: list[dict], state: str = "fix") -> str | None:
     best = None
     for c in cves:
-        if c["state"] == "fix" and c["fixed"]:
+        if c["state"] == state and c["fixed"]:
             try:
                 if best is None or debver.compare(c["fixed"], best) > 0:
                     best = c["fixed"]
@@ -171,33 +184,50 @@ def _fixed_version(cves: list[dict]) -> str | None:
     return best
 
 
-def _describe(c: dict) -> str:
+def _describe(c: dict, label: str = "Debian urgency") -> str:
     bits = []
     if c["kev"]:
         bits.append("exploited, CISA KEV")
     bits.append(pct(c["epss"]))
     if c.get("urgency") and c["urgency"] != "not yet assigned":
-        bits.append(f"Debian urgency {c['urgency']}")
+        bits.append(f"{label} {c['urgency']}")
     if c["state"] == "nofix":
         bits.append("no fix yet")
+    elif c["state"] == "esm":
+        bits.append("fix only with Ubuntu Pro")
     return f"{c['cve']} ({', '.join(bits)})"
 
 
+UBUNTU_CVE_URL = "https://ubuntu.com/security/"
+ESM_FIX = "pro security-status\nsudo pro enable esm-infra esm-apps\nsudo apt update\nsudo apt upgrade"
+
+
+def is_kernel_source(src: str, names: list[str]) -> bool:
+    """The running kernel's source: `linux`, or an Ubuntu flavor (`linux-aws`, `linux-hwe-6.8`) whose binaries include the
+    running kernel image (the collector lists only that one)."""
+    return src == "linux" or (src.startswith("linux-") and any(isinstance(b, str) and b.startswith("linux-image-") for b in names))
+
+
 def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: set[str],
-                     epss_high: float, backend: str = "apt", reboot_pending: bool = False) -> list[Finding]:
+                     epss_high: float, backend: str = "apt", reboot_pending: bool = False,
+                     distro: str = "debian") -> list[Finding]:
     """One finding per source package: High if any open or fixable CVE is on
     CISA's KEV list or has an EPSS score at or above `epss_high`, Medium if a
-    fix is available, otherwise none."""
+    fix is available, otherwise none. On Ubuntu a fix that exists only in Ubuntu Pro's ESM archives (state `esm`, for a
+    host without that Pro service) counts as a fix for the severity, and says plainly that apt will not install it."""
+    ubuntu = distro == "ubuntu"
+    label = "Ubuntu priority" if ubuntu else "Debian urgency"
     by_pkg: dict[str, list[dict]] = {}
     for c in cves:
-        if c["state"] in ("fix", "nofix"):
+        if c["state"] in ("fix", "esm", "nofix"):
             by_pkg.setdefault(c["source"], []).append(c)
     out = []
     for src, items in by_pkg.items():
         items.sort(key=rank_key)
         kev = [c for c in items if c["kev"]]
-        hot = [c for c in items if not c["kev"] and c["state"] == "fix" and (c["epss"] or 0) >= epss_high]
+        hot = [c for c in items if not c["kev"] and c["state"] in ("fix", "esm") and (c["epss"] or 0) >= epss_high]
         fixes = [c for c in items if c["state"] == "fix"]
+        esms = [c for c in items if c["state"] == "esm"]
         if kev:
             sev = "high"
             title = (f"{src}: {kev[0]['cve']} is being exploited (CISA KEV)" if len(kev) == 1
@@ -210,6 +240,10 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
             sev = "medium"
             title = (f"{src}: {fixes[0]['cve']} is fixed in an update" if len(fixes) == 1
                      else f"{src}: {len(fixes)} CVEs fixed in an update")
+        elif esms:
+            sev = "medium"
+            title = (f"{src}: {esms[0]['cve']} is fixed only in Ubuntu Pro (ESM)" if len(esms) == 1
+                     else f"{src}: {len(esms)} CVEs fixed only in Ubuntu Pro (ESM)")
         else:
             continue
         parts = []
@@ -221,7 +255,7 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
             if backend == "dnf":
                 parts.append("Fedora has security advisories for it. Install the update.")
                 fix = upgrade_cmd({"backend": "dnf"})
-            elif src == "linux" and reboot_pending:
+            elif is_kernel_source(src, names) and reboot_pending:
                 # The inventory lists the running kernel, and a newer one is
                 # installed (pkg.reboot is open): the reboot is what applies it.
                 parts.append(f"Running kernel {installed}; fixed in {fv}. A newer kernel is installed: reboot "
@@ -229,7 +263,7 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
                              "install the update.")
                 fix = "sudo reboot"
             else:
-                kernel = src == "linux"
+                kernel = is_kernel_source(src, names)
                 parts.append(f"{'Running kernel' if kernel else 'Installed'} {installed}; fixed in {fv}. "
                              f"Install the update{', then reboot to run it' if kernel else ''}.")
                 fix = upgrade_cmd(None)
@@ -240,13 +274,21 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
                                  "check the host's apt sources include the security archive.")
                     if not listed:
                         fix = "sudo apt update\n" + fix
-                if src == "linux":
+                if kernel:
                     fix += "\nsudo reboot"
+        if esms:
+            ev = _fixed_version(esms, "esm")
+            parts.append(f"{len(esms)} of its CVEs {'is' if len(esms) == 1 else 'are'} fixed in {ev}, which is only in Ubuntu Pro's ESM "
+                         "archives. apt does not install it unless this host has the matching Pro service on "
+                         "(`pro status` shows which are on)." + ("" if fixes else " Enabling it makes the fix an ordinary update."))
+            if not fixes:
+                fix = ESM_FIX
         unfixed = [c for c in items if c["state"] == "nofix"]
-        top = ", ".join(_describe(c) for c in items[:TOP_CVES])
+        top = ", ".join(_describe(c, label) for c in items[:TOP_CVES])
         parts.append(f"Top CVEs: {top}" + (f" and {len(items) - TOP_CVES} more." if len(items) > TOP_CVES else "."))
-        if unfixed and kev and not fixes:
-            parts.append(f"Debian has no fix yet. See {TRACKER_URL}{kev[0]['cve']} for mitigations.")
+        if unfixed and kev and not fixes and not esms:
+            parts.append(f"{'Ubuntu' if ubuntu else 'Debian'} has no fix yet. See "
+                         f"{(UBUNTU_CVE_URL if ubuntu else TRACKER_URL)}{kev[0]['cve']} for mitigations.")
         elif unfixed:
             parts.append(f"{len(unfixed)} more in this package have no fix yet.")
         # Basis: the CVE ids, so a new CVE in the package brings an accepted finding back.

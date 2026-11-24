@@ -29,8 +29,8 @@ SECTION_READ = {
     "firewall": "iptables-save and ip6tables-save, and nft -j list ruleset for native nft tables",
     "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
     "opnsense": "The OPNsense REST API, read by the hub with GET requests only (a dedicated user's API key)",
-    "cve": "The hub matches this host's installed packages against the Debian security tracker, EPSS scores and "
-           "CISA's KEV list; the host downloads nothing",
+    "cve": "The hub matches this host's installed packages against the Debian security tracker (Ubuntu: Canonical's "
+           "OVAL data), EPSS scores and CISA's KEV list; the host downloads nothing",
     "outside": "Shodan, asked by the hub about this host's public addresses: its free InternetDB, or the Shodan API "
                "with the owner's key. Only the IP address is sent (the API also gets the key), with a generic "
                "User-Agent, DaemonSight/<version>. The answer is Shodan's scan data, up to a week old, compared "
@@ -92,7 +92,25 @@ def outside_port(ip: str, port: int, lines: list[str], source: str = "internetdb
     return {"title": f"Port {port} on {ip}", "read": read, "entries": entries}
 
 
-def cve_packages() -> dict:
+UBUNTU_OVAL = "https://security-metadata.canonical.com/oval/"
+
+
+def cve_packages(distro: str = "debian", release: str | None = None) -> dict:
+    if distro == "ubuntu":
+        rel = release or "$(. /etc/os-release && echo $VERSION_CODENAME)"
+        return {"title": "Packages with CVEs",
+                "read": "The hub compares each installed source package and version with Canonical's Ubuntu OVAL data for this "
+                        "host's release (dpkg version order). A fix that exists only in Ubuntu Pro's ESM archives is shown as such, "
+                        "and counts as available only when the host has that Pro service on",
+                "entries": [cmd("What Ubuntu Pro covers on this host", "pro security-status"),
+                            cmd("One CVE: what would be done (Pro's own check, changes nothing)", "sudo pro fix CVE-2024-6387 --dry-run"),
+                            cmd("Updates apt offers (refresh the lists first)", "apt list --upgradable"),
+                            cmd("Installed source versions",
+                                "dpkg-query -W -f '${source:Package} ${source:Version}\\n' | sort -u"),
+                            cmd("The OVAL lines for one source package", f"curl -s {q(UBUNTU_OVAL + 'com.ubuntu.' + rel + '.cve.oval.xml.bz2')} "
+                                                                        "| bzcat | grep -F 'openssl source package in'"),
+                            url("Ubuntu's CVE pages", "https://ubuntu.com/security/cves", "ubuntu.com/security/cves"),
+                            url("Ubuntu Security Notices", "https://ubuntu.com/security/notices", "ubuntu.com/security/notices")]}
     return {"title": "Packages with CVEs",
             "read": "The hub compares each installed source package and version with the Debian security tracker "
                     "(Debian version order), for this host's release only",
@@ -104,12 +122,19 @@ def cve_packages() -> dict:
                             "security-tracker.debian.org")]}
 
 
-def cve_inventory() -> dict:
+def cve_inventory(distro: str = "debian") -> dict:
+    entries = [cmd("The list the collector reads",
+                   "dpkg-query -W -f '${db:Status-Abbrev} ${source:Package} ${source:Version} ${Package} "
+                   "${Version}\\n'")]
+    if distro == "ubuntu":
+        entries.append(file("Ubuntu Pro ESM services that are on (a file exists for each)",
+                            "/etc/apt/sources.list.d/ubuntu-esm-infra.sources  ubuntu-esm-apps.sources  (or .list)"))
+        entries.append(plain("Ubuntu kernels", "Only the running kernel's image is listed. A signed image's source (linux-signed-aws) is "
+                                               "listed under the name Canonical's data uses (linux-aws)"))
     return {"title": "Package list",
-            "read": "The collector's dpkg-query output, sent with its uploads when it changes (and once a day)",
-            "entries": [cmd("The list the collector reads",
-                            "dpkg-query -W -f '${db:Status-Abbrev} ${source:Package} ${source:Version} ${Package} "
-                            "${Version}\\n'")]}
+            "read": "The collector's dpkg-query output, sent with its uploads when it changes (and once a day)"
+                    + (", with which Ubuntu Pro ESM services are on" if distro == "ubuntu" else ""),
+            "entries": entries}
 
 
 def cve_feed(feed, row) -> dict:
@@ -617,10 +642,12 @@ def images_section(reader_url: str | None) -> dict:
                plain("Support status", "Debian, Ubuntu and Fedora bases use the same release data as a host (distro-info). Alpine and "
                                        "CentOS Linux use endoflife.date's end dates, bundled with DaemonSight"),
                plain("CVEs", "Debian images: each package is matched by its source package and version against Debian's security "
-                             "tracker. Alpine images: each package's origin and version against Alpine's security database "
-                             "(secdb.alpinelinux.org, main.json and community.json of the image's release). Both are ranked by CISA KEV "
-                             "and EPSS as a host's packages are. Ubuntu is not matched yet. A CVE counts as fixable only when the "
-                             "source names a fixed version; secdb lists fixes only, so an Alpine image has no unfixed count"),
+                             "tracker. Ubuntu images: against Canonical's Ubuntu OVAL file for the image's release "
+                             "(security-metadata.canonical.com/oval). Alpine images: each package's origin and version against Alpine's "
+                             "security database (secdb.alpinelinux.org, main.json and community.json of the image's release). All are "
+                             "ranked by CISA KEV and EPSS as a host's packages are. A CVE counts as fixable only when the source names "
+                             "a fixed version; secdb lists fixes only, so an Alpine image has no unfixed count; a fix that exists only "
+                             "in Ubuntu Pro's ESM archives is shown but is not one an image can take"),
                cmd("One image's packages, on the server", "docker cp -L <container>:/var/lib/dpkg/status - | tar -xO"),
                plain("Alpine instead", "docker cp -L <container>:/lib/apk/db/installed - | tar -xO"),
                cmd("Its OS", "docker cp -L <container>:/usr/lib/os-release - | tar -xO")]
@@ -641,13 +668,28 @@ def docker_image_row(r: dict) -> dict:
                plain("Read through container", cname)]
     c = r.get("cve")
     alpine = r.get("kind") == "alpine"
+    ubuntu = r.get("kind") == "ubuntu"
     if c and c.get("state") == "matched":
-        entries.append(plain("CVEs", f"{len(c['fixable'])} fixable" if alpine else f"{len(c['fixable'])} fixable, {c['unfixed']} with no fix yet"))
+        entries.append(plain("CVEs", f"{len(c['fixable'])} fixable" if alpine else f"{len(c['fixable'])} fixable, {c['unfixed']} with no fix yet"
+                             + (f", {len(c['esm'])} fixed only in Ubuntu Pro (ESM)" if c.get("esm") else "")))
         if c.get("note"):
             entries.append(plain("Note", c["note"]))
         for x in c["fixable"][:5]:
-            entries.append({"kind": "url", "label": x["cve"], "text": match._describe(x).removeprefix(x["cve"]).strip(" ()") or x["cve"],
-                            "href": ALPINE_TRACKER + x["cve"] if alpine else match.TRACKER_URL + x["cve"]})
+            entries.append({"kind": "url", "label": x["cve"],
+                            "text": match._describe(x, "Ubuntu priority" if ubuntu else "Debian urgency").removeprefix(x["cve"]).strip(" ()") or x["cve"],
+                            "href": ALPINE_TRACKER + x["cve"] if alpine else (match.UBUNTU_CVE_URL if ubuntu else match.TRACKER_URL) + x["cve"]})
+    if ubuntu and r.get("ubuntu_release"):
+        rel = r["ubuntu_release"]
+        src = c["fixable"][0]["source"] if c and c.get("state") == "matched" and c["fixable"] else "<source package>"
+        entries.append({"kind": "url", "label": "Matched against", "text": f"{UBUNTU_OVAL}com.ubuntu.{rel}.cve.oval.xml.bz2",
+                        "href": UBUNTU_OVAL})
+        entries.append(cmd("The same lookup in the OVAL file", f"curl -s {q(UBUNTU_OVAL + 'com.ubuntu.' + rel + '.cve.oval.xml.bz2')} | bzcat "
+                                                              f"| grep -F {q(src + ' source package in')}"))
+        entries.append(cmd("Updates the container's own apt sees", f"docker exec {q(cname)} apt list --upgradable"))
+        entries.append(plain("That command", "Lists packages the container's package index offers newer versions of (run apt update first "
+                                             "when the image ships no index; that writes only inside the container). It lists updates, "
+                                             "not CVEs: look a CVE up on ubuntu.com/security/<CVE>. pro security-status needs the "
+                                             "Pro client, which a container image does not have"))
     if alpine and r.get("alpine_release"):
         rel = r["alpine_release"]
         entries.append({"kind": "url", "label": "Matched against", "text": f"https://secdb.alpinelinux.org/{rel}/main.json and community.json",

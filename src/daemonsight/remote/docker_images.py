@@ -1,5 +1,5 @@
 """What is inside the container images of an Unraid server: each image's base operating system, whether that base
-still gets security updates, and the CVEs in its Debian packages. The package lists come from the Docker reader (see
+still gets security updates, and the CVEs in its Debian and Ubuntu packages (and Alpine's, from secdb). The package lists come from the Docker reader (see
 docker_reader.py, "Package lists"; stored by docker_storage.parse_summary as `image_packages`), and the matching is the
 hub's CVE matcher (cve/match.py) run on each image as if it were a host.
 
@@ -11,13 +11,13 @@ Per image the analysis gives:
 * `docker.eol_base` (medium): one aggregate finding for every image whose base has ended support (status "eol", or
   "ended": Debian past LTS, where only the paid ELTS covers it). An image on Debian LTS or Ubuntu ESM still gets some
   updates and is shown, not counted.
-* `docker.image_cves`: one finding per Debian or Alpine image that has CVEs the Debian tracker, or Alpine's secdb (cve/alpine.py),
-  lists as fixed in a newer version of a package the image holds. Severity as for a host (cve/match.py, `package_findings`): High when a fixable CVE is on
+* `docker.image_cves`: one finding per Debian, Ubuntu or Alpine image that has CVEs the Debian tracker, Canonical's Ubuntu OVAL
+  (cve/ubuntu.py) or Alpine's secdb (cve/alpine.py) lists as fixed in a newer version of a package the image holds. A fix that
+  exists only in Ubuntu Pro's ESM archives is not one an image can take, so it is counted and shown, never raised. Severity as for a host (cve/match.py, `package_findings`): High when a fixable CVE is on
   CISA's KEV list or has an EPSS score at or above `[cve] epss_high`, otherwise Medium. CVEs with no fix yet are counted
   and shown as information; they do not raise the finding, because updating the image cannot fix them. (A host's
   `cve.package` also raises High for an unfixed KEV CVE, since the host's owner may mitigate it; an image has nothing
-  to apply.) Alpine's secdb only records fixes, so an Alpine image has no unfixed count. Ubuntu images are counted "Ubuntu
-  matching not built yet"; that is not a finding.
+  to apply.) Alpine's secdb only records fixes, so an Alpine image has no unfixed count.
 
 The CVE chore (cve/run.py) matches each image under the pseudo-host id `docker:<host>:<image id>`, which cannot clash
 with a real host (a host id has no colon). `load_cves` reads those matches; poll.py gives them to `evaluate` at each
@@ -30,7 +30,7 @@ from datetime import date
 from functools import cmp_to_key
 
 from .. import distro, findings as rules
-from ..cve import alpine, apkver
+from ..cve import alpine, apkver, ubuntu
 from ..findings import Finding, digest
 from . import docker_storage as ds
 
@@ -84,18 +84,33 @@ def debian_codename(os_info: dict | None) -> str | None:
     return None
 
 
+def ubuntu_codename(os_info: dict | None) -> str | None:
+    """The Ubuntu release name for Canonical's data: VERSION_CODENAME, else the name of VERSION_ID in the release data (an old
+    image's os-release can lack the codename)."""
+    if not os_info or os_info.get("id") != "ubuntu":
+        return None
+    name = (os_info.get("codename") or "").lower()
+    if name:
+        return name if ubuntu.CODENAME_RE.match(name) else None
+    if os_info.get("version_id"):
+        row = distro.find_row(distro.load_rows("ubuntu", os_info["version_id"], None), os_info["version_id"], None)
+        if row and row.get("series"):
+            return row["series"].lower()
+    return None
+
+
 def match_kind(entry: dict) -> str:
-    """How the CVE matcher treats an image: "debian" (matched), "ubuntu" (not yet), "alpine" (matched against secdb
-    when its release has a name), "other" (an OS without dpkg or apk, or a Debian derivative with its own tracker),
-    "unread" (no package list)."""
+    """How the CVE matcher treats an image: "debian" and "ubuntu" (matched against the distribution's data once the release
+    has a name), "alpine" (matched against secdb when its release has a name), "other" (an OS without dpkg or apk, or a
+    derivative with its own id), "unread" (no package list)."""
     oi = entry.get("os") or {}
     if not entry.get("manager"):
         return "unread"
     oid = oi.get("id")
     if oid in DEBIAN_IDS and entry["manager"] == "dpkg":
         return "debian" if debian_codename(oi) else "other"
-    if oid == "ubuntu":
-        return "ubuntu"
+    if oid == "ubuntu" and entry["manager"] == "dpkg":
+        return "ubuntu" if ubuntu_codename(oi) else "other"
     if oid == "alpine" and entry["manager"] == "apk":
         return "alpine"
     return "other"
@@ -166,25 +181,31 @@ def _alpine_inventory(entry: dict) -> dict | None:
 
 
 def pseudo_inventory(entry: dict) -> dict | None:
-    """The inventory the CVE matcher takes (cve/match.py `match_host`, cve/alpine.py `match_host`) for a Debian or Alpine
-    image, or None for any other. Debian packages are grouped by source name and source version, with the binary names
+    """The inventory the CVE matcher takes (cve/match.py `match_host`, cve/ubuntu.py `match_host`, cve/alpine.py `match_host`) for a
+    Debian, Ubuntu or Alpine image, or None for any other. Debian packages are grouped by source name and source version, with the binary names
     listed, as a host's inventory is; Alpine ones by origin."""
     kind = match_kind(entry)
     if kind == "alpine":
         return _alpine_inventory(entry)
-    if kind != "debian":
+    if kind not in ("debian", "ubuntu"):
         return None
     groups: dict[tuple[str, str], list[str]] = {}
     for name, source, version, src_version in entry["packages"]:
         groups.setdefault((source or name, src_version or version), []).append(name)
     sources = [[s, v, sorted(set(b))[:30]] for (s, v), b in sorted(groups.items())]
+    if kind == "ubuntu":
+        codename = ubuntu_codename(entry["os"])
+        # An image has no Ubuntu Pro: `esm` is an empty list, not unknown, so a fix only in the ESM archives is not an available one.
+        return {"backend": "apt", "os_id": "ubuntu", "codename": codename, "version_id": (entry["os"] or {}).get("version_id"),
+                "esm": [], "sources": sources, "taken_at": entry.get("read_at") or 0,
+                "hash": digest(["ubuntu", codename or "", *(f"{s}={v}" for s, v, _b in sources)])}
     codename = debian_codename(entry["os"])
     return {"backend": "apt", "os_id": "debian", "codename": codename, "sources": sources, "taken_at": entry.get("read_at") or 0,
             "hash": digest([codename or "", *(f"{s}={v}" for s, v, _b in sources)])}
 
 
 def image_inventories(snapshots: dict[str, dict]) -> dict[str, dict]:
-    """pseudo-host id -> inventory, for every Debian and Alpine image in each system's stored `image_packages`. `snapshots` maps a
+    """pseudo-host id -> inventory, for every Debian, Ubuntu and Alpine image in each system's stored `image_packages`. `snapshots` maps a
     system's id to its stored Docker summary."""
     out = {}
     for host, data in snapshots.items():
@@ -209,10 +230,21 @@ def _alpine_state(cdb, release: str) -> dict:
     return {"state": state, "ok_at": min(r["ok_at"] for r in rows), "error": err}
 
 
+def _ubuntu_state(cdb, release: str) -> dict:
+    """How Canonical's OVAL stands for one release, from its feed row: {"state": "ok" | "absent" | "pending", "ok_at",
+    "error"}. `absent`: the source has no file for the release. `pending`: not fetched yet."""
+    from ..cve import feeds
+    r = cdb.execute("SELECT status, ok_at, detail FROM feed WHERE name = ?", (feeds.ubuntu_feed(release).name,)).fetchone()
+    if r is None or r["ok_at"] is None:
+        return {"state": "pending", "ok_at": None, "error": r["detail"] if r and r["status"] == "error" else None}
+    return {"state": "absent" if r["status"] == "absent" else "ok", "ok_at": r["ok_at"],
+            "error": r["detail"] if r["status"] == "error" else None}
+
+
 def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
-    """What the CVE chore found for this system's Debian and Alpine images, for `evaluate` and the page:
+    """What the CVE chore found for this system's Debian, Ubuntu and Alpine images, for `evaluate` and the page:
     {"enabled", "available", "epss_high", "feed_at", "alpine": {release: {"state", "ok_at", "error"}},
-    "images": {image id: {"matched": bool, "cves": [...], "note": str}}}.
+    "ubuntu": {codename: {...the same}}, "images": {image id: {"matched": bool, "cves": [...], "note": str}}}.
     None when the stored summary has no package lists."""
     if not data or not data.get("image_packages"):
         return None
@@ -220,7 +252,7 @@ def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
     from ..cve import match, store
     eff = settings.effective(cfg, state_conn)
     out = {"enabled": eff.cve.enabled, "available": False, "epss_high": eff.cve.epss_high, "feed_at": None, "alpine": {},
-           "images": {}}
+           "ubuntu": {}, "images": {}}
     if not eff.cve.enabled:
         return out
     cdb = store.connect_reader(cfg.cve_db_path)
@@ -232,19 +264,25 @@ def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
         out["feed_at"] = feed["ok_at"] if feed else None
         for e in data["image_packages"]:
             kind = match_kind(e)
-            if kind not in ("debian", "alpine"):
+            if kind not in ("debian", "alpine", "ubuntu"):
                 continue
-            release = alpine_release(e["os"]) if kind == "alpine" else None
+            release = alpine_release(e["os"]) if kind == "alpine" else ubuntu_codename(e["os"]) if kind == "ubuntu" else None
+            pending = False
             if kind == "alpine":
                 if not release:
                     continue                     # no release name to look up: the page says so
                 if release not in out["alpine"]:
                     out["alpine"][release] = _alpine_state(cdb, release)
+                pending = out["alpine"][release]["state"] == "pending"
+            elif kind == "ubuntu":
+                if release not in out["ubuntu"]:
+                    out["ubuntu"][release] = _ubuntu_state(cdb, release)
+                pending = out["ubuntu"][release]["state"] == "pending"
             ph = pseudo_host(host, e["image_id"])
             row = cdb.execute("SELECT note FROM matched WHERE host = ?", (ph,)).fetchone()
-            done = row is not None and (kind == "debian" or out["alpine"][release]["state"] != "pending")
+            done = row is not None and not pending
             out["images"][e["image_id"]] = {"matched": done, "note": (row["note"] or "") if row else "",
-                                            "cves": match.host_cves(cdb, ph, ("fix", "nofix")) if done else []}
+                                            "cves": match.host_cves(cdb, ph, ("fix", "esm", "nofix")) if done else []}
     finally:
         cdb.close()
     return out
@@ -266,9 +304,10 @@ def cve_summary(cves: list[dict], epss_high: float) -> dict:
     from ..cve import match
     fixable = sorted((c for c in cves if c["state"] == "fix"), key=match.rank_key)
     unfixed = [c for c in cves if c["state"] == "nofix"]
+    esm = sorted((c for c in cves if c["state"] == "esm"), key=match.rank_key)   # Ubuntu: fixed only in the Pro archives
     kev = [c for c in fixable if c["kev"]]
     hot = [c for c in fixable if not c["kev"] and (c["epss"] or 0) >= epss_high]
-    return {"fixable": fixable, "unfixed": len(unfixed), "kev": kev, "hot": hot,
+    return {"fixable": fixable, "unfixed": len(unfixed), "esm": esm, "kev": kev, "hot": hot,
             "severity": "high" if kev or hot else "medium" if fixable else None}
 
 
@@ -313,10 +352,11 @@ def analyze(data: dict | None, unraid_docker: dict | None = None, cves: dict | N
                "os": e["os"], "os_name": sup["name"], "codename": (e["os"] or {}).get("codename") or "", "support": sup, "kind": kind, "state": state, "error": err or None,
                "manager": e["manager"], "count": e["count"], "read_at": e.get("read_at"),
                "cve": None}
-        if kind in ("debian", "alpine"):
+        if kind in ("debian", "alpine", "ubuntu"):
             m = (cves or {}).get("images", {}).get(iid)
             release = alpine_release(e["os"]) if kind == "alpine" else None
             row["alpine_release"] = release
+            row["ubuntu_release"] = ubuntu_codename(e["os"]) if kind == "ubuntu" else None
             if cves is None or not cves.get("enabled"):
                 row["cve"] = {"state": "off"}
             elif kind == "alpine" and not release:
@@ -325,6 +365,8 @@ def analyze(data: dict | None, unraid_docker: dict | None = None, cves: dict | N
                 row["cve"] = {"state": "pending"}
             elif kind == "alpine" and (cves.get("alpine") or {}).get(release, {}).get("state") == "absent":
                 row["cve"] = {"state": "absent", "release": release, "label": alpine.display(release)}
+            elif kind == "ubuntu" and (cves.get("ubuntu") or {}).get(row["ubuntu_release"], {}).get("state") == "absent":
+                row["cve"] = {"state": "absent", "release": row["ubuntu_release"], "label": os_name(e["os"])}
             else:
                 row["cve"] = {"state": "matched", "note": m.get("note") or "", **cve_summary(m["cves"], epss_high)}
         rows.append(row)
@@ -366,12 +408,16 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
             title += f", {len(kev)} known exploited"
         elif hot:
             title += f", {len(hot)} with a high exploit score"
-        top = ", ".join(match._describe(x) for x in fixable[:SHOWN_CVES]) + (f" and {n - SHOWN_CVES} more" if n > SHOWN_CVES else "")
-        source = "Alpine's security database (secdb)" if r["kind"] == "alpine" else "Debian's security tracker"
+        label = "Ubuntu priority" if r["kind"] == "ubuntu" else "Debian urgency"
+        top = ", ".join(match._describe(x, label) for x in fixable[:SHOWN_CVES]) + (f" and {n - SHOWN_CVES} more" if n > SHOWN_CVES else "")
+        source = {"alpine": "Alpine's security database (secdb)", "ubuntu": "Canonical's Ubuntu OVAL data"}.get(r["kind"], "Debian's security tracker")
         detail = (f"The image holds package versions that {source} lists as fixed in newer ones ({r['os_name']}). "
                   f"Top CVEs: {top}.")
         if c["unfixed"]:
             detail += f" {c['unfixed']} more in the image have no fix yet; they are listed on the page and raise nothing."
+        if c.get("esm"):
+            detail += (f" {len(c['esm'])} more are fixed only in Ubuntu Pro's ESM archives, which an image cannot use; "
+                       "they are listed on the page and raise nothing.")
         out.append(Finding("docker.image_cves", r["name"], c["severity"], title[:300], detail[:3900],
                            f"{LINK}#{r['anchor']}", None, f"{r['repo']}:{digest(x['cve'] for x in fixable)}",
                            HOWTO_CVES_ALPINE if r["kind"] == "alpine" else HOWTO_CVES))

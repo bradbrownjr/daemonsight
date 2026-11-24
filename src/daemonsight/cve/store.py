@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 -- One row per feed: when it was tried, when it last answered, and what it said.
@@ -52,6 +52,29 @@ CREATE TABLE IF NOT EXISTS apk (
     cve     TEXT NOT NULL,
     fixed   TEXT NOT NULL,
     PRIMARY KEY (release, origin, cve, fixed)
+) WITHOUT ROWID;
+
+-- Canonical's CVE OVAL (security-metadata.canonical.com/oval), only the Ubuntu releases the hub's hosts and container images run
+-- (see cve/ubuntu.py). One row per source package, CVE and pocket: `pocket` is "" for the standard archives and
+-- "esm-infra" or "esm-apps" for the Ubuntu Pro (ESM) ones; `state` is "fixed" (`fixed` is the fixed source version) or "open"
+-- (the file's "might be affected and may need fixing": it does not separate needed, deferred and the rest); `kernel` is 1 for a
+-- kernel flavor's row (`source` is then the flavor's source package: linux, linux-aws); `priority` is Ubuntu's.
+CREATE TABLE IF NOT EXISTS ubu (
+    release  TEXT NOT NULL,
+    source   TEXT NOT NULL,
+    cve      TEXT NOT NULL,
+    pocket   TEXT NOT NULL,
+    kernel   INTEGER NOT NULL,
+    state    TEXT NOT NULL,
+    fixed    TEXT,
+    priority TEXT,
+    PRIMARY KEY (release, source, cve, pocket)
+) WITHOUT ROWID;
+
+-- The CVE text from Canonical's file (the Debian tracker's `cve` table is replaced whole whenever it loads).
+CREATE TABLE IF NOT EXISTS ubu_cve (
+    cve   TEXT PRIMARY KEY,
+    descr TEXT NOT NULL
 ) WITHOUT ROWID;
 
 -- OPNsense's changelog (github.com/opnsense/changelog, community/), only the series the hub's firewalls need (see
@@ -98,10 +121,10 @@ CREATE TABLE IF NOT EXISTS match (
     host      TEXT NOT NULL,
     source    TEXT NOT NULL,
     cve       TEXT NOT NULL,
-    state     TEXT NOT NULL,  -- fix, nofix, minor, undetermined
+    state     TEXT NOT NULL,  -- fix, esm (Ubuntu: fixed only through Ubuntu Pro), nofix, minor, undetermined
     installed TEXT,
     fixed     TEXT,           -- Debian: fixed source version. Fedora: advisory id. OPNsense: the changelog section
-    urgency   TEXT,
+    urgency   TEXT,           -- Debian's urgency, or Ubuntu's priority
     PRIMARY KEY (host, source, cve)
 ) WITHOUT ROWID;
 

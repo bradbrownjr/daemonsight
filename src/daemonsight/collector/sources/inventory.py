@@ -21,6 +21,15 @@ https://dnf5.readthedocs.io/en/latest/commands/advisory.8.html. Unlike apt, a
 host sends no package list, only what is pending; Fedora's unfixed CVEs are
 not available this way.
 
+Ubuntu hosts differ in two ways. The kernel: Ubuntu's signed kernel images come from `linux-signed`, `linux-signed-aws`,
+`linux-signed-hwe-6.8` and so on, whose unsigned counterparts (`linux`, `linux-aws`, `linux-hwe-6.8`) are the sources Canonical's
+CVE data names, so the running image is listed under the unsigned name, with its own version (equal to the kernel's
+here: on noble `linux-image-6.17.0-14-generic` is `6.17.0-14.14~24.04.1`, the version of `linux-hwe-6.17`); and a
+kernel flavor that is not signed is kept only when its group holds the running image. And Ubuntu Pro: the Pro client writes
+`/etc/apt/sources.list.d/ubuntu-esm-infra.{sources,list}` and `ubuntu-esm-apps.*` only while that service is on
+(`uaclient/entitlements/repo.py` `repo_file_tmpl` and `esm.py` in github.com/canonical/ubuntu-pro-client, read 2026-11-24), so
+the files tell which ESM services the host has. The hub needs that to say whether an ESM-only fix is available to the host.
+
 The inventory goes to the hub in its own top-level `inventory` field, not
 as a snapshot: an older hub ignores unknown top-level fields, while it
 refuses a snapshot from a source it doesn't know (the whole upload gets a
@@ -33,6 +42,7 @@ import asyncio
 import hashlib
 import json
 import platform
+import glob
 import re
 import shutil
 import subprocess
@@ -47,7 +57,15 @@ MAX_BINARIES = 30
 MAX_SOURCES = 20_000
 
 
-def parse_dpkg_query(text: str, running_kernel: str | None = None) -> list[list]:
+ESM_SOURCES = {"infra": "/etc/apt/sources.list.d/ubuntu-esm-infra.", "apps": "/etc/apt/sources.list.d/ubuntu-esm-apps."}
+
+
+def esm_services(globber=glob.glob) -> list[str]:
+    """The Ubuntu Pro ESM services this host has on: "infra" and "apps", from the apt source files the Pro client writes."""
+    return [name for name, prefix in ESM_SOURCES.items() if globber(prefix + "sources") or globber(prefix + "list")]
+
+
+def parse_dpkg_query(text: str, running_kernel: str | None = None, ubuntu: bool = False) -> list[list]:
     """[source, source version, [binary packages]] for every installed package,
     one row per distinct source and version, sorted. A binary list that is
     only the source's own name is left empty to keep the upload small. Lines
@@ -58,9 +76,13 @@ def parse_dpkg_query(text: str, running_kernel: str | None = None) -> list[list]
     `linux` only. The running kernel's image (linux-image-<uname -r>) carries
     the `linux` version as its own ("6.1.164-1"), so it is listed under
     `linux` with that version. Other installed kernels aren't running and are
-    left out."""
+    left out.
+
+    `ubuntu`: the signed kernel source is renamed to its unsigned one (`linux-signed-aws` is `linux-aws`), which is the name
+    Canonical's CVE data uses, and any other source holding a `linux-image-*` package is kept only if it holds the running one."""
     groups: dict[tuple[str, str], set[str]] = {}
     image = f"linux-image-{running_kernel}" if running_kernel else None
+    unsigned = f"linux-image-unsigned-{running_kernel}" if running_kernel else None
     for line in text.splitlines():
         parts = line.split("\t")
         if len(parts) != 5 or len(parts[0]) < 2 or parts[0][1] != "i":
@@ -71,10 +93,12 @@ def parse_dpkg_query(text: str, running_kernel: str | None = None) -> list[list]
         if src.startswith("linux-signed"):
             if binary != image or not bin_ver:
                 continue
-            src, src_ver = "linux", bin_ver
+            src, src_ver = ("linux" + src[len("linux-signed"):], bin_ver) if ubuntu else ("linux", bin_ver)
         groups.setdefault((src, src_ver), set()).add(binary)
     rows = []
     for (src, ver), bins in sorted(groups.items()):
+        if ubuntu and any(b.startswith("linux-image-") for b in bins) and not ({image, unsigned} & bins):
+            continue        # a kernel that is installed but not running
         listed = sorted(bins - {src})[:MAX_BINARIES]
         rows.append([src, ver, listed])
     return rows[:MAX_SOURCES]
@@ -84,12 +108,17 @@ def fingerprint(*parts) -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:32]
 
 
-def inventory_apt(dpkg_text: str, osr: dict[str, str], running_kernel: str | None = None) -> dict:
+def inventory_apt(dpkg_text: str, osr: dict[str, str], running_kernel: str | None = None,
+                  esm: list[str] | None = None) -> dict:
     ident = distro.os_ident(osr)
-    rows = parse_dpkg_query(dpkg_text, running_kernel)
-    return {"available": True, "backend": "apt", "os_id": ident["os_id"], "version_id": ident["version_id"],
-            "codename": ident["version_codename"], "sources": rows, "count": len(rows),
-            "hash": fingerprint(ident, rows)}
+    ubuntu = ident["os_id"] == "ubuntu"
+    rows = parse_dpkg_query(dpkg_text, running_kernel, ubuntu)
+    out = {"available": True, "backend": "apt", "os_id": ident["os_id"], "version_id": ident["version_id"],
+           "codename": ident["version_codename"], "sources": rows, "count": len(rows),
+           "hash": fingerprint(ident, rows, esm) if ubuntu else fingerprint(ident, rows)}
+    if ubuntu and esm is not None:
+        out["esm"] = esm
+    return out
 
 
 CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}")
@@ -152,7 +181,9 @@ def collect_sync() -> dict:
                               errors="replace", timeout=TIMEOUT, env=ENV, stdin=subprocess.DEVNULL)
         if proc.returncode != 0:
             raise RuntimeError(f"dpkg-query exited {proc.returncode}")
-        return inventory_apt(proc.stdout, read_os_release(), platform.release())
+        osr = read_os_release()
+        esm = esm_services() if (osr.get("ID") or "").lower() == "ubuntu" else None
+        return inventory_apt(proc.stdout, osr, platform.release(), esm)
     raise SourceUnavailable("CVE matching needs apt and dpkg, or dnf5")
 
 

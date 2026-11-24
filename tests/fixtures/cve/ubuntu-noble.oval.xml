@@ -1,0 +1,322 @@
+<oval_definitions xmlns="http://oval.mitre.org/XMLSchema/oval-definitions-5" xmlns:ind-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#independent" xmlns:oval="http://oval.mitre.org/XMLSchema/oval-common-5" xmlns:unix-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#unix" xmlns:linux-def="http://oval.mitre.org/XMLSchema/oval-definitions-5#linux" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://oval.mitre.org/XMLSchema/oval-common-5 oval-common-schema.xsd   http://oval.mitre.org/XMLSchema/oval-definitions-5 oval-definitions-schema.xsd   http://oval.mitre.org/XMLSchema/oval-definitions-5#independent independent-definitions-schema.xsd   http://oval.mitre.org/XMLSchema/oval-definitions-5#unix unix-definitions-schema.xsd  http://oval.mitre.org/XMLSchema/oval-definitions-5#linux linux-definitions-schema.xsd">
+  <generator>
+    <oval:product_name>Canonical OVAL Generator</oval:product_name>
+    <oval:product_version>2</oval:product_version>
+    <oval:schema_version>5.11.1</oval:schema_version>
+    <oval:timestamp>2026-11-19T19:32:07</oval:timestamp>
+  </generator>
+  <!-- A trimmed copy of Canonical's noble CVE OVAL file (https://security-metadata.canonical.com/oval/com.ubuntu.noble.cve.oval.xml.bz2, read 2026-11-24, Creative Commons Attribution-ShareAlike 4.0): the definitions below are verbatim, the kernel ones cut to three flavors, and the tests, objects, states and variables sections the reader does not use are left out. -->
+  <definitions>
+    <definition id="oval:com.ubuntu.noble:def:100" class="inventory" version="1">
+      <metadata>
+        <title>Check that Ubuntu 24.04 LTS (noble) is installed.</title>
+        <description />
+      </metadata>
+      <criteria>
+        <criterion test_ref="oval:com.ubuntu.noble:tst:100" comment="The host is part of the unix family." />
+        <criterion test_ref="oval:com.ubuntu.noble:tst:101" comment="The host is running Ubuntu 24.04 LTS (noble)." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:200224390000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2002-2439 on Ubuntu 24.04 LTS (noble) - low</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2002-2439" ref_url="https://www.cve.org/CVERecord?id=CVE-2002-2439" />
+        <description>operator new[] sometimes returns pointers to heap blocks which are too small.  When a new array is allocated, the C++ run-time has to calculate its size.  The product may exceed the maximum value which can be stored in a machine register.  This error is ignored, and the truncated value is used for the heap allocation. This may lead to heap overflows and therefore security bugs. (See http://cert.uni-stuttgart.de/advisories/calloc.php for further references.)</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Low</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2019-10-23T18:15:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2002-2439" priority="low" public="20191023">CVE-2002-2439</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criteria operator="OR">
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200224390000000" comment="gcc-arm-none-eabi source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200224390000010" comment="gcc-h8300-hms source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200224390000020" comment="gcc-mingw-w64 source package in noble, might be affected and may need fixing." />
+        </criteria>
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:2006100020000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2006-10002 on Ubuntu 24.04 LTS (noble) - medium</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2006-10002" ref_url="https://www.cve.org/CVERecord?id=CVE-2006-10002" />
+        <reference source="USN" ref_id="USN-8174-1" ref_url="https://ubuntu.com/security/notices/USN-8174-1" />
+        <description>XML::Parser versions through 2.45 for Perl could overflow the pre-allocated buffer size cause a heap corruption (double free or corruption) and crashes. A :utf8 PerlIO layer, parse_stream() in Expat.xs could overflow the XML input buffer because Perl's read() returns decoded characters while SvPV() gives back multi-byte UTF-8 bytes that can exceed the pre-allocated buffer size. This can cause heap corruption (double free or corruption) and crashes.  Update Instructions:  Run `sudo pro fix CVE-2006-10002` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  libxml-parser-perl - 2.47-1ubuntu0.24.04.1 No subscription required</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Medium</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2026-03-19T12:16:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2006-10002" priority="medium" public="20260319" cvss_score="7.5" cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H" cvss_severity="high" usns="8174-1">CVE-2006-10002</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criterion test_ref="oval:com.ubuntu.noble:tst:2006100020000000" comment="libxml-parser-perl source package in noble, is affected and has been fixed (note: '2.47-1ubuntu0.24.04.1')." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:200851440000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2008-5144 on Ubuntu 24.04 LTS (noble) - negligible</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2008-5144" ref_url="https://www.cve.org/CVERecord?id=CVE-2008-5144" />
+        <description>nvidia-cg-toolkit-installer in nvidia-cg-toolkit 2.0.0015 allows local users to overwrite arbitrary files via a symlink attack on the /tmp/nvidia-cg-toolkit-manifest temporary file.</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Negligible</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2008-11-18T16:00:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2008-5144" priority="negligible" public="20081118">CVE-2008-5144</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criterion test_ref="oval:com.ubuntu.noble:tst:200851440000000" comment="nvidia-cg-toolkit source package in noble, might be affected and may need fixing." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:201211480000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2012-1148 on Ubuntu 24.04 LTS (noble) - low</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2012-1148" ref_url="https://www.cve.org/CVERecord?id=CVE-2012-1148" />
+        <reference source="USN" ref_id="USN-1527-1" ref_url="https://ubuntu.com/security/notices/USN-1527-1" />
+        <reference source="USN" ref_id="USN-1527-2" ref_url="https://ubuntu.com/security/notices/USN-1527-2" />
+        <reference source="USN" ref_id="USN-1613-1" ref_url="https://ubuntu.com/security/notices/USN-1613-1" />
+        <reference source="USN" ref_id="USN-1613-2" ref_url="https://ubuntu.com/security/notices/USN-1613-2" />
+        <reference source="USN" ref_id="USN-5455-1" ref_url="https://ubuntu.com/security/notices/USN-5455-1" />
+        <reference source="USN" ref_id="USN-7307-1" ref_url="https://ubuntu.com/security/notices/USN-7307-1" />
+        <description>Memory leak in the poolGrow function in expat/lib/xmlparse.c in expat before 2.1.0 allows context-dependent attackers to cause a denial of service (memory consumption) via a large number of crafted XML files that cause improperly-handled reallocation failures when expanding entities.  Update Instructions:  Run `sudo pro fix CVE-2012-1148` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  libxmltok1t64 - 1.2-4.1ubuntu2.24.0.4.1+esm3 Available with Ubuntu Pro: https://ubuntu.com/pro</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Low</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2012-07-03T00:00:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2012-1148" priority="low" public="20120703" usns="1527-1,1527-2,1613-1,1613-2,5455-1,7307-1">CVE-2012-1148</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criteria operator="OR">
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200937200000000" comment="cadaver source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200935600000000" comment="matanza source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:201211480000000" comment="libxmltok source package in esm-apps/noble, is affected and has been fixed (note: '1.2-4.1ubuntu2.24.0.4.1+esm3')." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200935600000010" comment="swish-e source package in esm-apps/noble, might be affected and may need fixing." />
+        </criteria>
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:2020123510000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2020-12351 on Ubuntu 24.04 LTS (noble) - high</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2020-12351" ref_url="https://www.cve.org/CVERecord?id=CVE-2020-12351" />
+        <reference source="USN" ref_id="USN-4592-1" ref_url="https://ubuntu.com/security/notices/USN-4592-1" />
+        <reference source="USN" ref_id="USN-4591-1" ref_url="https://ubuntu.com/security/notices/USN-4591-1" />
+        <reference source="USN" ref_id="USN-7179-1" ref_url="https://ubuntu.com/security/notices/USN-7179-1" />
+        <reference source="USN" ref_id="USN-7179-2" ref_url="https://ubuntu.com/security/notices/USN-7179-2" />
+        <reference source="USN" ref_id="USN-7183-1" ref_url="https://ubuntu.com/security/notices/USN-7183-1" />
+        <reference source="USN" ref_id="USN-7186-1" ref_url="https://ubuntu.com/security/notices/USN-7186-1" />
+        <reference source="USN" ref_id="USN-7179-3" ref_url="https://ubuntu.com/security/notices/USN-7179-3" />
+        <reference source="USN" ref_id="USN-7186-2" ref_url="https://ubuntu.com/security/notices/USN-7186-2" />
+        <reference source="USN" ref_id="USN-7194-1" ref_url="https://ubuntu.com/security/notices/USN-7194-1" />
+        <reference source="USN" ref_id="USN-7179-4" ref_url="https://ubuntu.com/security/notices/USN-7179-4" />
+        <description>Improper input validation in BlueZ may allow an unauthenticated user to potentially enable escalation of privilege via adjacent access.  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-6.8.0-35-generic - 6.8.0-35.35 linux-image-unsigned-6.8.0-35-generic - 6.8.0-35.35 linux-image-unsigned-6.8.0-35-generic-64k - 6.8.0-35.35 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1009-aws - 6.8.0-1009.9 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1008-azure - 6.8.0-1008.8 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1008-gcp - 6.8.0-1008.9 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1004-gke - 6.8.0-1004.7 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1006-ibm - 6.8.0-1006.6 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-35-lowlatency - 6.8.0-35.35.1 linux-image-unsigned-6.8.0-35-lowlatency-64k - 6.8.0-35.35.1 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1006-oem - 6.8.0-1006.6 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1006-oracle - 6.8.0-1006.6 linux-image-unsigned-6.8.0-1006-oracle-64k - 6.8.0-1006.6 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-6.8.0-1005-raspi - 6.8.0-1005.5 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2020-12351` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-6.8.0-35-generic - 6.8.0-35.35.1 No subscription required</description>
+        <advisory from="security@ubuntu.com">
+          <severity>High</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2020-10-14T00:00:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2020-12351" priority="high" public="20201014" cvss_score="8.8" cvss_vector="CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" cvss_severity="high" usns="4592-1,4591-1,7179-1,7179-2,7183-1,7186-1,7179-3,7186-2,7194-1,7179-4">CVE-2020-12351</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criteria operator="OR">
+          <criteria operator="AND">
+            <criterion test_ref="oval:com.ubuntu.noble:tst:201245420000000" comment="Is kernel 'linux' running?" />
+            <criterion test_ref="oval:com.ubuntu.noble:tst:2020123510000000" comment="'linux' kernel in noble was vulnerable but has been fixed (note: '6.8.0-35.35')." />
+          </criteria>
+          <criteria operator="AND">
+            <criterion test_ref="oval:com.ubuntu.noble:tst:2020123510000010" comment="Is kernel 'linux-aws' running?" />
+            <criterion test_ref="oval:com.ubuntu.noble:tst:2020123510000020" comment="'linux-aws' kernel in noble was vulnerable but has been fixed (note: '6.8.0-1009.9')." />
+          </criteria>
+          <criteria operator="AND">
+            <criterion test_ref="oval:com.ubuntu.noble:tst:201245420000050" comment="Is kernel 'linux-azure' running?" />
+            <criterion test_ref="oval:com.ubuntu.noble:tst:2020123510000030" comment="'linux-azure' kernel in noble was vulnerable but has been fixed (note: '6.8.0-1008.8')." />
+          </criteria>
+        </criteria>
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:2022490340000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2022-49034 on Ubuntu 24.04 LTS (noble) - low</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2022-49034" ref_url="https://www.cve.org/CVERecord?id=CVE-2022-49034" />
+        <reference source="USN" ref_id="USN-7276-1" ref_url="https://ubuntu.com/security/notices/USN-7276-1" />
+        <reference source="USN" ref_id="USN-7277-1" ref_url="https://ubuntu.com/security/notices/USN-7277-1" />
+        <reference source="USN" ref_id="USN-7310-1" ref_url="https://ubuntu.com/security/notices/USN-7310-1" />
+        <reference source="USN" ref_id="USN-7387-1" ref_url="https://ubuntu.com/security/notices/USN-7387-1" />
+        <reference source="USN" ref_id="USN-7388-1" ref_url="https://ubuntu.com/security/notices/USN-7388-1" />
+        <reference source="USN" ref_id="USN-7389-1" ref_url="https://ubuntu.com/security/notices/USN-7389-1" />
+        <reference source="USN" ref_id="USN-7390-1" ref_url="https://ubuntu.com/security/notices/USN-7390-1" />
+        <reference source="USN" ref_id="USN-7387-2" ref_url="https://ubuntu.com/security/notices/USN-7387-2" />
+        <reference source="USN" ref_id="USN-7387-3" ref_url="https://ubuntu.com/security/notices/USN-7387-3" />
+        <reference source="USN" ref_id="USN-7391-1" ref_url="https://ubuntu.com/security/notices/USN-7391-1" />
+        <reference source="USN" ref_id="USN-7392-1" ref_url="https://ubuntu.com/security/notices/USN-7392-1" />
+        <reference source="USN" ref_id="USN-7393-1" ref_url="https://ubuntu.com/security/notices/USN-7393-1" />
+        <reference source="USN" ref_id="USN-7392-2" ref_url="https://ubuntu.com/security/notices/USN-7392-2" />
+        <reference source="USN" ref_id="USN-7392-3" ref_url="https://ubuntu.com/security/notices/USN-7392-3" />
+        <reference source="USN" ref_id="USN-7401-1" ref_url="https://ubuntu.com/security/notices/USN-7401-1" />
+        <reference source="USN" ref_id="USN-7392-4" ref_url="https://ubuntu.com/security/notices/USN-7392-4" />
+        <reference source="USN" ref_id="USN-7407-1" ref_url="https://ubuntu.com/security/notices/USN-7407-1" />
+        <reference source="USN" ref_id="USN-7413-1" ref_url="https://ubuntu.com/security/notices/USN-7413-1" />
+        <reference source="USN" ref_id="USN-7421-1" ref_url="https://ubuntu.com/security/notices/USN-7421-1" />
+        <reference source="USN" ref_id="USN-7449-1" ref_url="https://ubuntu.com/security/notices/USN-7449-1" />
+        <reference source="USN" ref_id="USN-7450-1" ref_url="https://ubuntu.com/security/notices/USN-7450-1" />
+        <reference source="USN" ref_id="USN-7451-1" ref_url="https://ubuntu.com/security/notices/USN-7451-1" />
+        <reference source="USN" ref_id="USN-7452-1" ref_url="https://ubuntu.com/security/notices/USN-7452-1" />
+        <reference source="USN" ref_id="USN-7453-1" ref_url="https://ubuntu.com/security/notices/USN-7453-1" />
+        <reference source="USN" ref_id="USN-7458-1" ref_url="https://ubuntu.com/security/notices/USN-7458-1" />
+        <reference source="USN" ref_id="USN-7459-1" ref_url="https://ubuntu.com/security/notices/USN-7459-1" />
+        <reference source="USN" ref_id="USN-7463-1" ref_url="https://ubuntu.com/security/notices/USN-7463-1" />
+        <reference source="USN" ref_id="USN-7449-2" ref_url="https://ubuntu.com/security/notices/USN-7449-2" />
+        <reference source="USN" ref_id="USN-7459-2" ref_url="https://ubuntu.com/security/notices/USN-7459-2" />
+        <reference source="USN" ref_id="USN-7468-1" ref_url="https://ubuntu.com/security/notices/USN-7468-1" />
+        <reference source="USN" ref_id="USN-7523-1" ref_url="https://ubuntu.com/security/notices/USN-7523-1" />
+        <reference source="USN" ref_id="USN-7524-1" ref_url="https://ubuntu.com/security/notices/USN-7524-1" />
+        <reference source="USN" ref_id="USN-7539-1" ref_url="https://ubuntu.com/security/notices/USN-7539-1" />
+        <reference source="USN" ref_id="USN-7540-1" ref_url="https://ubuntu.com/security/notices/USN-7540-1" />
+        <description>In the Linux kernel, the following vulnerability has been resolved: sh: cpuinfo: Fix a warning for CONFIG_CPUMASK_OFFSTACK When CONFIG_CPUMASK_OFFSTACK and CONFIG_DEBUG_PER_CPU_MAPS are selected, cpu_max_bits_warn() generates a runtime warning similar as below when showing /proc/cpuinfo. Fix this by using nr_cpu_ids (the runtime limit) instead of NR_CPUS to iterate CPUs. [    3.052463] ------------[ cut here ]------------ [    3.059679] WARNING: CPU: 3 PID: 1 at include/linux/cpumask.h:108 show_cpuinfo+0x5e8/0x5f0 [    3.070072] Modules linked in: efivarfs autofs4 [    3.076257] CPU: 0 PID: 1 Comm: systemd Not tainted 5.19-rc5+ #1052 [    3.099465] Stack : 9000000100157b08 9000000000f18530 9000000000cf846c 9000000100154000 [    3.109127]         9000000100157a50 0000000000000000 9000000100157a58 9000000000ef7430 [    3.118774]         90000001001578e8 0000000000000040 0000000000000020 ffffffffffffffff [    3.128412]         0000000000aaaaaa 1ab25f00eec96a37 900000010021de80 900000000101c890 [    3.138056]         0000000000000000 0000000000000000 0000000000000000 0000000000aaaaaa [    3.147711]         ffff8000339dc220 0000000000000001 0000000006ab4000 0000000000000000 [    3.157364]         900000000101c998 0000000000000004 9000000000ef7430 0000000000000000 [    3.167012]         0000000000000009 000000000000006c 0000000000000000 0000000000000000 [    3.176641]         9000000000d3de08 9000000001639390 90000000002086d8 00007ffff0080286 [    3.186260]         00000000000000b0 0000000000000004 0000000000000000 0000000000071c1c [    3.195868]         ... [    3.199917] Call Trace: [    3.203941] [&amp;lt;90000000002086d8&amp;gt;] show_stack+0x38/0x14c [    3.210666] [&amp;lt;9000000000cf846c&amp;gt;] dump_stack_lvl+0x60/0x88 [    3.217625] [&amp;lt;900000000023d268&amp;gt;] __warn+0xd0/0x100 [    3.223958] [&amp;lt;9000000000cf3c90&amp;gt;] warn_slowpath_fmt+0x7c/0xcc [    3.231150] [&amp;lt;9000000000210220&amp;gt;] show_cpuinfo+0x5e8/0x5f0 [    3.238080] [&amp;lt;90000000004f578c&amp;gt;] seq_read_iter+0x354/0x4b4 [    3.245098] [&amp;lt;90000000004c2e90&amp;gt;] new_sync_read+0x17c/0x1c4 [    3.252114] [&amp;lt;90000000004c5174&amp;gt;] vfs_read+0x138/0x1d0 [    3.258694] [&amp;lt;90000000004c55f8&amp;gt;] ksys_read+0x70/0x100 [    3.265265] [&amp;lt;9000000000cfde9c&amp;gt;] do_syscall+0x7c/0x94 [    3.271820] [&amp;lt;9000000000202fe4&amp;gt;] handle_syscall+0xc4/0x160 [    3.281824] ---[ end trace 8b484262b4b8c24c ]---  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-6.8.0-58-generic - 6.8.0-58.60 linux-image-unsigned-6.8.0-58-generic - 6.8.0-58.60 linux-image-unsigned-6.8.0-58-generic-64k - 6.8.0-58.60 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1027-aws - 6.8.0-1027.29 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1027-azure - 6.8.0-1027.32 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.11.0-1012-azure - 6.11.0-1012.12~24.04.1 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1014-azure-nvidia - 6.8.0-1014.15 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1028-gcp - 6.8.0-1028.30 linux-image-unsigned-6.8.0-1028-gcp-64k - 6.8.0-1028.30 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.11.0-1011-gcp - 6.11.0-1011.11~24.04.1 linux-image-unsigned-6.11.0-1011-gcp-64k - 6.11.0-1011.11~24.04.1 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1023-gke - 6.8.0-1023.27 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1010-gkeop - 6.8.0-1010.12 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1024-ibm - 6.8.0-1024.24 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-58-lowlatency - 6.8.0-58.60.1 linux-image-unsigned-6.8.0-58-lowlatency-64k - 6.8.0-58.60.1 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1026-nvidia - 6.8.0-1026.29 linux-image-unsigned-6.8.0-1026-nvidia-64k - 6.8.0-1026.29 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.11.0-1007-nvidia - 6.11.0-1007.7 linux-image-unsigned-6.11.0-1007-nvidia-64k - 6.11.0-1007.7 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1026-nvidia-lowlatency - 6.8.0-1026.29.1 linux-image-unsigned-6.8.0-1026-nvidia-lowlatency-64k - 6.8.0-1026.29.1 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1008-nvidia-tegra - 6.8.0-1008.8 linux-image-unsigned-6.8.0-1008-nvidia-tegra-rt - 6.8.0-1008.8 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.11.0-1015-oem - 6.11.0-1015.15 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1026-oem - 6.8.0-1026.26 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-unsigned-6.8.0-1024-oracle - 6.8.0-1024.25 linux-image-unsigned-6.8.0-1024-oracle-64k - 6.8.0-1024.25 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-6.8.0-1028-raspi - 6.8.0-1028.32 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-6.8.0-58-generic - 6.8.0-58.60.1 No subscription required  Update Instructions:  Run `sudo pro fix CVE-2022-49034` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  linux-image-6.8.0-1017-xilinx - 6.8.0-1017.18 No subscription required</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Low</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2024-12-27T14:15:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2022-49034" priority="low" public="20241227" cvss_score="2.0" cvss_vector="CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N" cvss_severity="low" usns="7276-1,7277-1,7310-1,7387-1,7388-1,7389-1,7390-1,7387-2,7387-3,7391-1,7392-1,7393-1,7392-2,7392-3,7401-1,7392-4,7407-1,7413-1,7421-1,7449-1,7450-1,7451-1,7452-1,7453-1,7458-1,7459-1,7463-1,7449-2,7459-2,7468-1,7523-1,7524-1,7539-1,7540-1">CVE-2022-49034</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criteria operator="OR">
+          <criteria operator="AND">
+            <criterion test_ref="oval:com.ubuntu.noble:tst:201245420000000" comment="Is kernel 'linux' running?" />
+            <criterion test_ref="oval:com.ubuntu.noble:tst:2022490340000000" comment="'linux' kernel in noble was vulnerable but has been fixed (note: '6.8.0-58.60')." />
+          </criteria>
+          <criteria operator="AND">
+            <criterion test_ref="oval:com.ubuntu.noble:tst:2020123510000010" comment="Is kernel 'linux-aws' running?" />
+            <criterion test_ref="oval:com.ubuntu.noble:tst:2022490340000010" comment="'linux-aws' kernel in noble was vulnerable but has been fixed (note: '6.8.0-1027.29')." />
+          </criteria>
+          <criteria operator="AND">
+            <criterion test_ref="oval:com.ubuntu.noble:tst:201245420000050" comment="Is kernel 'linux-azure' running?" />
+            <criterion test_ref="oval:com.ubuntu.noble:tst:2022490340000010" comment="'linux-azure' kernel in noble was vulnerable but has been fixed (note: '6.8.0-1027.32')." />
+          </criteria>
+          <criterion test_ref="oval:com.ubuntu.noble:tst:201111800000000" comment="Is kernel 'linux-raspi-realtime' running?" />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:201111800000010" comment="Is kernel 'linux-realtime' running?" />
+        </criteria>
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:2022490430000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2022-49043 on Ubuntu 24.04 LTS (noble) - medium</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2022-49043" ref_url="https://www.cve.org/CVERecord?id=CVE-2022-49043" />
+        <reference source="USN" ref_id="USN-7240-1" ref_url="https://ubuntu.com/security/notices/USN-7240-1" />
+        <reference source="USN" ref_id="USN-7302-1" ref_url="https://ubuntu.com/security/notices/USN-7302-1" />
+        <description>xmlXIncludeAddNode in xinclude.c in libxml2 before 2.11.0 has a use-after-free.  Update Instructions:  Run `sudo pro fix CVE-2022-49043` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  libxml2 - 2.9.14+dfsg-1.3ubuntu3.1 libxml2-utils - 2.9.14+dfsg-1.3ubuntu3.1 python3-libxml2 - 2.9.14+dfsg-1.3ubuntu3.1 No subscription required</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Medium</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2025-01-26T06:15:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2022-49043" priority="medium" public="20250126" cvss_score="8.1" cvss_vector="CVSS:3.1/AV:L/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:H" cvss_severity="high" usns="7240-1,7302-1">CVE-2022-49043</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criterion test_ref="oval:com.ubuntu.noble:tst:2022490430000000" comment="libxml2 source package in noble, is affected and has been fixed (note: '2.9.14+dfsg-1.3ubuntu3.1')." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:202353630000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2023-5363 on Ubuntu 24.04 LTS (noble) - medium</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2023-5363" ref_url="https://www.cve.org/CVERecord?id=CVE-2023-5363" />
+        <reference source="USN" ref_id="USN-6450-1" ref_url="https://ubuntu.com/security/notices/USN-6450-1" />
+        <description>Issue summary: A bug has been identified in the processing of key and initialisation vector (IV) lengths.  This can lead to potential truncation or overruns during the initialisation of some symmetric ciphers. Impact summary: A truncation in the IV can result in non-uniqueness, which could result in loss of confidentiality for some cipher modes. When calling EVP_EncryptInit_ex2(), EVP_DecryptInit_ex2() or EVP_CipherInit_ex2() the provided OSSL_PARAM array is processed after the key and IV have been established.  Any alterations to the key length, via the "keylen" parameter or the IV length, via the "ivlen" parameter, within the OSSL_PARAM array will not take effect as intended, potentially causing truncation or overreading of these values.  The following ciphers and cipher modes are impacted: RC2, RC4, RC5, CCM, GCM and OCB. For the CCM, GCM and OCB cipher modes, truncation of the IV can result in loss of confidentiality.  For example, when following NIST's SP 800-38D section 8.2.1 guidance for constructing a deterministic IV for AES in GCM mode, truncation of the counter portion could lead to IV reuse. Both truncations and overruns of the key and overruns of the IV will produce incorrect results and could, in some cases, trigger a memory exception.  However, these issues are not currently assessed as security critical. Changing the key and/or IV lengths is not considered to be a common operation and the vulnerable API was recently introduced. Furthermore it is likely that application developers will have spotted this problem during testing since decryption would fail unless both peers in the communication were similarly vulnerable. For these reasons we expect the probability of an application being vulnerable to this to be quite low. However if an application is vulnerable then this issue is considered very serious. For these reasons we have assessed this issue as Moderate severity overall. The OpenSSL SSL/TLS implementation is not affected by this issue. The OpenSSL 3.0 and 3.1 FIPS providers are not affected by this because the issue lies outside of the FIPS provider boundary. OpenSSL 3.1 and 3.0 are vulnerable to this issue.  Update Instructions:  Run `sudo pro fix CVE-2023-5363` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  libssl3 - 3.0.10-1ubuntu2.1 openssl - 3.0.10-1ubuntu2.1 No subscription required</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Medium</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2023-10-24T00:00:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2023-5363" priority="medium" public="20231024" cvss_score="7.5" cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N" cvss_severity="high" usns="6450-1">CVE-2023-5363</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criterion test_ref="oval:com.ubuntu.noble:tst:202353630000000" comment="openssl source package in noble, is affected and has been fixed (note: '3.0.10-1ubuntu2.1')." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:2024264580000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2024-26458 on Ubuntu 24.04 LTS (noble) - negligible</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2024-26458" ref_url="https://www.cve.org/CVERecord?id=CVE-2024-26458" />
+        <reference source="USN" ref_id="USN-7314-1" ref_url="https://ubuntu.com/security/notices/USN-7314-1" />
+        <description>Kerberos 5 (aka krb5) 1.21.2 contains a memory leak in /krb5/src/lib/rpc/pmap_rmt.c.  Update Instructions:  Run `sudo pro fix CVE-2024-26458` to fix the vulnerability. The problem can be corrected by updating your system to the following package versions:  krb5-admin-server - 1.20.1-6ubuntu2.5 krb5-gss-samples - 1.20.1-6ubuntu2.5 krb5-k5tls - 1.20.1-6ubuntu2.5 krb5-kdc - 1.20.1-6ubuntu2.5 krb5-kdc-ldap - 1.20.1-6ubuntu2.5 krb5-kpropd - 1.20.1-6ubuntu2.5 krb5-locales - 1.20.1-6ubuntu2.5 krb5-multidev - 1.20.1-6ubuntu2.5 krb5-otp - 1.20.1-6ubuntu2.5 krb5-pkinit - 1.20.1-6ubuntu2.5 krb5-user - 1.20.1-6ubuntu2.5 libgssapi-krb5-2 - 1.20.1-6ubuntu2.5 libgssrpc4t64 - 1.20.1-6ubuntu2.5 libk5crypto3 - 1.20.1-6ubuntu2.5 libkadm5clnt-mit12 - 1.20.1-6ubuntu2.5 libkadm5srv-mit12 - 1.20.1-6ubuntu2.5 libkdb5-10t64 - 1.20.1-6ubuntu2.5 libkrad0 - 1.20.1-6ubuntu2.5 libkrb5-3 - 1.20.1-6ubuntu2.5 libkrb5support0 - 1.20.1-6ubuntu2.5 No subscription required</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Negligible</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2024-02-29T01:44:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2024-26458" priority="negligible" public="20240229" cvss_score="5.3" cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N" cvss_severity="medium" usns="7314-1">CVE-2024-26458</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criterion test_ref="oval:com.ubuntu.noble:tst:2024264580000000" comment="krb5 source package in noble, is affected and has been fixed (note: '1.20.1-6ubuntu2.5')." />
+      </criteria>
+    </definition>
+    <definition id="oval:com.ubuntu.noble:def:2025663820000000" class="vulnerability" version="1">
+      <metadata>
+        <title>CVE-2025-66382 on Ubuntu 24.04 LTS (noble) - medium</title>
+        <affected family="unix">
+          <platform>Ubuntu 24.04 LTS</platform>
+        </affected>
+        <reference source="CVE" ref_id="CVE-2025-66382" ref_url="https://www.cve.org/CVERecord?id=CVE-2025-66382" />
+        <description>In libexpat through 2.7.3, a crafted file with an approximate size of 2 MiB can lead to dozens of seconds of processing time.</description>
+        <advisory from="security@ubuntu.com">
+          <severity>Medium</severity>
+          <rights>Copyright (C) 2026 Canonical Ltd.</rights>
+          <public_date>2025-11-28T07:15:00Z</public_date>
+          <cve href="https://ubuntu.com/security/CVE-2025-66382" priority="medium" public="20251128" cvss_score="2.9" cvss_vector="CVSS:3.1/AV:L/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L" cvss_severity="low">CVE-2025-66382</cve>
+        </advisory>
+      </metadata>
+      <criteria>
+        <extend_definition applicability_check="true" definition_ref="oval:com.ubuntu.noble:def:100" comment="Ubuntu 24.04 LTS (noble) is installed" />
+        <criteria operator="OR">
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200937200000000" comment="cadaver source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:2025663820000000" comment="expat source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200935600000000" comment="matanza source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:2019159030000000" comment="tdom source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:2019159030000010" comment="wbxml2 source package in noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:2023524250000010" comment="libxmltok source package in esm-apps/noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:200935600000010" comment="swish-e source package in esm-apps/noble, might be affected and may need fixing." />
+          <criterion test_ref="oval:com.ubuntu.noble:tst:201267020000000" comment="xmlrpc-c source package in esm-apps/noble, might be affected and may need fixing." />
+        </criteria>
+      </criteria>
+    </definition>
+  </definitions>
+</oval_definitions>

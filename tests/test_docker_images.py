@@ -1,4 +1,4 @@
-"""Container images: the base OS and its end of life (docker.eol_base), Debian CVE matching (docker.image_cves) and the
+"""Container images: the base OS and its end of life (docker.eol_base), Debian, Ubuntu and Alpine CVE matching (docker.image_cves) and the
 Container images page. Everything is synthetic: nginx, debian and alpine are public names, the rest is made up."""
 
 import asyncio
@@ -11,12 +11,13 @@ import httpx
 import pytest
 
 from daemonsight import db, distro
-from daemonsight.cve import alpine, feeds, match, run, store as cvestore
+from daemonsight.cve import alpine, feeds, match, run, store as cvestore, ubuntu
 from daemonsight.remote import docker_images as di
 from daemonsight.remote import docker_storage as ds
 
 from .fake_docker import IDS, standard_summary
 from .test_alpine import secdb_gz
+from .test_ubuntu import oval_bz2
 from .test_cve import epss_gz, kev_gz, serve, tracker_gz
 from .test_hub import hub_cfg  # noqa: F401 (fixture)
 from .test_docker_storage import (READER, TOKEN, add_system, conn_of, form, open_rules, snap, web, world)  # noqa: F401 (fixtures)
@@ -51,6 +52,10 @@ def os_(id_, version, codename="", pretty="", like=()):
 
 
 DEB12 = os_("debian", "12", "bookworm", "Debian GNU/Linux 12 (bookworm)")
+UBU24 = os_("ubuntu", "24.04", "noble", "Ubuntu 24.04.1 LTS")
+UBUNTU_PACKAGES = [("libxml2", "", "2.9.14+dfsg-1.3ubuntu3", ""), ("libxml-parser-perl", "", "2.46-1", ""),
+                   ("libxmltok1", "libxmltok", "1.2-4.1ubuntu2.24.0.4.1+esm2", ""), ("gcc-mingw-w64-base", "gcc-mingw-w64", "26ubuntu1", ""),
+                   ("libssl3t64", "openssl", "3.0.13-0ubuntu3.4+b1", "3.0.13-0ubuntu3.4")]
 
 
 def entry(iid, os_info, packages=None, manager="dpkg", error=None, container="web", read_at=1_800_000_000):
@@ -183,6 +188,7 @@ def cvedb(tmp_path):
     feeds.load_debian(conn, tracker_gz(tmp_path), {"bookworm"})
     for feed in feeds.alpine_feeds("v3.23"):                       # the only Alpine release this fixture knows
         feeds.load_alpine(conn, secdb_gz(tmp_path, "v3.23", feed.repo), feed)
+    feeds.load_ubuntu(conn, oval_bz2(tmp_path, "noble"), feeds.ubuntu_feed("noble"), {"linux"})      # the only Ubuntu release this fixture knows
     feeds.load_epss(conn, epss_gz(tmp_path))
     feeds.load_kev(conn, kev_gz(tmp_path))
     yield conn
@@ -191,18 +197,22 @@ def cvedb(tmp_path):
 
 def matched(cvedb, entries, host="tower"):
     """What the chore does for images (matching under pseudo-host ids), then what load_cves gives the rules."""
-    out, rels = {}, {}
+    out, rels, ubu = {}, {}, {}
     for e in entries:
         inv = di.pseudo_inventory(e)
         if inv:
             ph = di.pseudo_host(host, e["image_id"])
-            (alpine.match_host if inv["backend"] == "apk" else match.match_host)(cvedb, ph, inv, "g")
-            out[e["image_id"]] = {"matched": True, "cves": match.host_cves(cvedb, ph, ("fix", "nofix")),
+            ubuntu_image = inv["os_id"] == "ubuntu" if inv["backend"] == "apt" else False
+            (alpine.match_host if inv["backend"] == "apk" else ubuntu.match_host if ubuntu_image else match.match_host)(cvedb, ph, inv, "g")
+            out[e["image_id"]] = {"matched": True, "cves": match.host_cves(cvedb, ph, ("fix", "esm", "nofix")),
                                   "note": cvedb.execute("SELECT note FROM matched WHERE host = ?", (ph,)).fetchone()["note"]}
             if inv["backend"] == "apk":
                 has = cvedb.execute("SELECT 1 FROM apk WHERE release = ?", (inv["release"],)).fetchone()
                 rels[inv["release"]] = {"state": "ok" if has else "absent", "ok_at": 1.0, "error": None}
-    return {"enabled": True, "available": True, "epss_high": 0.10, "feed_at": 1.0, "alpine": rels, "images": out}
+            if ubuntu_image:
+                has = cvedb.execute("SELECT 1 FROM ubu WHERE release = ?", (inv["codename"],)).fetchone()
+                ubu[inv["codename"]] = {"state": "ok" if has else "absent", "ok_at": 1.0, "error": None}
+    return {"enabled": True, "available": True, "epss_high": 0.10, "feed_at": 1.0, "alpine": rels, "ubuntu": ubu, "images": out}
 
 
 def test_the_pseudo_inventory_groups_by_source_and_source_version_for_debian_and_by_origin_for_alpine():
@@ -211,7 +221,12 @@ def test_the_pseudo_inventory_groups_by_source_and_source_version_for_debian_and
     srcs = {s: (v, b) for s, v, b in inv["sources"]}
     assert srcs["brotli"] == ("1.0.9-2", ["libbrotli-dev", "libbrotli1"]) and srcs["openssl"] == ("3.0.11-1", ["libssl3"])   # the source's version, not the binary's +b1
     assert inv["os_id"] == "debian" and inv["codename"] == "bookworm" and inv["backend"] == "apt" and match.release_of(inv) == "bookworm"
-    assert di.pseudo_inventory(entry(IDS["nginx"], os_("ubuntu", "22.04", "jammy"), [("a", "", "1", "")])) is None
+    uin = di.pseudo_inventory(entry(IDS["nginx"], UBU24, [("libxml2", "", "2.9.14+dfsg-1.3ubuntu3", ""), ("libssl3t64", "openssl", "3.0.13-0ubuntu3.4+b1", "3.0.13-0ubuntu3.4")]))
+    assert uin["os_id"] == "ubuntu" and uin["codename"] == "noble" and uin["backend"] == "apt" and uin["esm"] == [] and ubuntu.release_of(uin) == "noble"
+    assert {s: v for s, v, _b in uin["sources"]} == {"libxml2": "2.9.14+dfsg-1.3ubuntu3", "openssl": "3.0.13-0ubuntu3.4"} and match.release_of(uin) is None
+    assert di.ubuntu_codename(os_("ubuntu", "24.04", "")) == "noble" and di.ubuntu_codename(os_("ubuntu", "", "")) is None and di.ubuntu_codename(DEB12) is None
+    assert di.pseudo_inventory(entry(IDS["nginx"], os_("ubuntu", "", ""), [("a", "", "1", "")])) is None                  # no release name to look up
+    assert di.pseudo_inventory(entry(IDS["nginx"], os_("linuxmint", "21", "vanessa", like=["ubuntu", "debian"]), [("a", "", "1", "")])) is None
     assert di.pseudo_inventory(entry(IDS["nginx"], os_("alpine", "3.24.0_alpha20260101"), [("a", "", "1", "")], manager="apk")) is None      # edge: no release name
     assert di.pseudo_inventory(entry(IDS["nginx"], os_("alpine", "3.19"), [("a", "", "1", "")], manager="apk"))["backend"] == "apk"
     assert di.pseudo_inventory(entry(IDS["nginx"], os_("kali", "2024", "kali-rolling", like=["debian"]), [("a", "", "1", "")])) is None
@@ -272,7 +287,7 @@ def test_an_updated_image_clears_the_finding_and_the_basis_moves_only_with_the_c
     assert [f for f in di.evaluate(stored([fixed]), None, matched(cvedb, [fixed]), TODAY) if f.rule == "docker.image_cves"] == []
 
 
-def test_ubuntu_and_the_rest_are_counted_and_never_findings_and_an_alpine_release_secdb_lacks_matches_nothing(cvedb):
+def test_an_ubuntu_image_is_matched_and_an_ubuntu_or_alpine_release_without_data_matches_nothing(cvedb):
     ents = [entry(IDS["nginx"], DEB12, BOOKWORM_PACKAGES),
             entry(IDS["postgres"], os_("ubuntu", "22.04", "jammy"), BOOKWORM_PACKAGES),
             entry(IDS["widget-new"], os_("alpine", "3.22.1"), [("musl", "", "1.2.4", "")], manager="apk"),
@@ -283,7 +298,37 @@ def test_ubuntu_and_the_rest_are_counted_and_never_findings_and_an_alpine_releas
     kinds = {r["id"]: r["kind"] for r in a["rows"]}
     assert kinds[IDS["postgres"]] == "ubuntu" and kinds[IDS["widget-new"]] == "alpine"
     assert [r["cve"]["state"] for r in a["rows"] if r["id"] == IDS["widget-new"]] == ["absent"]       # 3.22 is not in this fixture's secdb
+    assert [r["cve"]["state"] for r in a["rows"] if r["id"] == IDS["postgres"]] == ["absent"]         # jammy is not in this fixture's OVAL data
     assert {f.key for f in di.evaluate(stored(ents), None, matched(cvedb, ents), TODAY) if f.rule == "docker.image_cves"} == {"nginx:1.27"}
+
+
+def test_an_ubuntu_image_counts_what_apt_can_fix_and_shows_the_rest_apart(cvedb):
+    e = entry(IDS["postgres"], UBU24, UBUNTU_PACKAGES)
+    cves = matched(cvedb, [e])
+    c = di.analyze(stored([e]), None, cves, TODAY)["rows"][0]
+    assert c["kind"] == "ubuntu" and c["ubuntu_release"] == "noble" and c["cve"]["state"] == "matched"
+    cv = c["cve"]
+    assert {x["cve"] for x in cv["fixable"]} == {"CVE-2022-49043", "CVE-2006-10002"}                  # libxml2 and libxml-parser-perl
+    assert [x["cve"] for x in cv["esm"]] == ["CVE-2012-1148"]                                          # libxmltok: only fixed in esm-apps
+    assert cv["unfixed"] == 2 and cv["severity"] == "medium"                                          # CVE-2025-66382 and CVE-2002-2439 are open; the negligible ones are not counted
+    f = [x for x in di.evaluate(stored([e]), None, cves, TODAY) if x.rule == "docker.image_cves"]
+    assert len(f) == 1
+    f = f[0]
+    assert f.severity == "medium" and f.title == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs" and f.key == "postgres:17"
+    assert "Canonical's Ubuntu OVAL data" in f.detail and "Ubuntu priority" in f.detail and "Debian" not in f.detail
+    assert "2 more in the image have no fix yet" in f.detail and "1 more are fixed only in Ubuntu Pro's ESM archives, which an image cannot use" in f.detail
+    assert "CVE-2012-1148" not in f.detail.split("Top CVEs:")[1].split("more in the image")[0] and not re.search(r"\d{4}-\d\d-\d\d", f.basis)
+    # ESM-only CVEs alone raise nothing: updating the image cannot take them.
+    only = entry(IDS["postgres"], UBU24, [UBUNTU_PACKAGES[2]])
+    assert [x for x in di.evaluate(stored([only]), None, matched(cvedb, [only]), TODAY) if x.rule == "docker.image_cves"] == []
+    assert di.analyze(stored([only]), None, matched(cvedb, [only]), TODAY)["rows"][0]["cve"]["esm"][0]["cve"] == "CVE-2012-1148"
+    # The image is rebuilt on updated packages: the finding clears.
+    new = entry(IDS["postgres"], UBU24, [("libxml2", "", "2.9.14+dfsg-1.3ubuntu3.1", ""), ("libxml-parser-perl", "", "2.47-1ubuntu0.24.04.1", "")])
+    assert [x for x in di.evaluate(stored([new]), None, matched(cvedb, [new]), TODAY) if x.rule == "docker.image_cves"] == []
+    # A known exploited CVE makes it high, and the ranking puts it first.
+    cvedb.execute("INSERT INTO kev VALUES ('CVE-2022-49043', 'x', 'libxml2', 'libxml2 test', '2026-01-01', 'Unknown')")
+    hot = [x for x in di.evaluate(stored([e]), None, matched(cvedb, [e]), TODAY) if x.rule == "docker.image_cves"][0]
+    assert hot.severity == "high" and hot.title == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs, 1 known exploited" and hot.detail.index("CVE-2022-49043") < hot.detail.index("CVE-2006-10002")
 
 
 def test_kernel_cves_do_not_apply_to_a_container_with_only_kernel_headers(cvedb):
@@ -319,7 +364,7 @@ def seeded_world(world, tmp_path, entries):
 
 def image_entries(extra=()):
     return [entry(IDS["nginx"], DEB12, BOOKWORM_PACKAGES, container="web"),
-            entry(IDS["postgres"], os_("ubuntu", "22.04", "jammy"), BOOKWORM_PACKAGES, container="db"),
+            entry(IDS["postgres"], UBU24, UBUNTU_PACKAGES, container="db"),
             entry(IDS["widget-new"], os_("alpine", "3.17.2"), [("musl", "", "1.2.4", "")], manager="apk", container="widget"),
             entry(IDS["inuse2"], DEB12, None, error="not read: stopped", container=None, read_at=None), *extra]
 
@@ -336,7 +381,10 @@ def test_the_chore_matches_each_debian_and_alpine_image_under_a_pseudo_host_and_
     seeded_world(world, tmp_path, image_entries())
     cdb = cvestore.connect_reader(world.cfg.cve_db_path)
     hosts = {r["host"] for r in cdb.execute("SELECT host FROM matched")}
-    assert hosts == {di.pseudo_host("tower", IDS["nginx"]), di.pseudo_host("tower", IDS["widget-new"])}    # Debian and Alpine, not Ubuntu; no real host has a colon in its id
+    assert hosts == {di.pseudo_host("tower", IDS["nginx"]), di.pseudo_host("tower", IDS["postgres"]), di.pseudo_host("tower", IDS["widget-new"])}    # no real host has a colon in its id
+    assert cdb.execute("SELECT COUNT(*) FROM ubu WHERE release = 'noble'").fetchone()[0] > 0 and cdb.execute("SELECT COUNT(*) FROM ubu WHERE release != 'noble'").fetchone()[0] == 0
+    assert {r["name"] for r in cdb.execute("SELECT name FROM feed WHERE name LIKE 'ubuntu-%'")} == {"ubuntu-noble"}          # only the release an image runs is downloaded
+    assert {r["source"] for r in cdb.execute("SELECT source FROM match WHERE host = ?", (di.pseudo_host("tower", IDS["postgres"]),))} == {"libxml2", "libxml-parser-perl", "libxmltok", "gcc-mingw-w64"}
     assert cdb.execute("SELECT COUNT(*) FROM deb WHERE release = 'bookworm'").fetchone()[0] > 0
     assert cdb.execute("SELECT COUNT(*) FROM apk WHERE release = 'v3.17'").fetchone()[0] > 0           # only the release an image runs is downloaded
     assert {r["name"] for r in cdb.execute("SELECT name FROM feed WHERE name LIKE 'alpine-%'")} == {"alpine-v3.17-main", "alpine-v3.17-community"}
@@ -345,7 +393,8 @@ def test_the_chore_matches_each_debian_and_alpine_image_under_a_pseudo_host_and_
     world.poll(time.time() + 700)                                            # the next poll evaluates with the matches
     f = finding_rows(world)
     mine = {k for k in f if k[0] in ("docker.eol_base", "docker.image_cves")}
-    assert mine == {("docker.eol_base", "all"), ("docker.image_cves", "nginx:1.27"), ("docker.image_cves", "ghcr.io/acme/widget:latest")}
+    assert mine == {("docker.eol_base", "all"), ("docker.image_cves", "nginx:1.27"), ("docker.image_cves", "postgres:17"), ("docker.image_cves", "ghcr.io/acme/widget:latest")}
+    assert f[("docker.image_cves", "postgres:17")]["severity"] == "medium" and f[("docker.image_cves", "postgres:17")]["title"] == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs"
     assert f[("docker.image_cves", "nginx:1.27")]["severity"] == "high" and f[("docker.eol_base", "all")]["severity"] == "medium"
     wd = f[("docker.image_cves", "ghcr.io/acme/widget:latest")]
     assert wd["severity"] == "medium" and wd["title"] == "ghcr.io/acme/widget:latest (Alpine 3.17): 1 fixable CVE"
@@ -379,11 +428,14 @@ def test_the_page_lists_each_image_with_its_os_support_packages_and_cves(page):
     assert "3 fixable" in nginx and "1 exploited (KEV)" in nginx and "1 with no fix yet" in nginx and "3 read" not in nginx and "6 read" in nginx
     assert "dpkg" in nginx and 'data-status-label="unexpected"' in nginx
     pg = rows["ci-" + IDS["postgres"].removeprefix("sha256:")[:12]]
-    assert "Ubuntu 22.04" in pg and "Ubuntu matching not built yet (phase 3b)" in pg and "fixable" not in pg.replace("Fixable", "")
+    assert "Ubuntu 24.04" in pg and "phase 3b" not in pg and "not built yet" not in pg and "2 fixable" in pg
+    assert "2 with no fix yet" in pg and "1 fixed only in Ubuntu Pro (ESM)" in pg and 'data-status-label="unexpected"' in pg
     wd = rows["ci-" + IDS["widget-new"].removeprefix("sha256:")[:12]]
     assert "Alpine 3.17" in wd and "End of life since 2024-11-22" in wd and "1 fixable" in wd and "Alpine matching next" not in wd
     assert "no fix yet" not in wd and 'data-status-label="unexpected"' in wd
     assert "CVE-2026-74860" in html and "security.alpinelinux.org/vuln/CVE-2026-74860" in html and "https://secdb.alpinelinux.org/v3.17/" in html
+    assert "ubuntu.com/security/CVE-2022-49043" in html and "https://security-metadata.canonical.com/oval/com.ubuntu.noble.cve.oval.xml.bz2" in html
+    assert "docker cp -L db:/var/lib/dpkg/status - | tar -xO" in html and "pro security-status" in html and "apt list --upgradable" in html
     assert "apk version -l &#39;&lt;&#39;" in html or "apk version -l '&lt;'" in html
     st = rows["ci-" + IDS["inuse2"].removeprefix("sha256:")[:12]]
     assert "Not read: stopped" in st and "—" in st
@@ -399,8 +451,9 @@ def test_the_page_lists_each_image_with_its_os_support_packages_and_cves(page):
 def test_the_coverage_card_counts_what_is_not_matched(page):
     html = page.client.get("/h/tower/images").text
     cov = html.split('id="image-coverage"')[1]
-    assert "3 of 4 images have a package list" in cov and "CVEs are matched for Debian and Alpine images so far" in cov
-    assert "Debian: 1 image matched" in cov and "Ubuntu matching not built yet (phase 3b)" in cov and "Alpine matching next" not in cov
+    assert "3 of 4 images have a package list" in cov and "CVEs are matched for Debian, Ubuntu and Alpine images." in cov
+    assert "Debian: 1 image matched" in cov and "Ubuntu: 1 image matched against Canonical's Ubuntu OVAL data" in cov and "phase 3b" not in cov and "Alpine matching next" not in cov
+    assert "Ubuntu 24.04: OVAL data checked" in cov and "ESM archives" in cov
     assert "Alpine: 1 image matched against Alpine's security database (secdb)" in cov and "no count of CVEs without a fix" in cov
     assert "Alpine 3.17: secdb data checked" in cov
     assert "used only by stopped containers: not read" in cov
@@ -423,7 +476,7 @@ def test_the_page_before_a_reader_with_an_old_reader_and_with_cve_matching_off(w
 
 def test_the_overview_and_the_report_carry_the_findings(page):
     ov = page.client.get("/h/tower/").text
-    assert "Container images" in ov and 'href="/h/tower/images"' in ov and "1 on an end-of-life OS, 2 with fixable CVEs" in ov
+    assert "Container images" in ov and 'href="/h/tower/images"' in ov and "1 on an end-of-life OS, 3 with fixable CVEs" in ov
     assert "1 container image runs on an end-of-life OS" in ov and "nginx:1.27 (Debian 12): 3 fixable CVEs, 1 known exploited" in ov
     rep = page.client.get("/h/tower/report.md").text
     assert "nginx:1.27" in rep and "3 fixable CVEs, 1 known exploited" in rep and "apt upgrade" in rep

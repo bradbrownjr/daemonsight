@@ -17,13 +17,15 @@
   <div class="card-body">
     <div class="datagrid">
       <div class="datagrid-item"><div class="datagrid-title">Fix available</div><div class="datagrid-content">{% if v.totals.fix %}<span class="text-orange">{{ v.totals.fix }}</span>{% else %}0{% endif %}</div><div class="text-secondary small">CVEs an update fixes</div></div>
+      {% if v.distro == 'ubuntu' %}<div class="datagrid-item"><div class="datagrid-title">Fix needs Ubuntu Pro</div><div class="datagrid-content">{% if v.totals.esm %}<span class="text-yellow">{{ v.totals.esm }}</span>{% else %}0{% endif %}</div><div class="text-secondary small">fixed only in the ESM archives</div></div>{% endif %}
       <div class="datagrid-item"><div class="datagrid-title">Exploited (CISA KEV)</div><div class="datagrid-content">{% if v.totals.kev %}<span class="text-red">{{ v.totals.kev }}</span>{% else %}0{% endif %}</div><div class="text-secondary small">open or fixable</div></div>
       <div class="datagrid-item"><div class="datagrid-title">No fix yet</div><div class="datagrid-content">{{ v.totals.nofix }}</div><div class="text-secondary small">shown here only</div></div>
-      <div class="datagrid-item"><div class="datagrid-title">Won't fix or minor</div><div class="datagrid-content">{{ v.totals.minor }}</div><div class="text-secondary small">Debian says no advisory is needed</div></div>
+      <div class="datagrid-item"><div class="datagrid-title">Won't fix or minor</div><div class="datagrid-content">{{ v.totals.minor }}</div><div class="text-secondary small">{{ 'Ubuntu rates them negligible' if v.distro == 'ubuntu' else 'Debian says no advisory is needed' }}</div></div>
       <div class="datagrid-item"><div class="datagrid-title">Packages listed</div><div class="datagrid-content">{{ v.totals.packages }}</div><div class="text-secondary small">of {{ v.inv.count }} {{ 'advisories' if v.backend == 'dnf' else 'source packages' }}</div></div>
     </div>
     <div class="text-secondary small mt-3">{{ v.inv.release }} · package list received {{ v.inv.ago }}{% if v.matched_ago %} · matched {{ v.matched_ago }}{% endif %}.
-      {% if v.backend == 'dnf' %}Fedora: only CVEs named by pending security advisories are listed. Fedora publishes no list of unfixed CVEs in a form dnf can read, so those don't appear here.{% else %}
+      {% if v.backend == 'dnf' %}Fedora: only CVEs named by pending security advisories are listed. Fedora publishes no list of unfixed CVEs in a form dnf can read, so those don't appear here.{% elif v.distro == 'ubuntu' %}Ubuntu: Canonical's data says "fixed in version X", or that a package "might be affected" without saying why (not yet assessed, needs a fix, deferred and ignored all read the same), so every unfixed CVE is listed as no fix yet. A fix in the ESM archives is available to a host only with Ubuntu Pro for that service. Ubuntu Pro ESM on this host: {{ v.esm }}.{% if v.match_note %} {{ v.match_note }}.{% endif %}
+      A package from another repository (a PPA, Docker, NodeSource and the like) is matched by its name and may be wrong.{% else %}
       A package from another repository (Docker, NodeSource and the like) is matched by its name and may be wrong.{% endif %}
       A High finding needs a CVE on CISA's KEV list, or a fixable one with an EPSS score of {{ (v.epss_high * 100)|round|int }}% or more.</div>
   </div>
@@ -39,15 +41,16 @@
   {% else %}
   <div class="table-responsive">
     <table class="table table-vcenter card-table" data-table="vulns">
-      <thead><tr><th data-sort="text">Package</th><th data-sort="text">Installed</th><th data-sort="text">Fixed in</th><th data-sort="num">CVEs</th><th data-sort="text">Top CVE</th><th data-sort="num">EPSS</th><th data-sort="text">Urgency</th><th>CVE list</th></tr></thead>
+      <thead><tr><th data-sort="text">Package</th><th data-sort="text">Installed</th><th data-sort="text">Fixed in</th><th data-sort="num">CVEs</th><th data-sort="text">Top CVE</th><th data-sort="num">EPSS</th><th data-sort="text">{{ 'Priority' if v.distro == 'ubuntu' else 'Urgency' }}</th><th>CVE list</th></tr></thead>
       <tbody>
         {% for p in v.packages %}
         <tr data-row id="{{ p.anchor }}">
           <td data-label="Package"><strong>{{ p.name }}</strong>{% if p.binaries %}<div class="text-secondary small">{{ p.binaries|join(', ') }}{% if p.more_binaries %} and {{ p.more_binaries }} more{% endif %}</div>{% endif %}</td>
           <td class="font-monospace small" data-label="Installed">{{ p.installed }}</td>
           <td class="font-monospace small" data-label="Fixed in">{{ p.fixed }}</td>
-          <td data-label="CVEs" data-v="{{ p.counts.fix * 1000 + p.counts.nofix }}">
+          <td data-label="CVEs" data-v="{{ (p.counts.fix + p.counts.esm) * 1000 + p.counts.nofix }}">
             {% if p.counts.fix %}<span class="badge bg-orange-lt">{{ p.counts.fix }} fix</span> {% endif %}
+            {% if p.counts.esm %}<span class="badge bg-yellow-lt" title="The fix exists only in Ubuntu Pro's ESM archives">{{ p.counts.esm }} needs Pro</span> {% endif %}
             {% if p.counts.nofix %}<span class="badge bg-secondary-lt">{{ p.counts.nofix }} no fix yet</span> {% endif %}
             {% if p.counts.minor %}<span class="badge bg-secondary-lt">{{ p.counts.minor }} minor</span> {% endif %}
             {% if p.counts.undetermined %}<span class="badge bg-secondary-lt">{{ p.counts.undetermined }} assessing</span>{% endif %}
@@ -63,12 +66,12 @@
                 <li class="mb-2">
                   <a href="{{ c.url }}" target="_blank" rel="noopener noreferrer">{{ c.cve }}</a>
                   <span class="badge {{ c.badge }}">{{ c.label }}</span> {{ badges(c) }}
-                  <span class="text-secondary small">EPSS {{ c.epss_text }}{% if c.urgency %} · urgency {{ c.urgency }}{% endif %}{% if c.fixed %} · fixed in {{ c.fixed }}{% endif %}{% if c.advisory %} · <a href="{{ c.advisory_url }}" target="_blank" rel="noopener noreferrer">{{ c.advisory }}</a>{% endif %}</span>
+                  <span class="text-secondary small">EPSS {{ c.epss_text }}{% if c.urgency %} · {{ 'priority' if v.distro == 'ubuntu' else 'urgency' }} {{ c.urgency }}{% endif %}{% if c.fixed %} · fixed in {{ c.fixed }}{% endif %}{% if c.advisory %} · <a href="{{ c.advisory_url }}" target="_blank" rel="noopener noreferrer">{{ c.advisory }}</a>{% endif %}</span>
                   {% if c.descr %}<div class="text-secondary small">{{ c.descr }}</div>{% endif %}
                 </li>
                 {% endfor %}
               </ul>
-              {% if p.more and p.tracker %}<a href="{{ p.tracker }}" target="_blank" rel="noopener noreferrer">{{ p.more }} more in the Debian tracker</a>{% elif p.more %}<span class="text-secondary small">{{ p.more }} more not shown</span>{% endif %}
+              {% if p.more and p.tracker %}<a href="{{ p.tracker }}" target="_blank" rel="noopener noreferrer">{{ p.more }} more in the {{ 'Ubuntu CVE list' if v.distro == 'ubuntu' else 'Debian tracker' }}</a>{% elif p.more %}<span class="text-secondary small">{{ p.more }} more not shown</span>{% endif %}
             </details>
           </td>
         </tr>
@@ -98,7 +101,7 @@
       </div>
       {% endfor %}
     </div>
-    <div class="text-secondary small mt-3">The hub downloads these every {{ v.refresh_hours|default(24) }} hours. EPSS scores are from FIRST (<a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">first.org/epss</a>); the KEV list is CISA's, released as CC0.{% if v.feeds|map(attribute='alpine')|select|list %} The Alpine files are Alpine Linux's security database (<a href="https://secdb.alpinelinux.org/" target="_blank" rel="noopener noreferrer">secdb.alpinelinux.org</a>), downloaded only for the Alpine releases that container images run.{% endif %}{% if v.feeds|selectattr('name', 'equalto', 'opnsense-changelog')|list %} The OPNsense changelog is the project's own release notes, downloaded only while a firewall has a release update pending.{% endif %}</div>
+    <div class="text-secondary small mt-3">The hub downloads these every {{ v.refresh_hours|default(24) }} hours. EPSS scores are from FIRST (<a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">first.org/epss</a>); the KEV list is CISA's, released as CC0.{% if v.feeds|map(attribute='alpine')|select|list %} The Alpine files are Alpine Linux's security database (<a href="https://secdb.alpinelinux.org/" target="_blank" rel="noopener noreferrer">secdb.alpinelinux.org</a>), downloaded only for the Alpine releases that container images run.{% endif %}{% if v.feeds|map(attribute='ubuntu')|select|list %} The Ubuntu files are Canonical's OVAL data (<a href="https://ubuntu.com/security/oval" target="_blank" rel="noopener noreferrer">ubuntu.com/security/oval</a>, licensed CC BY-SA 4.0), downloaded only for the Ubuntu releases that hosts and container images run.{% endif %}{% if v.feeds|selectattr('name', 'equalto', 'opnsense-changelog')|list %} The OPNsense changelog is the project's own release notes, downloaded only while a firewall has a release update pending.{% endif %}</div>
   </div>
 </section>
 {% endif %}

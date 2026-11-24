@@ -48,8 +48,8 @@ one list of what to fix, without a SIEM.
 | Host health and services | psutil, systemd over D-Bus |
 | Exposure | Listening ports, nftables rules, Caddy admin API, fail2ban |
 | Containers | Docker socket; on Unraid, a small read-only Docker reader |
-| Host package CVEs | Debian security tracker, CISA KEV and EPSS; Fedora advisories |
-| Container image CVEs | Debian and Alpine images; Ubuntu next |
+| Host package CVEs | Debian security tracker and Canonical's Ubuntu OVAL data, CISA KEV and EPSS; Fedora advisories |
+| Container image CVEs | Debian, Alpine and Ubuntu images |
 | Unraid | GraphQL API, Viewer-only key |
 | OPNsense and CrowdSec | REST API, GET only, and the project's changelog for the CVEs a pending update fixes; CrowdSec Local API, read-only key |
 | Seen from outside | Shodan InternetDB or API (off by default) |
