@@ -40,6 +40,7 @@ Server, Reverse Proxy (`/ui/caddy/reverse_proxy`); VPN, Tailscale. Docs: https:/
 
 from __future__ import annotations
 
+import ipaddress
 import re
 
 from ..cve import match, opnsense, priority
@@ -547,9 +548,27 @@ def caddy_rules(c: dict | None, rules: dict | None, roles: dict[str, dict], host
 
 # --- what a firewall lets reach a host ---------------------------------------------------------------------------
 
+def _lan_only(names: list[str], acls: dict[str, dict]) -> bool:
+    """True when these Caddy access lists keep the internet out: at least one is named, and one of them allows only
+    addresses that are not globally routable (RFC 1918, 100.64.0.0/10 as Tailscale uses, loopback, ULA). An inverted
+    list, an unknown name or a range that can't be read is not trusted to do that. Caddy applies every list on the
+    path, so one LAN-only list is enough. Basic auth and forward auth are not counted: the site is still reachable."""
+    for n in names:
+        a = acls.get(n)
+        if not a or a.get("invert") or not a.get("ips"):
+            continue
+        try:
+            if all(not ipaddress.ip_network(i.strip(), strict=False).is_global for i in a["ips"]):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def reach_into(data: dict[str, dict | None], roles: dict[str, dict], ips: set[str]) -> list[dict]:
     """What this firewall lets the internet reach on a host with these addresses: port forwards whose target is one
-    of them, and Caddy sites that are internet-facing and proxy to one of them. Each entry is
+    of them, and Caddy sites that are internet-facing and proxy to one of them (a site or handler behind an access list
+    that allows only private addresses is not internet-facing; see `_lan_only`). Each entry is
     {"how": "forward" | "caddy", "name", "protos": ["tcp", ...], "port": int, "anchor"}. Only plain port numbers
     are matched; an alias or a range that can't be resolved is left out, never guessed."""
     out = []
@@ -568,12 +587,15 @@ def reach_into(data: dict[str, dict | None], roles: dict[str, dict], ips: set[st
     cd = data.get("caddy")
     exposed = open_ports(data.get("rules"), roles) if data.get("rules") else None
     if cd and exposed is not None:
+        acls = {a["name"]: a for a in cd.get("acls", [])}
+        if _lan_only(cd.get("global_acl") or [], acls):
+            return out
         for s in cd.get("sites", []):
-            if not s["enabled"] or not any(p in exposed for p in site_ports(s)):
+            if not s["enabled"] or not any(p in exposed for p in site_ports(s)) or _lan_only(s["acl"], acls):
                 continue
             for h in s["handles"]:
                 ips_h = [t for t in h["to"] if t in ips]
-                if h["enabled"] and ips_h and h["kind"] in ("reverse_proxy", ""):
+                if h["enabled"] and ips_h and h["kind"] in ("reverse_proxy", "") and not _lan_only(h["acl"], acls):
                     out.append({"how": "caddy", "name": s["domain"], "protos": ["tcp"],
                                 "port": int(h["port"]) if h["port"].isdigit() else (443 if h["scheme"] == "https" else 80),
                                 "anchor": anchor("site", s["domain"])})

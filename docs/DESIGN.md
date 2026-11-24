@@ -1140,6 +1140,12 @@ Whether a port forward leads to a container is decided by the port and the Unrai
 to the Unraid host's port 8080 and a container that publishes 8080 are linked. A forward that goes to the host and a container
 that publishes nothing are not. That link is a conservative inference and the page's evidence line says which forward it used.
 
+A Caddy site counts only when nothing keeps the internet out at the network level. A site, handler or global access list
+whose allowed ranges are all not globally routable (RFC 1918, Tailscale's 100.64.0.0/10, loopback, ULA) makes the site
+LAN-only, so it is not exposure (`opnsense_rules._lan_only`). An inverted list, an unknown list name or a list that allows any
+public address is not trusted to do that. Basic auth and forward auth don't count: the site is still reachable, just behind a
+password. Found live on 2026-11-24, when six images behind the "LAN Only" list were rated Critical.
+
 **CVE Services** (`cve/records.py`). The hub asks `GET https://cveawg.mitre.org/api/cve/<CVE-ID>` for each CVE it has matched, one
 at a time, and keeps the result in `cve_record` (`cve.db`, schema 6): the SSVC values, the CVSS (the CNA's first, else CISA's, newest version first) with its
 source and the time read. No key is needed (the OpenAPI document calls the operation "accessible to all users") [86]. A kept record
