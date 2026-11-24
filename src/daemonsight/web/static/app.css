@@ -47,6 +47,8 @@ tr.ds-flash > td { animation: ds-flash 2.5s ease-out; }
   .card-table tr > td, .card-table tr > td:first-child, .card-table tr > td:last-child {
     position: relative; padding: .3rem 1rem .3rem 42%; border: 0; min-width: 0;
     overflow-wrap: anywhere; text-align: left; }
+  /* The label is absolutely positioned, so an empty cell needs a line of its own or the next label overlaps it. */
+  .card-table td[data-label] { min-height: calc(1.5em + .6rem); }
   .card-table td[data-label]::before { content: attr(data-label); position: absolute; left: 1rem; width: calc(42% - 1.5rem);
     color: var(--tblr-secondary); font-size: .75rem; line-height: 1.5; padding-top: .1rem;
     text-transform: uppercase; letter-spacing: .04em; }
