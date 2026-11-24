@@ -580,10 +580,58 @@ Access: the web process binds to 127.0.0.1 (behind Caddy) or to the WireGuard
 address, never to a public address. It also has its own login (one admin
 password, argon2 hash, session cookie), so a Caddy mistake doesn't expose it.
 
-## Alerts
+## Alerts, digests and reports (planned, phase 4)
 
-Sent by the collector when a finding opens or clears, once per change. v1
-supports ntfy and SMTP email. Daily digest optional.
+The goal is a product other people use: administrators, stakeholders and executives get what
+they need from the hub without logging in. Owner decisions, 2026-11-24. Sent by the hub, not the
+collectors, since the hub has every finding.
+
+**Channels.** Configured on the Settings page; any number of each, each with its own "Send test".
+
+| Channel | Settings | Notes |
+|---|---|---|
+| Ntfy | Server URL, topic, optional access token | Priority and tags from severity |
+| Slack | Incoming webhook URL | Block Kit layout |
+| Discord | Webhook URL | Embeds coloured by severity |
+| Email (SMTP) | Server, port, implicit TLS (465) or STARTTLS (587), user, password, from, recipients | Plain text plus HTML; never unencrypted; the server's certificate is verified |
+
+Webhook URLs, tokens and passwords are credentials: stored like the other remote keys, masked
+after saving, never logged. Formats, size limits and rate limits come from each service's own
+documentation, researched and cited before building.
+
+**Alerts and digests.** Each channel chooses which severities it receives, and how:
+
+- Immediate: once when a finding opens or gets worse, once when it resolves (optional), and
+  when a deadline is near or passed. Never per poll: this relies on findings not flapping (see
+  "When these findings resolve").
+- Digest: daily, weekly or monthly at a chosen time (and weekday or day of month), in the hub's
+  time zone. It lists what opened, got worse or resolved since the last digest.
+- Or both, e.g. Critical immediately and the rest in the digest.
+
+**Scheduled reports.** A fuller document on its own schedule: daily, weekly, monthly,
+quarterly or annual. Two kinds, chosen per schedule, for different readers:
+
+- **Executive summary:** plain language, no commands. Risk at a glance (open findings by
+  severity, overdue against the BOD 26-04 deadlines, the trend since the last report), what
+  improved, what needs a decision, and how fast fixes happened against their deadlines over
+  the period (monthly and longer).
+- **Remediation plan:** for administrators. Work grouped by deadline (overdue, 3 days,
+  14 days, 60 days, at the next upgrade), then by system. Each item has the fix command and
+  why it is ranked there (exposed, known exploited, automatable, impact). Plus new exposure,
+  end-of-life systems, and accepted items that changed.
+
+The scope is the whole hub or a chosen set of hosts, so one hub can report separately on
+different groups of systems. Reports are kept on the hub as pages under a Reports archive.
+Email carries the report, with a PDF attached; the other channels send the summary and a link.
+How the PDF is made (a library inside the hub image, or Chromium) is to be researched for image
+size and security before building.
+
+**Identification.** Every report, digest and email footer names the product, its version and
+its logo ("DaemonSight 0.x.y"), with the hub's address, so any reader knows where it came from.
+The organisation's own name can head the report; the DaemonSight footer stays.
+
+**Order.** Channels, alerts and digests first, then scheduled reports, which reuse the channels,
+schedules and history.
 
 ## Install and deploy
 
@@ -604,7 +652,7 @@ supports ntfy and SMTP email. Daily digest optional.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
    3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, rates each CVE with CISA BOD 26-04's table (see "Prioritisation"), and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian, Raspberry Pi OS and Ubuntu (see "CVE matching" and "CVE matching: Ubuntu"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
    3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases. Parts 1 to 3 are done: the reader reads each running image's package list, the Container images page shows each image's base OS and support status (`docker.eol_base`), Debian images are matched against the Debian tracker, Alpine images against Alpine's security database and Ubuntu images against Canonical's OVAL data (`docker.image_cves`). See "Docker reader", "Container images", "CVE matching: Alpine images" and "CVE matching: Ubuntu".
-4. Alerts, recent-changes feed, history charts with drill-down. See "History charts and drill-down (planned)".
+4. Alerts (Ntfy, Slack, Discord, email), digests and scheduled reports, then history charts with drill-down. See "Alerts, digests and reports (planned, phase 4)" and "History charts and drill-down (planned)".
 5. `.deb` package and docs.
 
 Planned after phase 3, in this order: log collection and auditing, then a
