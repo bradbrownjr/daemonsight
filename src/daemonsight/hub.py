@@ -16,6 +16,7 @@ import secrets
 import time
 import unicodedata
 import zlib
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -281,7 +282,11 @@ def add_host(conn, host_id: str) -> str:
     return token
 
 
-def revoke_host(conn, host_id: str, purge: bool = False, data_dir=None) -> bool:
+# Tables with a `host` column in the hub's database; removing a host deletes its rows from each.
+PURGE_TABLES = ("snapshots", "metrics", "findings", "events", "accepted")
+
+
+def revoke_host(conn, host_id: str, purge: bool = False, data_dir=None, cve_path=None) -> bool:
     """Stop accepting a host. A system the hub reads over its API is removed
     whole instead (its remotes row and key file too); `purge` decides whether
     its history goes."""
@@ -290,9 +295,50 @@ def revoke_host(conn, host_id: str, purge: bool = False, data_dir=None) -> bool:
         return remote_store.remove(conn, data_dir, host_id, purge=purge)
     gone = conn.execute("DELETE FROM hosts WHERE id = ?", (host_id,)).rowcount > 0
     if purge:
-        for table in ("snapshots", "metrics", "findings", "events", "accepted"):
+        for table in PURGE_TABLES:
             conn.execute(f"DELETE FROM {table} WHERE host = ?", (host_id,))  # noqa: S608 (fixed names)
+        forget_cves(cve_path, host_id)
     return gone
+
+
+def forget_cves(cve_path, host_id: str) -> int:
+    """Delete a host's CVE matches (they live in cve.db, apart from the hub's database). Returns the rows
+    deleted. A hub that never fetched feeds has no cve.db, and this doesn't make one."""
+    if cve_path is None or not Path(cve_path).exists():
+        return 0
+    from .cve import store as cve_store
+    cve = cve_store.connect(Path(cve_path))
+    try:
+        n = cve.execute("DELETE FROM match WHERE host = ?", (host_id,)).rowcount
+        cve.execute("DELETE FROM matched WHERE host = ?", (host_id,))
+        return n
+    finally:
+        cve.close()
+
+
+def data_counts(conn, host_id: str, cve_path=None) -> list[tuple[str, int]]:
+    """What removing a host deletes, as (label, rows): the tables `revoke_host(purge=True)` clears."""
+    labels = {"snapshots": "Snapshots", "metrics": "Metric points", "findings": "Findings",
+              "events": "Events", "accepted": "Accepted findings"}
+    out = [(labels[t], conn.execute(f"SELECT COUNT(*) FROM {t} WHERE host = ?", (host_id,)).fetchone()[0])  # noqa: S608
+           for t in PURGE_TABLES]
+    n = 0
+    if cve_path is not None and Path(cve_path).exists():
+        from .cve import store as cve_store
+        cve = cve_store.connect(Path(cve_path))
+        try:
+            n = cve.execute("SELECT COUNT(*) FROM match WHERE host = ?", (host_id,)).fetchone()[0]
+        finally:
+            cve.close()
+    return out + [("CVE matches", n)]
+
+
+def replace_token(conn, host_id: str) -> str | None:
+    """Give a collector host a new token and return it (shown once). The old token stops working at once.
+    The host's history and settings stay. None when no collector host has that name."""
+    token = secrets.token_urlsafe(32)
+    cur = conn.execute("UPDATE hosts SET token_hash = ? WHERE id = ? AND kind IS NULL", (hash_token(token), host_id))
+    return token if cur.rowcount == 1 else None
 
 
 def host_for_token(conn, token: str):

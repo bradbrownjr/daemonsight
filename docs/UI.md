@@ -184,6 +184,21 @@ These apply to every page. Owner rules, kept as written.
 - **Long values wrap** (`overflow-wrap: anywhere`) so a row never scrolls
   sideways. (Project practice.)
 
+## Row actions and confirmations
+
+- **One Manage button per row, in the last column,** the same on every row.
+  It goes to the host's own manage page (an API system's edit page). No
+  second link sits under the name. On a phone it is a labelled line like any
+  other cell. (Owner: GUI-first, symmetry.)
+- **Manage pages are one column of equal cards,** each a title with an (i)
+  (`info_button` and `info_panel` in `_macros.html`), one sentence, and one
+  button. Longer text goes behind the (i).
+- **A destructive action has its own confirmation page,** reached by a link
+  and finished by a POST. It says what happens; Remove lists exactly what is
+  deleted and asks for the name to be typed. Cancel is a link back.
+- **A secret is shown once,** in the response to the POST that made it, with a
+  Copy button, a warning that it won't show again, and `no-store`.
+
 ## Forms
 
 - **Every field has a visible label or instruction.** WCAG 3.3.2 (A): "Labels

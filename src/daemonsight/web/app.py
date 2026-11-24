@@ -479,6 +479,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
                               response_class=HTMLResponse)
         from .remote_routes import add_remote_routes
         add_remote_routes(app, cfg, hub_conn, render=render, require_login=require_login, flash=flash, net=net)
+        from .host_routes import add_host_routes
+        add_host_routes(app, cfg, hub_conn, render=render, require_login=require_login, flash=flash)
 
         @app.get("/", response_class=HTMLResponse)
         async def hosts_page(request: Request):

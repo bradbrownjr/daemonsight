@@ -2,7 +2,8 @@
 <section class="card" id="hosts" aria-labelledby="hosts-title" data-section{% if not v.hosts %} data-empty{% endif %}>
   <div class="card-header">
     <h2 class="card-title" id="hosts-title">Hosts</h2>
-    <div class="card-actions text-secondary d-flex align-items-center gap-2"><span><span class="ds-shown"></span>{{ v.hosts|length }} host{{ "s" if v.hosts|length != 1 }} · {{ v.reporting }} reporting</span>
+    <div class="card-actions text-secondary d-flex flex-wrap align-items-center gap-2"><span><span class="ds-shown"></span>{{ v.hosts|length }} host{{ "s" if v.hosts|length != 1 }} · {{ v.reporting }} reporting</span>
+      <a class="btn btn-sm" href="/hosts/new">Add a Linux host</a>
       <a class="btn btn-sm" href="/remotes/new">Add a system</a>
       {% if v.behind %}
       <form method="post" action="/hosts/update" class="m-0">
@@ -14,18 +15,17 @@
   </div>
   {% if not v.hosts %}
   <div class="card-body">
-    <p>No hosts yet. Add one on the hub, then put its token on the host:</p>
-    <pre>daemonsight hub add-host &lt;name&gt;</pre>
+    <p>No hosts yet. <a href="/hosts/new">Add a Linux host</a> and put its token on the host, or on the command line: <code>daemonsight hub add-host &lt;name&gt;</code></p>
     <p class="mb-0">A system with no collector, such as an Unraid server, is read over its API: <a href="/remotes/new">Add a system</a>.</p>
   </div>
   {% else %}
   <div class="table-responsive">
     <table class="table table-vcenter card-table" data-table="hosts">
-      <thead><tr><th data-sort="text">Host</th><th data-sort="text">State</th><th data-sort="num">Last upload or poll</th><th data-sort="num">Findings</th><th data-sort="text">System</th><th data-sort="text">Version</th><th data-sort="text">From</th><th>Report</th></tr></thead>
+      <thead><tr><th data-sort="text">Host</th><th data-sort="text">State</th><th data-sort="num">Last upload or poll</th><th data-sort="num">Findings</th><th data-sort="text">System</th><th data-sort="text">Version</th><th data-sort="text">From</th><th>Report</th><th>Manage</th></tr></thead>
       <tbody>
         {% for h in v.hosts %}
         <tr data-row>
-          <td data-label="Host"><a href="/h/{{ h.id }}/" class="fw-bold">{{ h.id }}</a>{% if h.role == 'workstation' %} <span class="badge bg-secondary-lt">Workstation</span>{% endif %}{% if h.kind %}<div><a href="/remotes/{{ h.id }}/edit" class="small">Edit</a></div>{% endif %}</td>
+          <td data-label="Host"><a href="/h/{{ h.id }}/" class="fw-bold">{{ h.id }}</a>{% if h.role == 'workstation' %} <span class="badge bg-secondary-lt">Workstation</span>{% endif %}</td>
           <td data-v="{{ h.state }}" data-label="State"><span class="badge {{ h.state_badge }}">{{ h.state }}</span>{% if h.reboot %} <a href="/h/{{ h.id }}/packages#reboot" class="badge bg-orange-lt text-decoration-none">Reboot needed</a>{% endif %}</td>
           {% if h.kind %}
           <td data-v="{{ h.seen_v }}" data-label="Last poll">{{ h.seen }}{% if h.error %}<div class="text-red small">{{ h.error }}</div>{% endif %}</td>
@@ -55,6 +55,7 @@
           {% endif %}
           <td class="font-monospace small" data-label="From">{{ h.address }}</td>
           <td data-label="Report"><a href="/h/{{ h.id }}/report">Report</a></td>
+          <td data-label="Manage"><a class="btn btn-sm" href="{{ '/remotes/' ~ h.id ~ '/edit' if h.kind else '/hosts/' ~ h.id ~ '/manage' }}" aria-label="Manage {{ h.id }}">Manage</a></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -77,7 +78,7 @@
     {% endfor %}
   </div>
   {% else %}
-  <div class="card-body text-secondary">No hub changes recorded yet. Changes made on the Settings page are listed here.</div>
+  <div class="card-body text-secondary">No hub changes recorded yet. Changes made on the Settings page and to hosts are listed here.</div>
   {% endif %}
   <div class="card-body text-secondary ds-nomatch">No changes match the filter.</div>
 </section>

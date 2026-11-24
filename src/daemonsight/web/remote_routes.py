@@ -304,6 +304,8 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                           reader_token=reader_token if reader_url else None, crowdsec_url=cs_url,
                           crowdsec_key=cs_key if cs_url else None, crowdsec_never=cs_never)
                 log.info("System %s (%s) added from %s", form["name"], kind, client(request))
+                db.add_event(conn, db.HUB_HOST, time.time(), "setting", f"System added: {form['name']}",
+                             detail=f"by {request.session.get('user') or 'admin'}; read over its {kind} API")
                 flash(request, f"Added {form['name']}. The first read happens within a few seconds.")
             else:
                 reader_arg = None if (reader_url is None and not existing["reader_url"]) else \
@@ -432,6 +434,8 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
             return RedirectResponse(f"/remotes/{row['id']}/edit", status_code=303)
         store.remove(conn, cfg.data_dir, row["id"], purge=True)
         log.info("System %s removed from %s", remote_id, client(request))
+        db.add_event(conn, db.HUB_HOST, time.time(), "setting", f"System removed: {row['id']}",
+                     detail=f"by {request.session.get('user') or 'admin'}; its API key file and history are deleted")
         flash(request, f"Removed {row['id']}: its API key file and its history are deleted.")
         return RedirectResponse("/", status_code=303)
 

@@ -164,6 +164,12 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
 
 - **One page for every host.** The hub is a container image (with an Unraid
   template). Each host's collector uploads to it over HTTPS.
+- **Host management in the web UI.** Every row of the Hosts table has a
+  Manage button. A Linux host's page shows its version with Update now, and
+  replaces its upload token, revokes it or removes it and its stored data,
+  each behind a confirmation. Add a Linux host shows the token once with the
+  command that installs it. The command line (`hub add-host`, `update`,
+  `revoke`) stays as an alternative.
 - **Updates from the hub.** The Hosts page, or `daemonsight hub update`, moves
   hosts to the hub's own commit. A host can turn this off.
 - **Retention and backups.** Retention sets how long history stays. Scheduled

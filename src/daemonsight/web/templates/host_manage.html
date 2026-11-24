@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import info_button, info_panel %}
+{% block title %}Manage {{ h.id }} · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">Host that uploads through a collector</div>
+  <h1 class="page-title">Manage {{ h.id }}</h1>
+  <div class="text-secondary">{{ state }} · last upload {{ seen }}{% if h.address %} · from <span class="font-monospace">{{ h.address }}</span>{% endif %} · <a href="/h/{{ h.id }}/">Open its pages</a></div>
+</div>
+
+<section class="card mb-4" id="manage-version" aria-labelledby="manage-version-title">
+  <div class="card-header"><h2 class="card-title d-flex align-items-center gap-1" id="manage-version-title">Version{{ info_button("manage-version-info", "More about versions") }}</h2>
+    {{ info_panel("manage-version-info", "Updating a host from the hub", "Update now asks the host to install the hub's version. The host picks the request up with its next upload and installs it only if the commit is on main or in a release tag. A host can turn this off with remote_update = false under [upload] in its config. The command line does the same with: daemonsight hub update " ~ h.id) }}</div>
+  <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>Host: <strong>{{ ver.host_version }}</strong><br>Hub: <strong>{{ ver.hub_version }}</strong>
+      {% if ver.note %}<div class="text-secondary small">{{ ver.note }}</div>{% endif %}
+      {% if not ver.can_update and ver.reason %}<div class="text-secondary small" id="update-reason">{{ ver.reason }}</div>{% endif %}</div>
+    <div class="d-flex flex-wrap gap-2">
+      <form method="post" action="/hosts/{{ h.id }}/update" class="m-0">
+        <button class="btn btn-primary" type="submit"{% if not ver.can_update %} disabled aria-describedby="update-reason"{% endif %}>Update now</button>
+      </form>
+      {% if ver.updating %}
+      <form method="post" action="/hosts/{{ h.id }}/update" class="m-0"><input type="hidden" name="action" value="cancel"><button class="btn" type="submit">Cancel the update</button></form>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card mb-4" id="manage-token" aria-labelledby="manage-token-title">
+  <div class="card-header"><h2 class="card-title d-flex align-items-center gap-1" id="manage-token-title">Upload token{{ info_button("manage-token-info", "More about the upload token") }}</h2>
+    {{ info_panel("manage-token-info", "Replacing the upload token", "A new token is shown once, with the command that installs it on the host. The old token stops working at once, so the host can't upload until the new one is installed. Its history and settings stay. The command line gets the same result with daemonsight hub revoke and then daemonsight hub add-host, which also resets the host's upload counter.") }}</div>
+  <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>Use this if the token was lost or may have leaked.</div>
+    <a class="btn" href="/hosts/{{ h.id }}/manage/token">Replace upload token</a>
+  </div>
+</section>
+
+<section class="card mb-4" id="manage-revoke" aria-labelledby="manage-revoke-title">
+  <div class="card-header"><h2 class="card-title d-flex align-items-center gap-1" id="manage-revoke-title">Revoke{{ info_button("manage-revoke-info", "More about revoking") }}</h2>
+    {{ info_panel("manage-revoke-info", "Revoking a host", "The hub stops accepting this host's uploads and drops it from the Hosts list. Its stored history stays in the database. To allow the name again, add it as a new Linux host: that makes a new token, and the old history is there again under that name. The command line does the same with: daemonsight hub revoke " ~ h.id) }}</div>
+  <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>Stop accepting uploads from this host. Its history stays.</div>
+    <a class="btn btn-outline-danger" href="/hosts/{{ h.id }}/manage/revoke">Revoke</a>
+  </div>
+</section>
+
+<section class="card mb-4" id="manage-remove" aria-labelledby="manage-remove-title">
+  <div class="card-header"><h2 class="card-title d-flex align-items-center gap-1" id="manage-remove-title">Remove from hub{{ info_button("manage-remove-info", "More about removing") }}</h2>
+    {{ info_panel("manage-remove-info", "Removing a host", "Revokes the host and deletes its stored data. The next page lists exactly what goes. Nothing changes on the host itself: stop its collector there with sudo systemctl disable --now daemonsight-collector. The command line does the same with: daemonsight hub revoke " ~ h.id ~ " --purge") }}</div>
+  <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>Revoke this host and delete everything the hub stored for it.</div>
+    <a class="btn btn-outline-danger" href="/hosts/{{ h.id }}/manage/remove">Remove from hub</a>
+  </div>
+</section>
+<p><a href="/">Back to Hosts</a></p>
+{% endblock %}
