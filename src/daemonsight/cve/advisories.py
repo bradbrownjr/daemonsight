@@ -25,8 +25,10 @@ GitHub (https://api.github.com/repos/opnsense/core/security-advisories/<GHSA id>
     says so in `x-ratelimit-limit`, `-remaining` and `-reset` (epoch seconds). A request over the limit is answered 403 or
     429; the page says not to retry before `x-ratelimit-reset`, or before `retry-after` seconds when that header is present.
 
-An advisory is immutable once published, so an answer is kept for good in `opn_adv`; only a failed answer is asked again,
-after `[cve] refresh_hours`. (A GitHub advisory published without a CVE id could be given one later; that is not looked for.)
+A FreeBSD advisory is immutable once published, so its answer is kept for good in `opn_adv`; only a failed answer is asked again,
+after `[cve] refresh_hours`. A GitHub advisory published without a CVE id can be given one later, so one that resolved to none is
+asked again after `GH_RECHECK_DAYS` (7) for as long as a firewall's range still names it (only advisories of the needed ranges are
+ever asked for); a CVE it names then is kept for good. A failed recheck keeps the earlier answer and waits another 7 days.
 Everything here is data from a download: size-capped, HTTPS only, no redirect followed, parsed with the standard library, and
 stored as ids, a rating and one short line.
 """
@@ -61,6 +63,7 @@ HEADER_BYTES = 6000               # the header block (Topic, Category, CVE Name)
 MAX_CVES = 40                     # per advisory; the real maximum seen is 3
 SPACING = {SA_HOST: 0.5, GH_HOST: 1.0}   # seconds between two requests to the same host in one pass
 PER_PASS = 40                     # at most this many advisories asked for in one pass (the rest wait for the next)
+GH_RECHECK_DAYS = 7               # a GitHub advisory that named no CVE is asked again after this long (own choice)
 GH_UNTIL_KEY = "opn_gh_until"     # meta: do not ask GitHub before this time (epoch)
 GH_WAIT_MAX = 6 * 3600            # a header that asks for longer is not believed
 GH_WAIT_DEFAULT = 3600            # a 403 or 429 that says nothing about when
@@ -191,20 +194,28 @@ def _store_ok(conn, ref: str, got: dict, now: float) -> None:
 
 
 def _store_error(conn, ref: str, why: str, now: float) -> None:
+    # A kept answer stays (a failed recheck only moves `tried_at`, which the next recheck is counted from).
     conn.execute("INSERT INTO opn_adv (ref, status, cves, tried_at, detail) VALUES (?, 'error', '[]', ?, ?) "
-                 "ON CONFLICT (ref) DO UPDATE SET status = 'error', tried_at = excluded.tried_at, detail = excluded.detail "
-                 "WHERE opn_adv.status != 'ok'", (ref, now, _short(why, 120)))
+                 "ON CONFLICT (ref) DO UPDATE SET tried_at = excluded.tried_at, "
+                 "status = CASE WHEN opn_adv.status = 'ok' THEN 'ok' ELSE 'error' END, "
+                 "detail = CASE WHEN opn_adv.status = 'ok' THEN opn_adv.detail ELSE excluded.detail END", (ref, now, _short(why, 120)))
 
 
 def due(rows: dict[str, dict], refs, now: float, refresh_hours: float) -> list[str]:
-    """The references to ask for: no row yet, or a failure older than `refresh_hours`. A kept answer is never asked again."""
+    """The references to ask for: no row yet, a failure older than `refresh_hours`, or a GitHub advisory that named no CVE and was
+    last asked `GH_RECHECK_DAYS` ago. Any other kept answer is never asked again."""
     out = []
     for ref in sorted(set(refs)):
-        if kind(ref) is None:
+        k = kind(ref)
+        if k is None:
             continue
         r = rows.get(ref)
         if r is None or (r["status"] != "ok" and (r["tried_at"] is None or now - r["tried_at"] >= refresh_hours * 3600)):
             out.append(ref)
+        elif r["status"] == "ok" and k == "gh" and not r["cves"]:
+            last = max(r["fetched_at"] or 0, r["tried_at"] or 0)
+            if now - last >= GH_RECHECK_DAYS * 86400:
+                out.append(ref)
     return out
 
 

@@ -113,7 +113,9 @@ def test_an_answer_is_kept_for_good_and_never_asked_for_again(cdb):
     assert got == {"asked": 3, "resolved": 3, "failed": 0, "waiting": 0} and len(calls) == 3
     rows = adv.cached(cdb)
     assert rows[SA_74]["cves"] == ["CVE-2026-101313"] and rows[GH_1]["severity"] == "high" and rows[GH_CVE]["cves"] == ["CVE-2026-63442"]
-    assert resolve(cdb, [SA_74, GH_1, GH_CVE], now=NOW + 1000 * DAY, handler=h)["asked"] == 0 and len(calls) == 3
+    # A FreeBSD advisory and a GitHub one that named a CVE are never asked again.
+    assert resolve(cdb, [SA_74, GH_CVE], now=NOW + 1000 * DAY, handler=h)["asked"] == 0 and len(calls) == 3
+    assert resolve(cdb, [SA_74, GH_1, GH_CVE], now=NOW + 6 * DAY, handler=h)["asked"] == 0 and len(calls) == 3
 
 
 def test_a_failure_is_asked_again_only_after_refresh_hours_and_a_kept_answer_is_not_replaced(cdb):
@@ -136,6 +138,54 @@ def test_a_failure_is_asked_again_only_after_refresh_hours_and_a_kept_answer_is_
     # A 404 is a failure too (the file may not be published yet) and is asked again after the same wait.
     assert resolve(cdb, ["FREEBSD-SA:26:99.nothing"], now=NOW + DAY, handler=h)["failed"] == 1
     assert adv.cached(cdb)["FREEBSD-SA:26:99.nothing"]["detail"] == "HTTP 404"
+
+
+def test_a_github_advisory_with_no_cve_is_asked_again_after_7_days_and_a_cve_it_gains_is_kept(cdb):
+    calls = []
+    state = {"cve": None}
+
+    def h(request):
+        calls.append(request.url.path)
+        if request.url.host == adv.SA_HOST:
+            return fake.handler(request)
+        doc = json.loads((FIX / "GHSA-f35q-c34m-pfw3.json").read_text())
+        return httpx.Response(200, json={**doc, "cve_id": state["cve"]})
+    refs = [SA_74, GH_1]
+    assert resolve(cdb, refs, handler=h)["resolved"] == 2 and adv.cached(cdb)[GH_1]["cves"] == []
+    g0 = adv.generation(cdb)
+    # Not before 7 days; then only the GitHub advisory, and the FreeBSD one stays cached for good.
+    assert resolve(cdb, refs, now=NOW + 7 * DAY - 1, handler=h)["asked"] == 0 and len(calls) == 2
+    assert resolve(cdb, refs, now=NOW + 7 * DAY, handler=h) == {"asked": 1, "resolved": 1, "failed": 0, "waiting": 0}
+    assert calls[-1].endswith("GHSA-f35q-c34m-pfw3") and len(calls) == 3 and adv.cached(cdb)[GH_1]["cves"] == []
+    assert resolve(cdb, refs, now=NOW + 13 * DAY, handler=h)["asked"] == 0           # counted from the last ask
+    # A failed recheck keeps the earlier answer and waits another 7 days.
+    broken = resolve(cdb, refs, now=NOW + 14 * DAY, handler=lambda r: httpx.Response(500))
+    assert broken["failed"] == 1 and adv.cached(cdb)[GH_1]["status"] == "ok" and adv.cached(cdb)[GH_1]["tried_at"] == NOW + 14 * DAY
+    assert resolve(cdb, refs, now=NOW + 20 * DAY, handler=h)["asked"] == 0
+    # GitHub has assigned a CVE: it is kept, the generation changes (the firewall is matched again), and it is not asked again.
+    state["cve"] = "CVE-2026-777777"
+    assert resolve(cdb, refs, now=NOW + 21 * DAY, handler=h)["resolved"] == 1
+    assert adv.cached(cdb)[GH_1]["cves"] == ["CVE-2026-777777"] and adv.generation(cdb) != g0
+    n = len(calls)
+    assert resolve(cdb, refs, now=NOW + 400 * DAY, handler=h)["asked"] == 0 and len(calls) == n
+
+
+def test_only_a_range_a_firewall_still_needs_is_rechecked(tmp_path):
+    calls = []
+
+    def rec(request):
+        calls.append(request.url.path)
+        return fake.handler(request)
+    hosts = {fake.SA_HOST: rec, fake.GH_HOST: rec}
+    fw = idle("26.7.9_3", latest="26.7.9")
+    cfg, conn, c = world(tmp_path, fw, override=hosts)
+    assert len(calls) == 23
+    asyncio.run(c.run_once(NOW + 8 * DAY))
+    assert [p for p in calls[23:]] == [p for p in calls[23:] if "security-advisories" in p] and len(calls) == 25     # the 2 GHSA with no CVE
+    # The firewall has caught up with 26.7.10: its advisories are not in any range, so nothing is asked.
+    put_firmware(conn, idle("26.7.10", latest="26.7.10"))
+    asyncio.run(c.run_once(NOW + 20 * DAY))
+    assert len(calls) == 25
 
 
 def test_the_generation_changes_when_an_advisory_is_resolved_and_not_on_a_failure(cdb):

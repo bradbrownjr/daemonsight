@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS opn_fix (
 -- What each security advisory the changelog names says about CVEs (cve/advisories.py). `ref` is the changelog's own reference
 -- (`FREEBSD-SA:26:74.ktls`, `GHSA:GHSA-...`). `status` is `ok` (asked once; kept for good, advisories are immutable) or `error`
 -- (asked again after [cve] refresh_hours). `cves` is a JSON list, empty when the advisory names none; `severity` and `score` are
--- GitHub's rating, null for FreeBSD's. Not dropped when no firewall needs the changelog: a kept answer is never asked for twice.
+-- GitHub's rating, null for FreeBSD's. Not dropped when no firewall needs the changelog. A GitHub row with no CVE is asked again
+-- after 7 days (a CVE may be assigned later); every other `ok` row is never asked for twice.
 CREATE TABLE IF NOT EXISTS opn_adv (
     ref        TEXT PRIMARY KEY,
     status     TEXT NOT NULL,

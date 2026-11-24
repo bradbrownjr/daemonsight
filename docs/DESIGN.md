@@ -1871,9 +1871,11 @@ that the headers are on it is the documentation's word.
 - Which advisories: those of the changelog sections a firewall needs, the pending range and the unseen range, and no others (a firewall
   on the newest release asks for nothing). A reference that is not `FREEBSD-SA:` or `GHSA:` is never asked for.
 - Once, for good: an answer is kept in `cve.db` `opn_adv` (reference, `ok`, CVE ids, GitHub's `severity` and `score`, a short title) and
-  never asked again, because a published advisory does not change. It stays when no firewall needs the changelog any more. A failure
-  (HTTP error, 404, not that advisory, too big, not JSON) is stored with a reason and tried again after `[cve] refresh_hours` (24).
-  Limitation: a GitHub advisory published with no CVE id could be given one later; that is not looked for.
+  never asked again, because a published FreeBSD advisory does not change. It stays when no firewall needs the changelog any more. A
+  failure (HTTP error, 404, not that advisory, too big, not JSON) is stored with a reason and tried again after `[cve] refresh_hours`
+  (24). A GitHub advisory can be given a CVE id after it is published, so one that resolved to none is asked again after 7 days (own
+  choice) for as long as a pending or unseen range still names it; a CVE it names then is kept for good and the firewall is matched
+  again. A failed recheck keeps the earlier answer and waits another 7 days. A FreeBSD advisory that named no CVE is not rechecked.
 - Politely: at most 40 advisories in a pass; one request at a time, 0.5 s apart on `www.freebsd.org` and 1 s apart on `api.github.com`
   (the hub's own choice; neither site states a limit for this). A 429 or 503 from either stops that host for the pass. A 403 or 429 from
   GitHub stops GitHub until the time its headers give (`retry-after`, else `x-ratelimit-reset` when `x-ratelimit-remaining` is 0, else an

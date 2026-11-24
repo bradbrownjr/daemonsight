@@ -463,8 +463,9 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   (`/repos/opnsense/core/security-advisories/<GHSA id>`, OPNsense's own
   advisory, read for its CVE id and rating; no token, so GitHub's limit of 60
   requests an hour applies and the hub stops on a 403 or 429 until the time the
-  answer gives). Each answer is kept for good and never asked for twice (a
-  failed one is tried again after `refresh_hours`). Nothing about your hosts is
+  answer gives). Each answer is kept and not asked for twice (a failed one is
+  tried again after `refresh_hours`; a GitHub advisory that named no CVE is
+  asked again after 7 days while a firewall still needs it). Nothing about your hosts is
   sent: the path names a public advisory. Requests carry
   the User-Agent `DaemonSight/<version>` and nothing about your hosts. A
   redirect may only stay on the feed's own host, each download has a size
