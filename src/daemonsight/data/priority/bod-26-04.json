@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "directive": {
+    "name": "CISA BOD 26-04",
+    "title": "Prioritizing Security Updates Based on Risk",
+    "table_name": "Table 1",
+    "url": "https://www.cisa.gov/news-events/directives/bod-26-04-prioritizing-security-updates-based-risk",
+    "guidance_url": "https://www.cisa.gov/news-events/directives/bod-26-04-implementation-guidance-prioritizing-security-updates-based-risk",
+    "table_url": "https://www.cisa.gov/sites/default/files/styles/large/public/2026-06/BOD_26-04_Table_1_Remediation_Timelines_0.png",
+    "date": "2026-06-10"
+  },
+  "inputs": {
+    "exposed": [
+      "yes",
+      "no"
+    ],
+    "kev": [
+      "yes",
+      "no"
+    ],
+    "automatable": [
+      "yes",
+      "no"
+    ],
+    "impact": [
+      "total",
+      "partial"
+    ]
+  },
+  "rows": [
+    {
+      "row": 1,
+      "exposed": "yes",
+      "kev": "yes",
+      "automatable": "yes",
+      "impact": "total",
+      "timeline": "3 days and forensic triage",
+      "days": 3,
+      "triage": true
+    },
+    {
+      "row": 2,
+      "exposed": "yes",
+      "kev": "yes",
+      "automatable": "yes",
+      "impact": "partial",
+      "timeline": "3 days",
+      "days": 3,
+      "triage": false
+    },
+    {
+      "row": 3,
+      "exposed": "yes",
+      "kev": "yes",
+      "automatable": "no",
+      "impact": "total",
+      "timeline": "3 days and forensic triage",
+      "days": 3,
+      "triage": true
+    },
+    {
+      "row": 4,
+      "exposed": "yes",
+      "kev": "yes",
+      "automatable": "no",
+      "impact": "partial",
+      "timeline": "14 days",
+      "days": 14,
+      "triage": false
+    },
+    {
+      "row": 5,
+      "exposed": "yes",
+      "kev": "no",
+      "automatable": "yes",
+      "impact": "total",
+      "timeline": "3 days",
+      "days": 3,
+      "triage": false
+    },
+    {
+      "row": 6,
+      "exposed": "yes",
+      "kev": "no",
+      "automatable": "yes",
+      "impact": "partial",
+      "timeline": "14 days",
+      "days": 14,
+      "triage": false
+    },
+    {
+      "row": 7,
+      "exposed": "yes",
+      "kev": "no",
+      "automatable": "no",
+      "impact": "total",
+      "timeline": "14 days",
+      "days": 14,
+      "triage": false
+    },
+    {
+      "row": 8,
+      "exposed": "yes",
+      "kev": "no",
+      "automatable": "no",
+      "impact": "partial",
+      "timeline": "60 days",
+      "days": 60,
+      "triage": false
+    },
+    {
+      "row": 9,
+      "exposed": "no",
+      "kev": "yes",
+      "automatable": "yes",
+      "impact": "total",
+      "timeline": "3 days and forensic triage",
+      "days": 3,
+      "triage": true
+    },
+    {
+      "row": 10,
+      "exposed": "no",
+      "kev": "yes",
+      "automatable": "yes",
+      "impact": "partial",
+      "timeline": "14 days",
+      "days": 14,
+      "triage": false
+    },
+    {
+      "row": 11,
+      "exposed": "no",
+      "kev": "yes",
+      "automatable": "no",
+      "impact": "total",
+      "timeline": "14 days",
+      "days": 14,
+      "triage": false
+    },
+    {
+      "row": 12,
+      "exposed": "no",
+      "kev": "yes",
+      "automatable": "no",
+      "impact": "partial",
+      "timeline": "14 days",
+      "days": 14,
+      "triage": false
+    },
+    {
+      "row": 13,
+      "exposed": "no",
+      "kev": "no",
+      "automatable": "yes",
+      "impact": "total",
+      "timeline": "60 days",
+      "days": 60,
+      "triage": false
+    },
+    {
+      "row": 14,
+      "exposed": "no",
+      "kev": "no",
+      "automatable": "yes",
+      "impact": "partial",
+      "timeline": "60 days",
+      "days": 60,
+      "triage": false
+    },
+    {
+      "row": 15,
+      "exposed": "no",
+      "kev": "no",
+      "automatable": "no",
+      "impact": "total",
+      "timeline": "fix on system upgrade",
+      "days": null,
+      "triage": false
+    },
+    {
+      "row": 16,
+      "exposed": "no",
+      "kev": "no",
+      "automatable": "no",
+      "impact": "partial",
+      "timeline": "fix on system upgrade",
+      "days": null,
+      "triage": false
+    }
+  ],
+  "severity": {
+    "3": "critical",
+    "14": "high",
+    "60": "medium",
+    "upgrade": "low"
+  },
+  "triage_steps": [
+    "Scope it: list every system that runs the vulnerable software (within 2 hours of the KEV listing)",
+    "Preserve evidence before patching: memory, running processes, network connections and logs, since patching can destroy them (2 to 24 hours)",
+    "Contain: isolate or restrict access to the affected systems, then patch (6 to 24 hours)",
+    "Analyse the evidence for signs of compromise: unknown accounts or keys, new services or scheduled jobs, odd outbound connections (24 to 48 hours)",
+    "Decide whether to escalate, and write down what you found and did (48 to 72 hours)"
+  ]
+}

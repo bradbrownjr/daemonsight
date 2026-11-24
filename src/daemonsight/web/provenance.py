@@ -30,7 +30,7 @@ SECTION_READ = {
     "packages": "apt-get -s dist-upgrade (a simulation), apt-mark showhold, dpkg-query, /var/run/reboot-required and, if installed, needrestart -b -r l",
     "opnsense": "The OPNsense REST API, read by the hub with GET requests only (a dedicated user's API key)",
     "cve": "The hub matches this host's installed packages against the Debian security tracker (Ubuntu: Canonical's "
-           "OVAL data), EPSS scores and CISA's KEV list; the host downloads nothing",
+           "OVAL data), EPSS scores, CISA's KEV list and CISA's SSVC ratings (CVE Services); the host downloads nothing",
     "outside": "Shodan, asked by the hub about this host's public addresses: its free InternetDB, or the Shodan API "
                "with the owner's key. Only the IP address is sent (the API also gets the key), with a generic "
                "User-Agent, DaemonSight/<version>. The answer is Shodan's scan data, up to a week old, compared "
@@ -95,6 +95,24 @@ def outside_port(ip: str, port: int, lines: list[str], source: str = "internetdb
 UBUNTU_OVAL = "https://security-metadata.canonical.com/oval/"
 
 
+def prioritisation() -> list[dict]:
+    """The entries that explain a deadline, for every CVE panel: the table's name and links (from the table in force), the four
+    inputs, the estimate rule and where CISA's rating is read."""
+    from ..cve import priority, records
+    t = priority.current()
+    return [url(f"{t.name} ({t.title})", t.url, t.url),
+            url(f"{t.table_name}, as published", t.table_url, t.table_url),
+            plain("Deadline", f"Each CVE gets a deadline from {t.name}'s {t.table_name} (version {t.version} of the table file, "
+                              f"{t.source}): whether the system is publicly exposed, whether the CVE is in CISA's KEV catalog, "
+                              "whether an attacker can automate it (CISA's SSVC rating) and its technical impact (total or partial). "
+                              "An update or image takes the worst CVE it fixes. CVSS is shown for information and sets nothing"),
+            plain("Estimates", "Where CISA has not rated a CVE, DaemonSight estimates Automatable from the EPSS probability "
+                               "(yes at or above the Settings value, FIRST's \"approximately the 90th percentile (>=0.04)\") and assumes "
+                               "partial impact, and marks both \"estimated by DaemonSight\""),
+            url("CISA's rating comes from", records.DOCS, "GET https://cveawg.mitre.org/api/cve/<CVE-ID> (CISA-ADP container)"),
+            url("FIRST: using EPSS", priority.EPSS_URL, priority.EPSS_URL)]
+
+
 def cve_packages(distro: str = "debian", release: str | None = None) -> dict:
     if distro == "ubuntu":
         rel = release or "$(. /etc/os-release && echo $VERSION_CODENAME)"
@@ -110,7 +128,8 @@ def cve_packages(distro: str = "debian", release: str | None = None) -> dict:
                             cmd("The OVAL lines for one source package", f"curl -s {q(UBUNTU_OVAL + 'com.ubuntu.' + rel + '.cve.oval.xml.bz2')} "
                                                                         "| bzcat | grep -F 'openssl source package in'"),
                             url("Ubuntu's CVE pages", "https://ubuntu.com/security/cves", "ubuntu.com/security/cves"),
-                            url("Ubuntu Security Notices", "https://ubuntu.com/security/notices", "ubuntu.com/security/notices")]}
+                            url("Ubuntu Security Notices", "https://ubuntu.com/security/notices", "ubuntu.com/security/notices"),
+                            *prioritisation()]}
     return {"title": "Packages with CVEs",
             "read": "The hub compares each installed source package and version with the Debian security tracker "
                     "(Debian version order), for this host's release only",
@@ -119,7 +138,8 @@ def cve_packages(distro: str = "debian", release: str | None = None) -> dict:
                         cmd("Installed source versions",
                             "dpkg-query -W -f '${source:Package} ${source:Version}\\n' | sort -u"),
                         url("Debian security tracker", "https://security-tracker.debian.org/tracker/",
-                            "security-tracker.debian.org")]}
+                            "security-tracker.debian.org"),
+                        *prioritisation()]}
 
 
 def cve_inventory(distro: str = "debian") -> dict:
@@ -645,9 +665,10 @@ def images_section(reader_url: str | None) -> dict:
                              "tracker. Ubuntu images: against Canonical's Ubuntu OVAL file for the image's release "
                              "(security-metadata.canonical.com/oval). Alpine images: each package's origin and version against Alpine's "
                              "security database (secdb.alpinelinux.org, main.json and community.json of the image's release). All are "
-                             "ranked by CISA KEV and EPSS as a host's packages are. A CVE counts as fixable only when the source names "
+                             "given a deadline by CISA BOD 26-04 as a host's packages are. A CVE counts as fixable only when the source names "
                              "a fixed version; secdb lists fixes only, so an Alpine image has no unfixed count; a fix that exists only "
                              "in Ubuntu Pro's ESM archives is shown but is not one an image can take"),
+               *prioritisation(),
                cmd("One image's packages, on the server", "docker cp -L <container>:/var/lib/dpkg/status - | tar -xO"),
                plain("Alpine instead", "docker cp -L <container>:/lib/apk/db/installed - | tar -xO"),
                cmd("Its OS", "docker cp -L <container>:/usr/lib/os-release - | tar -xO")]
@@ -764,18 +785,19 @@ def opnsense_cves(c: dict | None, unseen: bool = False) -> dict:
                plain("What counts", "A CVE id written in a patch-note line, or in a footnote that line points to. A line that names only a "
                                     "FreeBSD or GitHub security advisory counts through the CVE ids that advisory lists, which the hub "
                                     "asks for once (below). An advisory with none stays listed, not ranked, and makes the finding "
-                                    "at least Medium. Errata notices and plugin notes are not counted. CVE ids mentioned only in a "
+                                    "at least Medium (an interim floor outside the BOD 26-04 table). Errata notices and plugin notes are not counted. CVE ids mentioned only in a "
                                     "release's introduction are not counted. Treat the number as a floor"),
                url("FreeBSD advisories", advisories.SA_DOCS, advisories.SA_URL.format(id="<year>:<n>.<module>")),
                url("GitHub advisories", advisories.GH_DOCS, advisories.GH_URL.format(id="<GHSA id>")),
                plain("In OPNsense", f"System, Firmware, Changelog: open each release from {span} and read the lines that name a CVE"),
                plain("Audit of the installed packages", "System, Firmware, Status, Run an audit, Security runs pkg audit, FreeBSD's check of "
                                                          "what is installed against its vulnerability database. DaemonSight never runs it"),
+               *prioritisation(),
                cmd("Check the download", f"curl -sI {q(opnsense.URL)}")]
     if p.get("ok"):
         entries.append(url("The offered version's changelog", opnsense.changelog_url(p["offered"]), opnsense.changelog_url(p["offered"])))
     return {"title": "CVEs the newest release fixes" if unseen else "CVEs this update fixes", "read": "The hub downloads OPNsense's published changelog, keeps the sections the pending "
-                                                       "update brings and ranks the CVE ids in them with CISA's KEV list and EPSS. "
+                                                       "update brings and gives the CVE ids in them a deadline by CISA BOD 26-04 (a firewall is always exposed). "
                                                        "Nothing is sent to the firewall", "entries": entries}
 
 

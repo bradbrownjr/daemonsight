@@ -125,7 +125,7 @@ database and its own config, and nothing else.
 
 Only on a hub, and only by someone logged in, these settings can be saved from
 the Settings page: the outside view (on or off, its source, extra addresses,
-refresh hours, and the Shodan API key, which is not a setting: see below), CVE checks (on or off, refresh hours, the EPSS threshold), retention,
+refresh hours, and the Shodan API key, which is not a setting: see below), CVE checks (on or off, refresh hours, the EPSS probability that stands in for CISA's Automatable rating), retention,
 the backup interval and count, and whether remote systems are read. Each is a
 row in the `settings` table of the hub's database, over the config file's
 value, and "Reset" deletes it. No code in the web process writes the config file.
@@ -445,8 +445,13 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   - ten bad tokens from one address in five minutes block that address,
     and one host may upload at most 120 times a minute
 - **CVE matching downloads public files.** The hub fetches the Debian
-  security tracker, FIRST's EPSS scores and CISA's KEV list over HTTPS, and,
-  when a container image on an Unraid server is Alpine, that release's
+  security tracker, FIRST's EPSS scores and CISA's KEV list over HTTPS, and
+  CISA's SSVC rating of each CVE a host or image matches from the CVE Services
+  API (`https://cveawg.mitre.org/api/cve/<CVE id>`, public, no key, one small
+  request per CVE, asked again after 7 days; the hub obeys its `RateLimit-*`
+  headers, accepts only that host, follows no redirect and refuses an answer
+  over 1 MB; the request names a public CVE id and nothing about your
+  hosts), and, when a container image on an Unraid server is Alpine, that release's
   `main.json` and `community.json` from `secdb.alpinelinux.org`, and, for each
   Ubuntu release a host or an image runs, Canonical's CVE OVAL file
   (`https://security-metadata.canonical.com/oval/com.ubuntu.<release>.cve.oval.xml.bz2`,

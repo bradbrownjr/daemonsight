@@ -37,8 +37,8 @@ secret_file = "/data/secret"
 enabled = true
 
 [cve]
-# The hub downloads the Debian security tracker, EPSS scores and CISA's KEV
-# list (outbound HTTPS) and matches every host's packages against them.
+# The hub downloads the Debian security tracker, EPSS scores, CISA's KEV
+# list and SSVC ratings (outbound HTTPS) and matches every host's packages against them.
 enabled = true
 refresh_hours = 24
-# epss_high = 0.10
+# epss_automatable = 0.04

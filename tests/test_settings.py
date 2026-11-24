@@ -192,7 +192,7 @@ def test_old_metrics_name_loses_to_a_setting_made_here(tmp_path):
 def test_a_bad_row_in_the_database_is_ignored(tmp_path, caplog):
     conn = db.connect_writer(tmp_path / "s.db")
     conn.executemany("INSERT INTO settings VALUES (?, ?, 0, 'x')", [
-        ("cve.epss_high", "5"), ("web.port", "1"), ("outside.enabled", '"yes"'), ("cve.refresh_hours", "not json"),
+        ("cve.epss_automatable", "5"), ("web.port", "1"), ("outside.enabled", '"yes"'), ("cve.refresh_hours", "not json"),
         ("backup.keep", "9")])
     assert settings.overrides(conn) == {"backup.keep": 9}
     assert settings.effective(Config(), conn).backup.keep == 9
@@ -203,7 +203,7 @@ def test_a_bad_row_in_the_database_is_ignored(tmp_path, caplog):
 
 @pytest.mark.parametrize("key,raw,value", [
     ("outside.enabled", "on", True), ("outside.enabled", "off", False),
-    ("outside.refresh_hours", "6", 6.0), ("cve.epss_high", "0.25", 0.25),
+    ("outside.refresh_hours", "6", 6.0), ("cve.epss_automatable", "0.25", 0.25),
     ("retention.events_days", "0", 0), ("backup.interval_hours", "", None), ("backup.interval_hours", "12", 12),
     ("outside.addresses", "203.0.113.9\n198.51.100.4=vps-1\n\n203.0.113.9", ["203.0.113.9", "198.51.100.4=vps-1"]),
 ])
@@ -213,7 +213,7 @@ def test_valid_values(key, raw, value):
 
 @pytest.mark.parametrize("key,raw", [
     ("outside.enabled", "maybe"), ("outside.refresh_hours", "0"), ("outside.refresh_hours", "100000"),
-    ("outside.refresh_hours", "nan"), ("outside.refresh_hours", "abc"), ("cve.epss_high", "0"), ("cve.epss_high", "1.5"),
+    ("outside.refresh_hours", "nan"), ("outside.refresh_hours", "abc"), ("cve.epss_automatable", "0"), ("cve.epss_automatable", "1.5"),
     ("retention.metrics_hours", "4.5"), ("retention.events_days", "-1"), ("backup.keep", "0"),
     ("backup.keep", ""), ("backup.interval_hours", "-3"),
     ("outside.addresses", "10.0.0.5"), ("outside.addresses", "not-an-ip"), ("outside.addresses", "203.0.113.9=bad host"),
@@ -281,9 +281,9 @@ def test_a_setting_applies_to_the_pages_at_once(hub, seeded):  # noqa: F811
 
 def test_errors_rerender_with_messages_and_save_nothing(hub):
     c, conn, cfg = hub
-    r = c.post("/settings", data={"group": "cve", "cve.enabled": "on", "cve.refresh_hours": "0", "cve.epss_high": "2"})
+    r = c.post("/settings", data={"group": "cve", "cve.enabled": "on", "cve.refresh_hours": "0", "cve.epss_automatable": "2"})
     assert r.status_code == 400
-    assert r.text.count("Enter a number from 1 to 720") == 1 and "Enter a number from 0.01 to 1" in r.text
+    assert r.text.count("Enter a number from 1 to 720") == 1 and "Enter a number from 0.001 to 1" in r.text
     assert "Nothing was saved" in r.text and 'value="0"' in r.text           # what was typed is kept
     assert stored(conn) == {} and hub_events(conn) == []
     r = c.post("/settings", data={"group": "outside", "outside.addresses": "10.1.2.3\nnope"})
@@ -506,3 +506,36 @@ def test_a_database_without_the_table_reads_as_no_overrides(tmp_path):
     raw.row_factory = sqlite3.Row
     assert settings.overrides(raw) == {} and settings.effective(Config(), raw).outside.enabled is False
     raw.close()
+
+
+def test_the_old_epss_high_setting_is_read_as_epss_automatable(tmp_path):
+    """[cve] epss_high became epss_automatable: a value saved on the Settings page under the old name applies to the new one until
+    the new one is saved (which removes the old row), and a reset removes both."""
+    conn = db.connect_writer(tmp_path / "s.db")
+    conn.execute("INSERT INTO settings VALUES ('cve.epss_high', '0.2', 0, 'x')")
+    assert settings.overrides(conn) == {"cve.epss_automatable": 0.2}
+    assert settings.effective(Config(), conn).cve.epss_automatable == 0.2
+    conn.execute("INSERT INTO settings VALUES ('cve.epss_high', '9', 0, 'x') ON CONFLICT (key) DO UPDATE SET value = '9'")
+    assert settings.overrides(conn) == {}                               # an old value that is not valid for the new field is ignored
+    conn.execute("UPDATE settings SET value = '0.2' WHERE key = 'cve.epss_high'")
+    settings.save(conn, Config(), {"cve.epss_automatable": 0.07}, "admin")
+    assert {r["key"] for r in conn.execute("SELECT key FROM settings")} == {"cve.epss_automatable"}
+    assert settings.effective(Config(), conn).cve.epss_automatable == 0.07
+    conn.execute("INSERT INTO settings VALUES ('cve.epss_high', '0.3', 0, 'x')")
+    assert settings.overrides(conn) == {"cve.epss_automatable": 0.07}   # the saved new name wins over a stale old row
+    assert settings.reset(conn, Config(), "cve.epss_automatable", "admin")
+    assert conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0] == 0
+    conn.close()
+
+
+def test_the_old_epss_high_name_in_a_config_file_still_loads(tmp_path, caplog):
+    from daemonsight import config
+    p = tmp_path / "c.toml"
+    p.write_text("[cve]\nepss_high = 0.25\nrefresh_hours = 12\n")
+    c = config.load(p)
+    assert c.cve.epss_automatable == 0.25 and c.cve.refresh_hours == 12 and "cve.epss_automatable" in c.file_keys
+    assert "epss_high is renamed epss_automatable" in caplog.text
+    p.write_text("[cve]\nepss_high = 0.25\nepss_automatable = 0.5\n")      # the new name wins when both are there
+    assert config.load(p).cve.epss_automatable == 0.5
+    p.write_text("[cve]\nepss_automatable = 0.02\n")
+    assert config.load(p).cve.epss_automatable == 0.02 and config.Config().cve.epss_automatable == 0.04

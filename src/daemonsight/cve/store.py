@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 -- One row per feed: when it was tried, when it last answered, and what it said.
@@ -131,6 +131,27 @@ CREATE TABLE IF NOT EXISTS kev (
     name       TEXT,
     added      TEXT,
     ransomware TEXT
+) WITHOUT ROWID;
+
+-- What the CVE Services record of each matched CVE says (cve/records.py): CISA's SSVC rating (the ADP container "CISA-ADP"
+-- of the CVE record: Exploitation, Automatable, Technical Impact) and the CVSS base score the record carries, which is shown and
+-- never ranks anything. `status` is `ok` (the record was read; the SSVC columns are NULL when CISA has not rated the CVE),
+-- `absent` (the service has no record: HTTP 404) or `error` (asked again after an hour). `kev` is whether the CVE was in the
+-- KEV catalog when the record was read: a change of that asks for the record again, otherwise it is asked again after 7 days.
+CREATE TABLE IF NOT EXISTS cve_record (
+    cve          TEXT PRIMARY KEY,
+    status       TEXT NOT NULL,
+    fetched_at   REAL,
+    tried_at     REAL,
+    kev          INTEGER,
+    exploitation TEXT,       -- none, poc, active
+    automatable  TEXT,       -- yes, no
+    impact       TEXT,       -- partial, total
+    ssvc_at      TEXT,       -- the SSVC timestamp
+    cvss_score   REAL,
+    cvss_vector  TEXT,
+    cvss_source  TEXT,       -- "CNA" or "CISA-ADP"
+    detail       TEXT
 ) WITHOUT ROWID;
 
 -- What matching found for each host: only CVEs that still apply.

@@ -10,6 +10,7 @@ import time
 from .. import db, findings as rules
 from ..config import Config
 from ..remote import docker_images, docker_storage, release, store, unraid, unraid_notify, unraid_rules
+from ..cve import priority
 from . import provenance as prov
 from . import views
 from .views import _sortval, fmt_ago, fmt_bytes, fmt_duration, level_class, pct_class, status_of
@@ -381,6 +382,9 @@ def docker(conn, cfg: Config) -> dict:
     }
 
 
+CVES_SHOWN = 30
+
+
 def _image_findings(conn, host: str) -> dict[tuple[str, str], dict]:
     active, held = views.findings_lists(conn, host)
     return {(f["rule"], f["key"]): f for f in active + held if f["rule"] in ("docker.eol_base", "docker.image_cves")}
@@ -397,9 +401,16 @@ def _cve_cell(r: dict) -> dict:
         bits = ([f"{c['unfixed']} with no fix yet"] if c["unfixed"] else []) + (
             [f"{len(c['esm'])} fixed only in Ubuntu Pro (ESM)"] if c.get("esm") else [])
         note = ", ".join(bits) or None
-        return {"text": f"{n} fixable" if n else "None fixable", "kev": len(c["kev"]), "hot": len(c["hot"]),
-                "top": match.pct(top["epss"]) if top and top["epss"] is not None else None,
-                "note": note or c.get("note") or None, "v": n}
+        why = c["exposure"].why
+        base = {"ubuntu": views.UBUNTU_TRACKER, "debian": views.TRACKER}.get(kind, views.NVD)
+        rows = [{"cve": x["cve"], "url": base + x["cve"], "kev": x["kev"], "fix": views.fix_cell(x, why),
+                 "epss_text": priority.epss_text(x["epss"], x.get("pctile")) if x["epss"] is not None else "—",
+                 "cvss": views.cvss_text(x), "fixed": x.get("fixed") or ""} for x in c["fixable"][:CVES_SHOWN]]
+        return {"text": f"{n} fixable" if n else "None fixable", "kev": len(c["kev"]),
+                "top": priority.epss_text(top["epss"], top.get("pctile")) if top and top["epss"] is not None else None,
+                "note": note or c.get("note") or None, "v": n,
+                "fix": views.fix_cell(c["worst"], why) if c["worst"] else None,
+                "exposure": {"label": c["exposure"].label, "why": why}, "rows": rows, "more": max(0, n - CVES_SHOWN)}
     if kind == "alpine" and c and c["state"] == "absent":
         return {"text": f"{c['label']}: not in Alpine's security database", "v": -1}
     if kind == "ubuntu" and c and c["state"] == "absent":

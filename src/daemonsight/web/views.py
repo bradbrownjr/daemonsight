@@ -11,7 +11,7 @@ from dataclasses import replace
 from .. import db, distro, findings as rules, hub, outside as outside_mod, shodan as shodan_mod
 from ..collector.sources.caddy import is_local
 from .. import cve as _cve  # noqa: F401 (package)
-from ..cve import feeds as cve_feeds, match as cve_match, store as cve_store, ubuntu as cve_ubuntu
+from ..cve import exposure as cve_exposure, feeds as cve_feeds, match as cve_match, priority, store as cve_store, ubuntu as cve_ubuntu
 from . import provenance as prov
 from ..config import Config, ExposureConfig
 
@@ -927,13 +927,24 @@ BINARIES_SHOWN = 6
 FEED_STALE_DAYS = 3
 
 
-def _epss_text(score) -> str:
-    if score is None:
-        return "—"
-    return f"{score * 100:.0f}%" if score >= 0.01 else "<1%"
+def cvss_text(c: dict) -> str:
+    """"CVSS 9.8" with where it came from, for information only (it never sets a deadline), or ""."""
+    if c.get("cvss_score") is None:
+        return ""
+    return f"CVSS {c['cvss_score']:g} ({c.get('cvss_source') or 'CVE record'})"
 
 
-def _cve_row(c: dict, backend: str, distro_id: str = "debian") -> dict:
+def fix_cell(c: dict, why: str | None = None) -> dict:
+    """The "Fix within" cell of a CVE row: the timeline text, a sort value, the badge colour, and the tooltip that names the
+    table row and the four inputs (an estimate is marked). `c` carries "rating" (cve/priority.py)."""
+    r = c["rating"]
+    parts = [priority.basis_text(r), *priority.inputs_text(r, why)]
+    return {"text": r.short, "v": r.order[0] * 10 + (0 if r.triage else 1), "row": r.row, "estimated": r.estimated,
+            "badge": {"critical": "bg-red-lt", "high": "bg-orange-lt", "medium": "bg-yellow-lt", "low": "bg-secondary-lt"}[r.severity],
+            "triage": r.triage, "title": ". ".join(parts)}
+
+
+def _cve_row(c: dict, backend: str, distro_id: str = "debian", why: str | None = None) -> dict:
     label, badge = STATE_LABEL[c["state"]]
     if backend == "dnf":
         url = f"https://bodhi.fedoraproject.org/updates/{c['fixed']}" if c.get("fixed") else None
@@ -944,7 +955,8 @@ def _cve_row(c: dict, backend: str, distro_id: str = "debian") -> dict:
         fix_url = None
     return {"cve": c["cve"], "url": cve_url, "state": c["state"], "label": label, "badge": badge,
             "kev": c["kev"], "kev_name": c.get("kev_name") or "", "ransomware": c.get("ransomware") == "Known",
-            "epss": c["epss"], "epss_text": _epss_text(c["epss"]),
+            "epss": c["epss"], "epss_text": priority.epss_text(c["epss"], c.get("pctile")) if c["epss"] is not None else "—",
+            "fix": fix_cell(c, why) if c.get("rating") is not None else None, "cvss": cvss_text(c),
             "urgency": c.get("urgency") if c.get("urgency") and c["urgency"] != "not yet assigned" else "",
             "fixed": c.get("fixed") if backend != "dnf" else "", "advisory": c.get("fixed") if backend == "dnf" else "",
             "advisory_url": fix_url, "descr": c.get("descr") or ""}
@@ -999,7 +1011,8 @@ def vulnerabilities(conn, cfg: Config) -> dict:
     inv = inv_snap.data if inv_snap and inv_snap.data else None
     distro_id = "ubuntu" if inv and inv.get("os_id") == "ubuntu" else "debian"
     out = {"host": _host(cfg, snaps), "hub": cfg.hub.enabled, "enabled": cfg.cve.enabled, "inv": None,
-           "message": None, "packages": [], "totals": None, "feeds": [], "epss_high": cfg.cve.epss_high,
+           "message": None, "packages": [], "totals": None, "feeds": [], "epss_automatable": cfg.cve.epss_automatable,
+           "table": priority.use(cfg.data_dir), "exposure": None,
            "refresh_hours": cfg.cve.refresh_hours, "distro": distro_id, "esm": None,
            "src": {"packages": prov.cve_packages(distro_id, (inv or {}).get("codename")), "inventory": prov.cve_inventory(distro_id)},
            "backend": "apt"}
@@ -1045,34 +1058,38 @@ def vulnerabilities(conn, cfg: Config) -> dict:
         if cdb is not None:
             cdb.close()
     bins = {s: b for s, _v, b in inv.get("sources", [])}
+    exp = cve_exposure.host_exposure(conn, cfg, host)
+    out["exposure"] = {"exposed": exp.exposed, "label": exp.label, "why": exp.why}
     by_pkg: dict[str, list[dict]] = {}
     for c in cves:
         by_pkg.setdefault(c["source"], []).append(c)
     rows = []
     totals = {"packages": 0, "fix": 0, "esm": 0, "nofix": 0, "minor": 0, "undetermined": 0, "kev": 0}
     for src, items in by_pkg.items():
-        items.sort(key=cve_match.rank_key)
+        priority.attach(items, exp.exposed, cfg.cve.epss_automatable)
         counts = {k: sum(1 for c in items if c["state"] == k) for k in cve_match.STATES}
         actionable = [c for c in items if c["state"] in ("fix", "esm", "nofix")]
-        top = (actionable or items)[0]
+        raised = cve_match.counted(items)
+        top = (raised or actionable or items)[0]
+        worst = raised[0]["rating"] if raised else None
         kev_n = sum(1 for c in items if c["kev"] and c["state"] in ("fix", "esm", "nofix"))
         fixed_v = cve_match._fixed_version([c for c in items if c["state"] == "fix"]) if backend == "apt" else None
         if backend == "apt" and not fixed_v and counts["esm"]:
             fixed_v = cve_match._fixed_version([c for c in items if c["state"] == "esm"], "esm")
             fixed_v = f"{fixed_v} (Ubuntu Pro)" if fixed_v else None
         names = bins.get(src, [])
-        top_row = _cve_row(top, backend, distro_id)
+        top_row = _cve_row(top, backend, distro_id, exp.why)
         epss_max = max((c["epss"] or 0 for c in actionable), default=0)
         rows.append({
             "anchor": rules.anchor("cve", src), "name": src,
             "binaries": names[:BINARIES_SHOWN], "more_binaries": max(len(names) - BINARIES_SHOWN, 0),
             "installed": items[0]["installed"] or "—", "fixed": fixed_v or "—", "counts": counts,
             "total": len(items), "kev": kev_n, "top": top_row, "epss_max": epss_max,
-            "high": bool(kev_n or any(c["state"] in ("fix", "esm") and (c["epss"] or 0) >= cfg.cve.epss_high for c in items)),
-            "cves": [_cve_row(c, backend, distro_id) for c in items[:CVES_SHOWN]], "more": max(len(items) - CVES_SHOWN, 0),
+            "severity": worst.severity if worst else None, "fix": fix_cell(top, exp.why) if raised else None,
+            "cves": [_cve_row(c, backend, distro_id, exp.why) for c in items[:CVES_SHOWN]], "more": max(len(items) - CVES_SHOWN, 0),
             "tracker": (None if backend != "apt" else "https://ubuntu.com/security/cve?package=" + quote(src, safe="") if distro_id == "ubuntu"
                         else TRACKER + "source-package/" + quote(src, safe="")),
-            "sort": (-kev_n, -(counts["fix"] > 0), -(counts["esm"] > 0), -epss_max, -counts["fix"], -counts["nofix"], src),
+            "sort": (worst.order if worst else (10 ** 7,), -kev_n, -epss_max, -counts["fix"], -counts["nofix"], src),
         })
         totals["packages"] += 1
         for k in cve_match.STATES:

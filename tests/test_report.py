@@ -103,26 +103,32 @@ def cve_row(cve, state="fix", source="openssl", kev=False):
             "epss": 0.0, "pctile": 0.0, "kev": kev, "kev_name": None, "ransomware": None, "descr": ""}
 
 
+def package_findings(cves, bins, pending, backend="apt", **kw):
+    """match.package_findings for a host that is not exposed, with the default EPSS probability."""
+    from daemonsight.cve import exposure
+    return match.package_findings(cves, bins, pending, exposure.Exposure(False, "test"), 0.04, backend, **kw)
+
+
 def test_kernel_cves_join_the_reboot_step():
     k = [cve_row("CVE-2026-0009", source="linux")]
     bins = {"linux": ["linux-image-6.1.0-53-cloud-amd64"]}
-    waiting = match.package_findings(k, bins, set(), 0.5, reboot_pending=True)[0]
+    waiting = package_findings(k, bins, set(), reboot_pending=True)[0]
     assert waiting.fix == "sudo reboot" and "Running kernel" in waiting.detail
     assert findings.step_of(waiting.rule, waiting.key) == "reboot"
-    behind = match.package_findings(k, bins, {"linux-image-6.1.0-53-cloud-amd64"}, 0.5)[0]
+    behind = package_findings(k, bins, {"linux-image-6.1.0-53-cloud-amd64"})[0]
     assert behind.fix == "sudo apt upgrade\nsudo reboot"
     assert findings.step_of("cve.package", "openssl") == "upgrade"
 
 
 def test_cve_package_fix_and_basis():
-    one = match.package_findings([cve_row("CVE-2026-0001")], {"openssl": ["libssl3"]}, {"libssl3"}, 0.5)[0]
-    two = match.package_findings([cve_row("CVE-2026-0001"), cve_row("CVE-2026-0002")],
-                                 {"openssl": ["libssl3"]}, {"libssl3"}, 0.5)[0]
+    one = package_findings([cve_row("CVE-2026-0001")], {"openssl": ["libssl3"]}, {"libssl3"})[0]
+    two = package_findings([cve_row("CVE-2026-0001"), cve_row("CVE-2026-0002")],
+                          {"openssl": ["libssl3"]}, {"libssl3"})[0]
     assert one.fix == "sudo apt upgrade" and findings.step_of(one.rule) == "upgrade"
     assert one.basis != two.basis  # a new CVE brings an accepted finding back
-    nofix = match.package_findings([cve_row("CVE-2026-0003", "nofix", kev=True)], {}, set(), 0.5)[0]
+    nofix = package_findings([cve_row("CVE-2026-0003", "nofix", kev=True)], {}, set())[0]
     assert nofix.fix is None  # no fix exists yet
-    dnf = match.package_findings([cve_row("CVE-2026-0001")], {}, set(), 0.5, "dnf")[0]
+    dnf = package_findings([cve_row("CVE-2026-0001")], {}, set(), "dnf")[0]
     assert dnf.fix == "sudo dnf upgrade --refresh"
 
 

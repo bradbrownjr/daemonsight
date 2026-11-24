@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from daemonsight import db, distro
-from daemonsight.cve import alpine, feeds, match, run, store as cvestore, ubuntu
+from daemonsight.cve import alpine, exposure as cve_exposure, feeds, match, run, store as cvestore, ubuntu
 from daemonsight.remote import docker_images as di
 from daemonsight.remote import docker_storage as ds
 
@@ -195,7 +195,7 @@ def cvedb(tmp_path):
     conn.close()
 
 
-def matched(cvedb, entries, host="tower"):
+def matched(cvedb, entries, host="tower", exposed=False):
     """What the chore does for images (matching under pseudo-host ids), then what load_cves gives the rules."""
     out, rels, ubu = {}, {}, {}
     for e in entries:
@@ -205,14 +205,15 @@ def matched(cvedb, entries, host="tower"):
             ubuntu_image = inv["os_id"] == "ubuntu" if inv["backend"] == "apt" else False
             (alpine.match_host if inv["backend"] == "apk" else ubuntu.match_host if ubuntu_image else match.match_host)(cvedb, ph, inv, "g")
             out[e["image_id"]] = {"matched": True, "cves": match.host_cves(cvedb, ph, ("fix", "esm", "nofix")),
-                                  "note": cvedb.execute("SELECT note FROM matched WHERE host = ?", (ph,)).fetchone()["note"]}
+                                  "note": cvedb.execute("SELECT note FROM matched WHERE host = ?", (ph,)).fetchone()["note"],
+                                  "exposure": cve_exposure.Exposure(exposed, "test exposure")}
             if inv["backend"] == "apk":
                 has = cvedb.execute("SELECT 1 FROM apk WHERE release = ?", (inv["release"],)).fetchone()
                 rels[inv["release"]] = {"state": "ok" if has else "absent", "ok_at": 1.0, "error": None}
             if ubuntu_image:
                 has = cvedb.execute("SELECT 1 FROM ubu WHERE release = ?", (inv["codename"],)).fetchone()
                 ubu[inv["codename"]] = {"state": "ok" if has else "absent", "ok_at": 1.0, "error": None}
-    return {"enabled": True, "available": True, "epss_high": 0.10, "feed_at": 1.0, "alpine": rels, "ubuntu": ubu, "images": out}
+    return {"enabled": True, "available": True, "epss_automatable": 0.04, "feed_at": 1.0, "alpine": rels, "ubuntu": ubu, "images": out}
 
 
 def test_the_pseudo_inventory_groups_by_source_and_source_version_for_debian_and_by_origin_for_alpine():
@@ -244,9 +245,14 @@ def test_the_finding_for_an_image_ranks_and_counts_like_a_hosts(cvedb):
     assert len(out) == 1
     f = out[0]
     assert f.severity == "high" and f.key == "nginx:1.27"
-    assert f.title == "nginx:1.27 (Debian 12): 3 fixable CVEs, 1 known exploited"
-    assert f.detail.index("CVE-2026-111497") < f.detail.index("CVE-2016-5180")                      # KEV first, as on a host
-    assert "exploited, CISA KEV" in f.detail and "1 more in the image have no fix yet" in f.detail
+    assert f.title == "nginx:1.27 (Debian 12): 3 fixable CVEs, 1 known exploited; fix within 14 days"     # KEV, not exposed: row 10
+    assert f.detail.startswith("Fix within 14 days (CISA BOD 26-04 timeline), set by CVE-2026-111497")
+    assert "Publicly exposed: no: test exposure" in f.howto and "estimated by DaemonSight" in f.howto
+    assert f.detail.index("CVE-2026-111497") < f.detail.index("CVE-2016-5180")                      # most urgent first, as on a host
+    # The same image with a container the internet reaches: the same CVE, now row 2, 3 days.
+    exp = [x for x in di.evaluate(stored([e]), None, matched(cvedb, [e], exposed=True), TODAY) if x.rule == "docker.image_cves"][0]
+    assert exp.severity == "critical" and exp.title.endswith("fix within 3 days") and exp.basis == f.basis
+    assert "exploited, CISA KEV" in f.detail and "4 more in the image have no fix yet" in f.detail
     assert "Docker tab" not in f.detail and "Check for Updates" in f.howto and "apt upgrade" in f.howto and "does not help" in f.howto
     assert "newer image" in f.howto and f.link == f"/images#ci-{IDS['nginx'].removeprefix('sha256:')[:12]}"
     assert f.basis.startswith("nginx:") and not re.search(r"\d{4}-\d\d-\d\d", f.basis)
@@ -256,20 +262,25 @@ def test_unfixed_cves_alone_are_information_not_a_finding(cvedb):
     e = entry(IDS["nginx"], DEB12, [("edk2-ovmf", "edk2", "2020.1", ""), ("nodejs", "", "18.1", ""), ("libxml2", "", "2.9.14", "")])
     cves = matched(cvedb, [e])
     c = di.analyze(stored([e]), None, cves, TODAY)["rows"][0]["cve"]
-    assert c["unfixed"] == 1 and c["fixable"] == [] and c["severity"] is None                       # minor ones are not counted at all
+    assert c["unfixed"] == 3 and c["fixable"] == [] and c["severity"] is None                       # only Debian's no-advisory ("nodsa") ones are not counted
     assert [f for f in di.evaluate(stored([e]), None, cves, TODAY) if f.rule == "docker.image_cves"] == []
 
 
-def test_a_fixable_cve_without_kev_or_a_high_score_is_medium_and_the_threshold_moves_it(cvedb):
+def test_a_fixable_cve_without_kev_is_rated_by_exposure_and_the_automatable_estimate(cvedb):
     e = entry(IDS["nginx"], DEB12, [("libc-ares2", "c-ares", "1.10.0-1", "")])
     cves = matched(cvedb, [e])
     f = [x for x in di.evaluate(stored([e]), None, cves, TODAY) if x.rule == "docker.image_cves"][0]
-    assert f.severity == "medium" and f.title == "nginx:1.27 (Debian 12): 2 fixable CVEs"
+    # Not exposed, not KEV, EPSS 8.7% is above 0.04 (estimated automatable), impact assumed partial: row 14, 60 days.
+    assert f.severity == "medium" and f.title == "nginx:1.27 (Debian 12): 2 fixable CVEs; fix within 60 days"
     top = max((c["epss"] or 0) for c in cves["images"][e["image_id"]]["cves"])
-    assert top < 0.10
-    cves["epss_high"] = top / 2 if top else 0.0
-    hot = [x for x in di.evaluate(stored([e]), None, cves, TODAY) if x.rule == "docker.image_cves"][0]
-    assert hot.severity == "high" and "high exploit score" in hot.title
+    assert 0.04 < top < 0.10
+    cves["epss_automatable"] = top * 2                 # the estimate moves: not automatable, so row 16, fix at the next upgrade
+    low = [x for x in di.evaluate(stored([e]), None, cves, TODAY) if x.rule == "docker.image_cves"][0]
+    assert low.severity == "low" and low.title.endswith("fix at the next upgrade") and low.basis == f.basis
+    # Exposed, not automatable, partial: row 8, 60 days.
+    both = matched(cvedb, [e], exposed=True)
+    both["epss_automatable"] = top * 2
+    assert [x for x in di.evaluate(stored([e]), None, both, TODAY) if x.rule == "docker.image_cves"][0].severity == "medium"
 
 
 def test_an_updated_image_clears_the_finding_and_the_basis_moves_only_with_the_cves(cvedb):
@@ -310,13 +321,13 @@ def test_an_ubuntu_image_counts_what_apt_can_fix_and_shows_the_rest_apart(cvedb)
     cv = c["cve"]
     assert {x["cve"] for x in cv["fixable"]} == {"CVE-2022-49043", "CVE-2006-10002"}                  # libxml2 and libxml-parser-perl
     assert [x["cve"] for x in cv["esm"]] == ["CVE-2012-1148"]                                          # libxmltok: only fixed in esm-apps
-    assert cv["unfixed"] == 2 and cv["severity"] == "medium"                                          # CVE-2025-66382 and CVE-2002-2439 are open; the negligible ones are not counted
+    assert cv["severity"] == "low"                                                                       # not exposed, none in the KEV, none rated by CISA: fix at the next upgrade
     f = [x for x in di.evaluate(stored([e]), None, cves, TODAY) if x.rule == "docker.image_cves"]
     assert len(f) == 1
     f = f[0]
-    assert f.severity == "medium" and f.title == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs" and f.key == "postgres:17"
+    assert f.severity == "low" and f.title == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs; fix at the next upgrade" and f.key == "postgres:17"
     assert "Canonical's Ubuntu OVAL data" in f.detail and "Ubuntu priority" in f.detail and "Debian" not in f.detail
-    assert "2 more in the image have no fix yet" in f.detail and "1 more are fixed only in Ubuntu Pro's ESM archives, which an image cannot use" in f.detail
+    assert f"{cv['unfixed']} more in the image have no fix yet" in f.detail and "1 more are fixed only in Ubuntu Pro's ESM archives, which an image cannot use" in f.detail
     assert "CVE-2012-1148" not in f.detail.split("Top CVEs:")[1].split("more in the image")[0] and not re.search(r"\d{4}-\d\d-\d\d", f.basis)
     # ESM-only CVEs alone raise nothing: updating the image cannot take them.
     only = entry(IDS["postgres"], UBU24, [UBUNTU_PACKAGES[2]])
@@ -328,7 +339,7 @@ def test_an_ubuntu_image_counts_what_apt_can_fix_and_shows_the_rest_apart(cvedb)
     # A known exploited CVE makes it high, and the ranking puts it first.
     cvedb.execute("INSERT INTO kev VALUES ('CVE-2022-49043', 'x', 'libxml2', 'libxml2 test', '2026-01-01', 'Unknown')")
     hot = [x for x in di.evaluate(stored([e]), None, matched(cvedb, [e]), TODAY) if x.rule == "docker.image_cves"][0]
-    assert hot.severity == "high" and hot.title == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs, 1 known exploited" and hot.detail.index("CVE-2022-49043") < hot.detail.index("CVE-2006-10002")
+    assert hot.severity == "high" and hot.title == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs, 1 known exploited; fix within 14 days" and hot.detail.index("CVE-2022-49043") < hot.detail.index("CVE-2006-10002")
 
 
 def test_kernel_cves_do_not_apply_to_a_container_with_only_kernel_headers(cvedb):
@@ -339,7 +350,7 @@ def test_kernel_cves_do_not_apply_to_a_container_with_only_kernel_headers(cvedb)
 def test_without_the_cve_chore_an_image_is_pending_and_with_cve_off_it_says_so():
     e = entry(IDS["nginx"], DEB12, BOOKWORM_PACKAGES)
     assert di.analyze(stored([e]), None, None, TODAY)["rows"][0]["cve"] == {"state": "off"}
-    pending = {"enabled": True, "available": False, "epss_high": 0.1, "images": {}}
+    pending = {"enabled": True, "available": False, "epss_automatable": 0.04, "images": {}}
     assert di.analyze(stored([e]), None, pending, TODAY)["rows"][0]["cve"] == {"state": "pending"}
     assert di.evaluate(stored([e]), None, pending, TODAY) == []
 
@@ -394,10 +405,10 @@ def test_the_chore_matches_each_debian_and_alpine_image_under_a_pseudo_host_and_
     f = finding_rows(world)
     mine = {k for k in f if k[0] in ("docker.eol_base", "docker.image_cves")}
     assert mine == {("docker.eol_base", "all"), ("docker.image_cves", "nginx:1.27"), ("docker.image_cves", "postgres:17"), ("docker.image_cves", "ghcr.io/acme/widget:latest")}
-    assert f[("docker.image_cves", "postgres:17")]["severity"] == "medium" and f[("docker.image_cves", "postgres:17")]["title"] == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs"
+    assert f[("docker.image_cves", "postgres:17")]["severity"] == "low" and f[("docker.image_cves", "postgres:17")]["title"] == "postgres:17 (Ubuntu 24.04): 2 fixable CVEs; fix at the next upgrade"
     assert f[("docker.image_cves", "nginx:1.27")]["severity"] == "high" and f[("docker.eol_base", "all")]["severity"] == "medium"
     wd = f[("docker.image_cves", "ghcr.io/acme/widget:latest")]
-    assert wd["severity"] == "medium" and wd["title"] == "ghcr.io/acme/widget:latest (Alpine 3.17): 1 fixable CVE"
+    assert wd["severity"] == "low" and wd["title"] == "ghcr.io/acme/widget:latest (Alpine 3.17): 1 fixable CVE; fix at the next upgrade"
     assert ("docker.unused_volumes", "all") in f                              # the storage findings are untouched
     conn = conn_of(world.cfg)
     assert not [r for r in db.open_findings(conn, "tower") if r["rule"].startswith("cve.")]       # no host-style cve finding for an image
@@ -425,7 +436,7 @@ def test_the_page_lists_each_image_with_its_os_support_packages_and_cves(page):
     assert len(rows) == 4
     nginx = rows["ci-" + IDS["nginx"].removeprefix("sha256:")[:12]]
     assert "nginx:1.27" in nginx and "Debian 12" in nginx and "bookworm" in nginx and "LTS until 2028-06-30" in nginx
-    assert "3 fixable" in nginx and "1 exploited (KEV)" in nginx and "1 with no fix yet" in nginx and "3 read" not in nginx and "6 read" in nginx
+    assert "3 fixable" in nginx and "1 exploited (KEV)" in nginx and "4 with no fix yet" in nginx and "Fix within" in nginx and "14 days" in nginx and "Fix within" in table and "3 read" not in nginx and "6 read" in nginx
     assert "dpkg" in nginx and 'data-status-label="unexpected"' in nginx
     pg = rows["ci-" + IDS["postgres"].removeprefix("sha256:")[:12]]
     assert "Ubuntu 24.04" in pg and "phase 3b" not in pg and "not built yet" not in pg and "2 fixable" in pg
@@ -441,7 +452,7 @@ def test_the_page_lists_each_image_with_its_os_support_packages_and_cves(page):
     assert "Not read: stopped" in st and "—" in st
     # Phone layout: every cell has its label; each row has a source panel naming the endpoint's CLI.
     for row in rows.values():
-        assert row.count("data-label=") == 6 and "popover" in row
+        assert row.count("data-label=") == 7 and "popover" in row
     assert "docker cp -L web:/var/lib/dpkg/status - | tar -xO" in html and "docker cp -L widget:/lib/apk/db/installed - | tar -xO" in html
     assert f"GET {READER}/v1/summary, field image_packages" in html and "ContainerArchive" in html
     assert "CVE-2026-111497" in html and "security-tracker.debian.org/tracker/CVE-2026-111497" in html
@@ -477,9 +488,9 @@ def test_the_page_before_a_reader_with_an_old_reader_and_with_cve_matching_off(w
 def test_the_overview_and_the_report_carry_the_findings(page):
     ov = page.client.get("/h/tower/").text
     assert "Container images" in ov and 'href="/h/tower/images"' in ov and "1 on an end-of-life OS, 3 with fixable CVEs" in ov
-    assert "1 container image runs on an end-of-life OS" in ov and "nginx:1.27 (Debian 12): 3 fixable CVEs, 1 known exploited" in ov
+    assert "1 container image runs on an end-of-life OS" in ov and "nginx:1.27 (Debian 12): 3 fixable CVEs, 1 known exploited; fix within 14 days" in ov
     rep = page.client.get("/h/tower/report.md").text
-    assert "nginx:1.27" in rep and "3 fixable CVEs, 1 known exploited" in rep and "apt upgrade" in rep
+    assert "nginx:1.27" in rep and "3 fixable CVEs, 1 known exploited; fix within 14 days" in rep and "apt upgrade" in rep
 
 
 def test_a_row_is_accepted_from_its_panel_stays_accepted_and_clears_when_the_image_is_updated(page, tmp_path):
@@ -546,19 +557,19 @@ def test_an_alpine_image_gets_a_ranked_finding_with_no_unfixed_count(cvedb):
     assert [c["cve"] for c in row["cve"]["fixable"]][0] == "CVE-2026-111497" and row["cve"]["unfixed"] == 0 and len(row["cve"]["fixable"]) == 4
     (f,) = alpine_findings(cves, e)
     assert f.severity == "high" and f.key == "ghcr.io/acme/widget:latest"
-    assert f.title == "ghcr.io/acme/widget:latest (Alpine 3.23): 4 fixable CVEs, 1 known exploited"
+    assert f.title == "ghcr.io/acme/widget:latest (Alpine 3.23): 4 fixable CVEs, 1 known exploited; fix within 14 days"
     assert "Alpine's security database (secdb)" in f.detail and "Debian" not in f.detail and "no fix yet" not in f.detail
     assert f.detail.index("CVE-2026-111497") < f.detail.index("CVE-2026-74860") and "exploited, CISA KEV" in f.detail
     assert "apk upgrade" in f.howto and "apt" not in f.howto and "Check for Updates" in f.howto
     assert f.link == f"/images#ci-{IDS['widget-new'].removeprefix('sha256:')[:12]}" and f.basis.startswith("ghcr.io/acme/widget:")
     assert not re.search(r"\d{4}-\d\d-\d\d", f.basis)
-    # Severity follows the same rule as a Debian image: without KEV or a high score it is Medium, and the threshold moves it.
+    # Severity follows the same rule as a Debian image: without KEV, not exposed and with a low EPSS it waits for the next upgrade.
     only = alpine_entry([("musl", "", "1.2.4_git20230717-r4", "")])
     c2 = matched(cvedb, [only])
     (m,) = alpine_findings(c2, only)
-    assert m.severity == "medium" and m.title == "ghcr.io/acme/widget:latest (Alpine 3.23): 1 fixable CVE"
-    c2["epss_high"] = 0.001
-    assert alpine_findings(c2, only)[0].severity == "high"
+    assert m.severity == "low" and m.title == "ghcr.io/acme/widget:latest (Alpine 3.23): 1 fixable CVE; fix at the next upgrade"
+    c2["epss_automatable"] = 0.001
+    assert alpine_findings(c2, only)[0].severity == "medium"       # EPSS 0.66% is now over the estimate: automatable, row 14, 60 days
 
 
 def test_an_alpine_finding_clears_when_the_image_is_updated_and_its_basis_moves_with_the_cves(cvedb):

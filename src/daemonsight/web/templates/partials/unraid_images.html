@@ -21,7 +21,7 @@
   {% if v.rows %}
   <div class="table-responsive">
     <table class="table table-vcenter card-table ds-dk" data-table="container-images">
-      <thead><tr><th data-sort="text">Image</th><th data-sort="text">Base OS</th><th data-sort="text">Support</th><th data-sort="num">Packages</th><th data-sort="num">Fixable CVEs</th><th data-sort="text">Status</th></tr></thead>
+      <thead><tr><th data-sort="text">Image</th><th data-sort="text">Base OS</th><th data-sort="text">Support</th><th data-sort="num">Packages</th><th data-sort="num">Fixable CVEs</th><th data-sort="num">Fix within</th><th data-sort="text">Status</th></tr></thead>
       <tbody>
         {% for r in v.rows %}
         <tr id="{{ r.anchor }}" data-row>
@@ -29,7 +29,15 @@
           <td data-label="Base OS">{{ r.os_name }}{% if r.codename %}<div class="text-secondary small">{{ r.codename }}</div>{% endif %}</td>
           <td data-v="{{ r.sup_v }}" data-label="Support">{% if r.support.status == 'unknown' %}<span class="text-secondary">{{ r.support.label }}</span>{% else %}<span class="badge {{ r.sup_badge }} text-wrap text-start lh-base">{{ r.support.label }}</span>{% endif %}</td>
           <td data-v="{{ r.pk.v }}" data-label="Packages">{{ r.pk.text }}{% if r.pk.note %}<div class="text-secondary small">{{ r.pk.note }}</div>{% endif %}</td>
-          <td data-v="{{ r.cvec.v }}" data-label="Fixable CVEs">{{ r.cvec.text }}{% if r.cvec.kev %} <span class="badge bg-red text-red-fg" title="On CISA's Known Exploited Vulnerabilities list">{{ r.cvec.kev }} exploited (KEV)</span>{% endif %}{% if r.cvec.top %}<div class="text-secondary small">top {{ r.cvec.top }}</div>{% endif %}{% if r.cvec.note %}<div class="text-secondary small">{{ r.cvec.note }}</div>{% endif %}</td>
+          <td data-v="{{ r.cvec.v }}" data-label="Fixable CVEs">{{ r.cvec.text }}{% if r.cvec.kev %} <span class="badge bg-red text-red-fg" title="On CISA's Known Exploited Vulnerabilities list">{{ r.cvec.kev }} exploited (KEV)</span>{% endif %}{% if r.cvec.top %}<div class="text-secondary small">top EPSS {{ r.cvec.top }}</div>{% endif %}{% if r.cvec.note %}<div class="text-secondary small">{{ r.cvec.note }}</div>{% endif %}
+            {% if r.cvec.rows %}<details class="mt-1"><summary class="small">CVE list</summary>
+              <ul class="list-unstyled small mb-0 mt-1">
+              {% for x in r.cvec.rows %}<li class="mb-1"><a class="font-monospace" href="{{ x.url }}" target="_blank" rel="noopener noreferrer">{{ x.cve }}</a>{% if x.kev %} <span class="badge bg-red text-red-fg">KEV</span>{% endif %}
+                <span class="badge {{ x.fix.badge }}" title="{{ x.fix.title }}">Fix within {{ x.fix.text }}</span>{% if x.fix.triage %} <span class="badge bg-red-lt">+ triage</span>{% endif %}{% if x.fix.estimated %} <span class="text-secondary" title="CISA has not rated this CVE: estimated by DaemonSight">est.</span>{% endif %}
+                <span class="text-secondary">EPSS {{ x.epss_text }}{% if x.cvss %} · {{ x.cvss }}, information only{% endif %}{% if x.fixed %} · fixed in {{ x.fixed }}{% endif %}</span></li>{% endfor %}
+              </ul>{% if r.cvec.more %}<div class="text-secondary small">{{ r.cvec.more }} more not shown.</div>{% endif %}
+            </details>{% endif %}</td>
+          <td data-v="{{ r.cvec.fix.v if r.cvec.fix else 99999999 }}" data-label="Fix within">{% if r.cvec.fix %}<span class="badge {{ r.cvec.fix.badge }}" title="{{ r.cvec.fix.title }}">{{ r.cvec.fix.text }}</span>{% if r.cvec.fix.triage %} <span class="badge bg-red-lt" title="This row also asks for forensic triage">+ triage</span>{% endif %}{% if r.cvec.fix.estimated %} <span class="text-secondary small" title="CISA has not rated this CVE: estimated by DaemonSight">est.</span>{% endif %}<div class="text-secondary small">{{ r.cvec.exposure.label }}: {{ r.cvec.exposure.why }}</div>{% else %}—{% endif %}</td>
           <td data-label="Status" data-v="{{ r.status.label if r.status else '' }}">{{ status_cell(r.status) }}</td>
         </tr>
         {% endfor %}

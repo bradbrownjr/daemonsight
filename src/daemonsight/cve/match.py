@@ -13,9 +13,11 @@ For one installed source package at version V on release R, each tracker row
 * `open`: no fix yet: "nofix".
 * `undetermined`: Debian hasn't decided: "undetermined".
 * A row Debian marked `nodsa` (no advisory will be issued: minor issue,
-  ignored, postponed), or with urgency `unimportant` or `end-of-life`, is
-  "minor", whether or not a fix exists. These are listed on the page and
-  never raise a finding.
+  ignored, postponed), or with urgency `end-of-life`, is "minor", whether or
+  not a fix exists. These are listed on the page and never raise a finding.
+  Urgency `unimportant` is not minor here: it is a vendor rating that
+  cve/priority.py applies (low, only when the host is not exposed and the CVE is
+  not in the KEV catalog), so it has to reach the prioritiser.
 
 This follows Issue.get_status in the maintainers' own reader,
 bin/tracker_data.py in https://salsa.debian.org/security-tracker-team/security-tracker.
@@ -27,10 +29,10 @@ import sqlite3
 import time
 
 from ..findings import Finding, anchor, digest, upgrade_cmd
-from . import debver
+from . import debver, priority
 
 STATES = ("fix", "esm", "nofix", "minor", "undetermined")
-MINOR_URGENCY = ("unimportant", "end-of-life")
+MINOR_URGENCY = ("end-of-life",)
 TRACKER_URL = "https://security-tracker.debian.org/tracker/"
 MAX_FINDINGS = 100
 TOP_CVES = 4
@@ -38,7 +40,7 @@ TOP_CVES = 4
 
 # Bump when matching changes what a host matches, so the hub matches every
 # host again without waiting for a new package list or tracker download.
-MATCH_VERSION = 2
+MATCH_VERSION = 3
 
 
 def release_of(inv: dict) -> str | None:
@@ -134,37 +136,39 @@ def set_advisories(conn, host: str, inv: dict, gen: str) -> dict:
 
 # ---- ranking ----------------------------------------------------------------
 
-def pct(score: float | None) -> str:
-    if score is None:
-        return "no EPSS score"
-    p = score * 100
-    return f"EPSS {p:.0f}%" if p >= 1 or score == 0 else "EPSS under 1%"
+def pct(score: float | None, pctile: float | None = None) -> str:
+    """"15.3% (92nd)": the EPSS probability, with its percentile when known (FIRST: use the probability, show both)."""
+    return priority.epss_text(score, pctile)
 
 
-def rank_key(c: dict):
-    """Worst first: on the KEV list, then the higher EPSS score, then a fix
-    over none, then the CVE id."""
-    return (not c["kev"], -(c["epss"] or 0), {"fix": 0, "esm": 1}.get(c["state"], 2), c["cve"])
+RECORD_COLS = ("r.automatable AS automatable, r.impact AS impact, r.exploitation AS exploitation, "
+               "r.cvss_score AS cvss_score, r.cvss_vector AS cvss_vector, r.cvss_source AS cvss_source")
+NO_RECORD_COLS = ("NULL AS automatable, NULL AS impact, NULL AS exploitation, NULL AS cvss_score, NULL AS cvss_vector, "
+                  "NULL AS cvss_source")
 
 
 def host_cves(conn, host: str, states: tuple[str, ...] = STATES) -> list[dict]:
-    """Every stored match for a host, with EPSS score, KEV flag and description."""
+    """Every stored match for a host, with EPSS probability and percentile, KEV flag, description and CISA's SSVC rating
+    (`automatable`, `impact`: None where CISA has not rated the CVE or its record has not been read yet)."""
     marks = ",".join("?" for _ in states)
-    out = []
-    # Ubuntu's CVE text is in its own table (the Debian tracker's is replaced whole on each load). A reader that meets a
-    # cve.db from before that table existed (the chore has not migrated it yet) just goes without the text.
-    for descr in ("COALESCE(c.descr, u.descr)", "c.descr"):
+    rows = None
+    # Ubuntu's CVE text is in its own table (the Debian tracker's is replaced whole on each load), and the CVE Services records
+    # in another. A reader that meets a cve.db from before a table existed (the chore has not migrated it yet) goes without it.
+    for descr, records in (("COALESCE(c.descr, u.descr)", True), ("c.descr", True), ("COALESCE(c.descr, u.descr)", False), ("c.descr", False)):
         join = "LEFT JOIN ubu_cve u ON u.cve = m.cve " if "u." in descr else ""
+        rec = "LEFT JOIN cve_record r ON r.cve = m.cve " if records else ""
+        cols = RECORD_COLS if records else NO_RECORD_COLS
         try:
             rows = conn.execute(
                 "SELECT m.source, m.cve, m.state, m.installed, m.fixed, m.urgency, e.score AS epss, e.pct AS pctile, "
-                f"k.cve IS NOT NULL AS kev, k.name AS kev_name, k.ransomware AS ransomware, {descr} AS descr "
+                f"k.cve IS NOT NULL AS kev, k.name AS kev_name, k.ransomware AS ransomware, {descr} AS descr, {cols} "
                 "FROM match m LEFT JOIN epss e ON e.cve = m.cve LEFT JOIN kev k ON k.cve = m.cve "
-                f"LEFT JOIN cve c ON c.id = m.cve {join}WHERE m.host = ? AND m.state IN ({marks})", (host, *states)).fetchall()
+                f"LEFT JOIN cve c ON c.id = m.cve {join}{rec}WHERE m.host = ? AND m.state IN ({marks})", (host, *states)).fetchall()
             break
         except sqlite3.OperationalError:
-            if descr == "c.descr":
+            if (descr, records) == ("c.descr", False):
                 raise
+    out = []
     for r in rows:
         d = dict(r)
         d["kev"] = bool(d["kev"])
@@ -184,18 +188,54 @@ def _fixed_version(cves: list[dict], state: str = "fix") -> str | None:
     return best
 
 
+def counted(items: list[dict]) -> list[dict]:
+    """The CVEs of one package that raise its finding: a fix (or an ESM fix) for a CVE, or a known-exploited CVE that nothing
+    fixes yet. An unfixed CVE that is not in the KEV catalog is listed, never raised."""
+    return [c for c in items if (c["state"] in ("fix", "esm") or (c["state"] == "nofix" and c["kev"]))]
+
+
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
 def _describe(c: dict, label: str = "Debian urgency") -> str:
     bits = []
     if c["kev"]:
         bits.append("exploited, CISA KEV")
-    bits.append(pct(c["epss"]))
+    bits.append("EPSS " + pct(c["epss"], c.get("pctile")) if c["epss"] is not None else pct(None))
     if c.get("urgency") and c["urgency"] != "not yet assigned":
         bits.append(f"{label} {c['urgency']}")
+    if c.get("rating") is not None:
+        bits.append(_lower_first(c["rating"].deadline.split(" (")[0]))
     if c["state"] == "nofix":
         bits.append("no fix yet")
     elif c["state"] == "esm":
         bits.append("fix only with Ubuntu Pro")
     return f"{c['cve']} ({', '.join(bits)})"
+
+
+def finding_text(worst: dict, why: str | None, extra: list[str] | None = None) -> tuple[str, list[str]]:
+    """(the sentence a finding's detail starts with, the "What to do" lines that explain it) for the worst CVE of an update:
+    its deadline and Table 1 row, the four inputs with their values (an estimate is marked), the CVSS score for information, and
+    for a row that asks for forensic triage the short check-for-compromise steps. `why` is the exposure evidence."""
+    r = worst["rating"]
+    lead = f"{r.deadline}, set by {worst['cve']} ({priority.basis_text(r)})."
+    lines = [f"{r.deadline}. It is set by {worst['cve']}, the most urgent CVE here: {priority.basis_text(r)}",
+             *priority.inputs_text(r, why)]
+    if worst.get("cvss_score") is not None:
+        lines.append(f"CVSS base score {worst['cvss_score']:g} ({worst.get('cvss_source') or 'CVE record'}), for information only: "
+                     "it measures severity, not risk, and does not set the deadline")
+    if r.vendor_lowered:
+        lines.append("The vendor rates this CVE as not important, the system is not exposed and the CVE is not in the KEV catalog, "
+                     "so it waits for the next upgrade")
+    if r.triage:
+        lines.append("This row also asks for forensic triage. Check for signs of compromise (CISA's recommended best practice):")
+        lines += priority.current().triage_steps
+    if r.estimated:
+        lines.append(f"Values marked \"{priority.EST}\" are not CISA's: CISA has not rated this CVE yet, so DaemonSight estimates them "
+                     "(Automatable from the EPSS probability, Technical impact as partial)")
+    lines += extra or []
+    return lead, lines
 
 
 UBUNTU_CVE_URL = "https://ubuntu.com/security/"
@@ -209,12 +249,13 @@ def is_kernel_source(src: str, names: list[str]) -> bool:
 
 
 def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: set[str],
-                     epss_high: float, backend: str = "apt", reboot_pending: bool = False,
+                     exposure, epss_automatable: float, backend: str = "apt", reboot_pending: bool = False,
                      distro: str = "debian") -> list[Finding]:
-    """One finding per source package: High if any open or fixable CVE is on
-    CISA's KEV list or has an EPSS score at or above `epss_high`, Medium if a
-    fix is available, otherwise none. On Ubuntu a fix that exists only in Ubuntu Pro's ESM archives (state `esm`, for a
-    host without that Pro service) counts as a fix for the severity, and says plainly that apt will not install it."""
+    """One finding per source package that has a CVE an update fixes (on Ubuntu, one fixed only in Ubuntu Pro's ESM archives
+    counts as a fix, and the finding says plainly that apt will not install it), or a CVE on CISA's KEV list that has no fix
+    yet. Its severity and deadline come from the worst of those CVEs by CISA BOD 26-04's Table 1 (cve/priority.py).
+    `exposure` is the host's (cve/exposure.Exposure); `epss_automatable` is the EPSS probability that stands in for CISA's
+    Automatable rating where CISA has not rated a CVE."""
     ubuntu = distro == "ubuntu"
     label = "Ubuntu priority" if ubuntu else "Debian urgency"
     by_pkg: dict[str, list[dict]] = {}
@@ -223,30 +264,28 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
             by_pkg.setdefault(c["source"], []).append(c)
     out = []
     for src, items in by_pkg.items():
-        items.sort(key=rank_key)
-        kev = [c for c in items if c["kev"]]
-        hot = [c for c in items if not c["kev"] and c["state"] in ("fix", "esm") and (c["epss"] or 0) >= epss_high]
+        priority.attach(items, exposure.exposed, epss_automatable)
         fixes = [c for c in items if c["state"] == "fix"]
         esms = [c for c in items if c["state"] == "esm"]
-        if kev:
-            sev = "high"
-            title = (f"{src}: {kev[0]['cve']} is being exploited (CISA KEV)" if len(kev) == 1
-                     else f"{src}: {len(kev)} CVEs are being exploited (CISA KEV)")
-        elif hot:
-            sev = "high"
-            title = (f"{src}: {hot[0]['cve']} has a high exploit score ({pct(hot[0]['epss'])})" if len(hot) == 1
-                     else f"{src}: {len(hot)} CVEs have a high exploit score (EPSS {epss_high * 100:.0f}% or more)")
-        elif fixes:
-            sev = "medium"
-            title = (f"{src}: {fixes[0]['cve']} is fixed in an update" if len(fixes) == 1
-                     else f"{src}: {len(fixes)} CVEs fixed in an update")
-        elif esms:
-            sev = "medium"
-            title = (f"{src}: {esms[0]['cve']} is fixed only in Ubuntu Pro (ESM)" if len(esms) == 1
-                     else f"{src}: {len(esms)} CVEs fixed only in Ubuntu Pro (ESM)")
-        else:
+        # What raises the finding: a fix (or an ESM fix) for a CVE, or a known-exploited CVE that nothing fixes yet.
+        raised = counted(items)
+        if not raised:
             continue
-        parts = []
+        worst = raised[0]                 # `items` is sorted: the most urgent first
+        top = worst["rating"]
+        kev = [c for c in raised if c["kev"]]
+        if kev:
+            base = (f"{src}: {kev[0]['cve']} is being exploited (CISA KEV)" if len(kev) == 1
+                    else f"{src}: {len(kev)} CVEs are being exploited (CISA KEV)")
+        elif fixes:
+            base = (f"{src}: {fixes[0]['cve']} is fixed in an update" if len(fixes) == 1
+                    else f"{src}: {len(fixes)} CVEs fixed in an update")
+        else:
+            base = (f"{src}: {esms[0]['cve']} is fixed only in Ubuntu Pro (ESM)" if len(esms) == 1
+                    else f"{src}: {len(esms)} CVEs fixed only in Ubuntu Pro (ESM)")
+        title = f"{base}; {_lower_first(top.deadline.split(' (')[0])}"
+        lead, howto = finding_text(worst, exposure.why)
+        parts = [lead]
         fix = None
         installed = items[0]["installed"]
         if fixes:
@@ -284,18 +323,19 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
             if not fixes:
                 fix = ESM_FIX
         unfixed = [c for c in items if c["state"] == "nofix"]
-        top = ", ".join(_describe(c, label) for c in items[:TOP_CVES])
-        parts.append(f"Top CVEs: {top}" + (f" and {len(items) - TOP_CVES} more." if len(items) > TOP_CVES else "."))
+        shown = ", ".join(_describe(c, label) for c in items[:TOP_CVES])
+        parts.append(f"Top CVEs: {shown}" + (f" and {len(items) - TOP_CVES} more." if len(items) > TOP_CVES else "."))
         if unfixed and kev and not fixes and not esms:
             parts.append(f"{'Ubuntu' if ubuntu else 'Debian'} has no fix yet. See "
                          f"{(UBUNTU_CVE_URL if ubuntu else TRACKER_URL)}{kev[0]['cve']} for mitigations.")
         elif unfixed:
             parts.append(f"{len(unfixed)} more in this package have no fix yet.")
-        # Basis: the CVE ids, so a new CVE in the package brings an accepted finding back.
-        out.append(Finding("cve.package", src, sev, title[:300], " ".join(parts)[:3900],
+        # Basis: the CVE ids, so a new CVE in the package brings an accepted finding back. Never the severity or the deadline:
+        # a change of exposure or of CISA's rating must not reopen a finding someone accepted.
+        out.append(Finding("cve.package", src, top.severity, title[:300], " ".join(parts)[:3900],
                            f"/vulnerabilities#{anchor('cve', src)}", fix=fix,
-                           basis=f"cves:{digest(c['cve'] for c in items)}"))
-    out.sort(key=lambda f: (f.severity != "high", f.title))
+                           basis=f"cves:{digest(c['cve'] for c in items)}", howto="\n".join(howto)[:3900]))
+    out.sort(key=lambda f: (priority.SEV_ORDER.index(f.severity), f.title))
     return out[:MAX_FINDINGS]
 
 

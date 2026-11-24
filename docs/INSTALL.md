@@ -154,7 +154,7 @@ restarting:
 | Group | Settings |
 |---|---|
 | Outside view | Enabled, source (InternetDB or the Shodan API), extra addresses (`ip` or `ip=hostid`, one per line), check every N hours; and the Shodan API key (save, replace, remove, test; see "Outside checks") |
-| CVE checks | Enabled, check every N hours, the EPSS score that makes a finding High |
+| CVE checks | Enabled, check every N hours, the EPSS probability that stands in for CISA's Automatable rating |
 | Retention | Chart points (hours), Recent changes (days), cleared findings (days); 0 keeps for good |
 | Backups | Hours between scheduled backups (blank is automatic, 0 is off), how many to keep |
 | Remote systems | Whether the hub reads Unraid and OPNsense systems at all |
@@ -542,6 +542,7 @@ tracker. It needs outbound HTTPS, nothing inbound, to:
 | `security-tracker.debian.org` | Debian security tracker (JSON) | 15 MB as sent |
 | `epss.empiricalsecurity.com` | EPSS scores, from FIRST | 3 MB |
 | `www.cisa.gov` | CISA's Known Exploited Vulnerabilities list | 0.2 MB |
+| `cveawg.mitre.org` | CISA's SSVC rating of each CVE a host or image matches (the CVE Services record), one request per CVE, asked again after 7 days | 5 to 100 KB each |
 | `codeload.github.com` | The OPNsense project's changelog (a tarball of github.com/opnsense/changelog), only while an OPNsense firewall is enabled | 0.6 MB |
 | `www.freebsd.org` | The CVE ids of a FreeBSD security advisory the changelog names (one small file each, asked for once), only for a release a firewall needs | 6 KB each |
 | `api.github.com` | The CVE id and rating of an OPNsense security advisory the changelog names (one request each, asked for once; no token, 60 requests an hour allowed) | 20 KB each |
@@ -558,8 +559,23 @@ Change these on the Settings page (CVE checks), or in the config file:
 [cve]
 enabled = true       # false: no downloads and no cve.* findings
 refresh_hours = 24
-epss_high = 0.10     # a fixable CVE with an EPSS score at or above this is a high finding
+epss_automatable = 0.04   # where CISA has not rated a CVE, an EPSS probability at or above this counts as "automatable"
 ```
+
+A config file that still has `epss_high` is read as `epss_automatable` and logs a warning; a value saved on the Settings page
+under the old name is read the same way until the new one is saved.
+
+**How a CVE finding gets its severity.** The hub follows the timelines of CISA BOD 26-04 (Table 1): whether the system is exposed
+to the internet, whether the CVE is on CISA's KEV list, whether an attacker can automate it and how bad the impact is. 3 days is
+Critical, 14 days High, 60 days Medium and "fix at the next upgrade" Low. CISA's answers for the last two questions come from the
+CVE record at `cveawg.mitre.org`. Where CISA has not rated a CVE, the hub estimates them (an EPSS probability at or above
+`epss_automatable` counts as automatable, the impact as partial) and the page says "estimated by DaemonSight". CVSS is shown for
+information and decides nothing.
+
+The table is a data file. To use a different one (for example when CISA replaces the directive), put a file in the format described
+in DESIGN.md ("The table is a data file") at `<data_dir>/priority/override.json` (`/data/priority/override.json` in the
+container). The hub reads it when it changes. A file that fails the check is ignored, the reason goes to the log and the bundled
+table is used.
 
 Hosts send their package list (13 KB compressed for a desktop with 1,300
 packages) when it changes, and once a day. It needs no setting on the host.

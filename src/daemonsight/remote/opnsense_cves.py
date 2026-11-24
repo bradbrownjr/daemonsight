@@ -6,21 +6,22 @@ under `docker:<host>:<image id>`. This module reads those matches back: `load` f
 `summary` for the ranking and the severity. Both the finding (opnsense_rules.firmware_rules) and the page use them, so
 they always agree.
 
-Severity follows the Debian host rule (cve/match.py `package_findings`) and the image rule (docker_images.cve_summary): a
-fixable CVE on CISA's KEV list, or one with an EPSS score at or above `[cve] epss_high`, is High; any other fixable CVE is
-Medium. Every CVE found here is fixable, because it is listed as fixed by the update the firewall offers.
+Severity follows the host and image rule (cve/priority.py, CISA BOD 26-04): the update takes the worst of the CVEs it fixes,
+rated for a firewall, which is always publicly exposed (cve/exposure.py `FIREWALL`: a network device, which CISA's guidance
+treats as public). Every CVE found here is fixable, because it is listed as fixed by the update the firewall offers.
 
 The changelog also names security advisories (FreeBSD and GitHub) with no CVE id. The hub resolves them to CVE ids where the
 advisory's publisher names any (cve/advisories.py); those CVEs are in the list above, with the advisory as the evidence ("via
 FreeBSD-SA-26:74.ktls"). An advisory that names none, or has not been resolved yet, stays in the advisories list, and
-`summary` rates it: Medium at least (own choice: a security fix that cannot be ranked is not routine), and High when GitHub
-rates it High or Critical (GitHub's own rating of OPNsense's advisory). Errata notices and plugin notes are not counted.
+`summary` rates it with an interim floor that is outside the BOD 26-04 table: Medium at least (own choice: a security fix that
+cannot be ranked is not routine; the guidance says "longer timelines are acceptable" for what has no CVE id), and High when
+GitHub rates it High or Critical (GitHub's own rating of OPNsense's advisory). Errata notices and plugin notes are not counted.
 """
 
 from __future__ import annotations
 
 from .. import settings
-from ..cve import advisories, match, opnsense, store
+from ..cve import advisories, exposure, match, opnsense, priority, store
 
 SHOWN = 4                  # CVEs named in a finding's text
 LIST_MAX = 60              # rows on the page
@@ -77,7 +78,7 @@ def _matches(cdb, ph: str, p: dict, row) -> dict:
 
 def load(cfg, state_conn, host: str, fw: dict | None) -> dict:
     """What the chore found for this firewall's pending update:
-    {"state": "none" | "off" | "unmapped" | "pending" | "ok", "plan", "feed", "epss_high", "unseen", ...}.
+    {"state": "none" | "off" | "unmapped" | "pending" | "ok", "plan", "feed", "epss_automatable", "unseen", ...}.
     `none`: nothing is pending. `off`: CVE matching is switched off. `unmapped`: the pending update has no OPNsense release in
     it, or a version this cannot place (`plan["why"]`). `pending`: the changelog has not been read for it yet. `ok` adds
     "cves" (every match, with its changelog section and line), "advisories" (issues named without a CVE id), "releases"
@@ -87,12 +88,13 @@ def load(cfg, state_conn, host: str, fw: dict | None) -> dict:
     from the installed version to the newest one. The caller decides whether the firewall's last check is old enough
     (`unseen_state`)."""
     p = opnsense.plan(fw)
-    out: dict = {"state": "none", "plan": p, "feed": {"ok_at": None, "error": None, "tried": False}, "epss_high": 0.10,
+    out: dict = {"state": "none", "plan": p, "feed": {"ok_at": None, "error": None, "tried": False}, "epss_automatable": 0.04,
                  "cves": [], "advisories": [], "releases": [], "note": "", "unseen": None}
     if not p["ok"]:
         out["state"] = "none" if p["why"] == "nothing" else "unmapped"
     eff = settings.effective(cfg, state_conn)
-    out["epss_high"] = eff.cve.epss_high
+    out["epss_automatable"] = eff.cve.epss_automatable
+    priority.use(eff.data_dir)
     if not eff.cve.enabled:
         if p["ok"]:
             out["state"] = "off"
@@ -130,7 +132,7 @@ STALE_DAYS = 2        # DaemonSight's choice (the owner's): a firewall that has 
 def unseen_state(fw: dict | None, cves: dict | None, now: float) -> dict | None:
     """The `opnsense.unseen_release` condition, shared by the finding and the card: a newer release exists in the firewall's
     series than it runs and than its last check showed, AND that check is `STALE_DAYS` or more old, missing or unreadable.
-    Returns {"version", "plan", "cves", "advisories", "epss_high", "checked" (Unix time or None), "last_check", "newer_series"}
+    Returns {"version", "plan", "cves", "advisories", "epss_automatable", "checked" (Unix time or None), "last_check", "newer_series"}
     (`version` is "" when only a newer series exists, which is a line on the card and no finding), or None when the check is
     recent or nothing newer is known. A finding needs `version` and the matched CVEs (`ready`)."""
     from .opnsense import last_check_ts
@@ -142,7 +144,7 @@ def unseen_state(fw: dict | None, cves: dict | None, now: float) -> dict | None:
         return None
     ok = un["plan"].get("ok")
     return {"version": un["plan"]["offered"] if ok else "", "plan": un["plan"], "cves": un["cves"], "advisories": un["advisories"],
-            "epss_high": cves["epss_high"], "checked": ts, "last_check": fw.get("last_check") or "", "newer_series": un["newer_series"],
+            "epss_automatable": cves["epss_automatable"], "checked": ts, "last_check": fw.get("last_check") or "", "newer_series": un["newer_series"],
             "ready": ok and un["state"] == "ok", "note": un.get("note") or ""}
 
 
@@ -160,7 +162,7 @@ def unseen_title(st: dict, now: float | None = None) -> str:
     """"26.7.10 is out (fixes 3 CVEs and 2 other security advisories); the firewall hasn't checked since Nov 18" (the finding's
     title and the card's line)."""
     import time
-    s = summary(st["cves"], st["epss_high"], st.get("advisories"))
+    s = summary(st["cves"], st["epss_automatable"], st.get("advisories"))
     n, k = len(s["fixable"]), len(s["unresolved"])
     head = f"{st['version']} is out" + (f" (fixes {fixes_phrase(n, k)})" if n or k else "")
     if st["checked"] is None:
@@ -170,24 +172,22 @@ def unseen_title(st: dict, now: float | None = None) -> str:
     return head + "; the firewall hasn't checked since " + time.strftime("%b %-d", t) + ("" if t.tm_year == year else f" {t.tm_year}")
 
 
-def _worse(a: str | None, b: str) -> str:
-    order = (None, "low", "medium", "high")
-    return b if order.index(b) > order.index(a) else a
-
-
-def summary(cves: list[dict], epss_high: float, advisories: list[dict] | None = None) -> dict:
-    """Counts and the worst CVEs, ranked as a host's are (KEV, then EPSS). Every one is fixable by the update. `advisories` are
-    the security advisories of the range (`opnsense.advisories_between`, as `load` returns them). Those that name no CVE
-    (`unresolved`: not asked about yet, failed, or naming none) make the severity at least Medium, and High when GitHub rates
-    one High or Critical. A CVE that ranks higher is not lowered by any of this."""
-    ranked = sorted(cves, key=match.rank_key)
+def summary(cves: list[dict], epss_automatable: float, advisories: list[dict] | None = None) -> dict:
+    """Counts and the worst CVEs, most urgent first (CISA BOD 26-04 timeline, then EPSS: cve/priority.py), each CVE gaining its
+    "rating". A firewall is always publicly exposed. Every CVE is fixable by the update, so the update's severity is the worst
+    CVE's. `advisories` are the security advisories of the range (`opnsense.advisories_between`, as `load` returns them). Those
+    that name no CVE (`unresolved`: not asked about yet, failed, or naming none) are outside the table, so an interim floor
+    applies: the severity is at least Medium, and High when GitHub rates one High or Critical. A CVE that ranks higher is not
+    lowered by any of this. Returns {"fixable", "kev", "unresolved", "severity", "worst" (the most urgent CVE or None),
+    "exposure"}."""
+    ranked = priority.attach(list(cves), True, epss_automatable)
     kev = [c for c in ranked if c["kev"]]
-    hot = [c for c in ranked if not c["kev"] and (c["epss"] or 0) >= epss_high]
     unresolved = [a for a in (advisories or []) if not a.get("cves")]
-    sev = "high" if kev or hot else "medium" if ranked else None
+    sev = ranked[0]["rating"].severity if ranked else None
     if unresolved:
-        sev = _worse(sev, "high" if any(a.get("severity") in ("high", "critical") for a in unresolved) else "medium")
-    return {"fixable": ranked, "kev": kev, "hot": hot, "unresolved": unresolved, "severity": sev}
+        sev = priority.worse_severity(sev, "high" if any(a.get("severity") in ("high", "critical") for a in unresolved) else "medium")
+    return {"fixable": ranked, "kev": kev, "unresolved": unresolved, "severity": sev,
+            "worst": ranked[0] if ranked else None, "exposure": exposure.FIREWALL}
 
 
 def headline(n: int, kev: int, lower: bool = False, adv: int = 0) -> str:
@@ -206,7 +206,9 @@ def describe(c: dict) -> str:
     bits = []
     if c["kev"]:
         bits.append("exploited, CISA KEV")
-    bits.append(match.pct(c["epss"]))
+    bits.append("EPSS " + match.pct(c["epss"], c.get("pctile")) if c["epss"] is not None else match.pct(None))
+    if c.get("rating") is not None:
+        bits.append(c["rating"].deadline.split(" (")[0][0].lower() + c["rating"].deadline.split(" (")[0][1:])
     bits.append(f"fixed in {c['release']}")
     if c.get("via") and not c.get("direct"):
         bits.append("via " + ", ".join(v["label"] for v in c["via"][:2]))

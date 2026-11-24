@@ -100,10 +100,11 @@ class CveConfig:
     # Hours between checks of each feed. Each check sends If-None-Match /
     # If-Modified-Since, so an unchanged file costs one small request.
     refresh_hours: float = 24
-    # A fixable CVE with an EPSS score at or above this makes its package's
-    # finding High. FIRST: "There is no universal threshold"; 0.10 is the
-    # figure it says is commonly cited, about the 95th percentile.
-    epss_high: float = 0.1
+    # Where CISA has not rated a CVE's "Automatable" (its SSVC decision point), DaemonSight estimates it: yes when the CVE's
+    # EPSS probability is at or above this. FIRST (https://www.first.org/epss/using-epss): the threshold is "a very
+    # localized effort"; for the effort of patching every CVSS Critical, the "EPSS equivalent effort level is approximately
+    # the 90th percentile (>=0.04)". Replaces the old `epss_high`, which a config file may still name (it is read as this).
+    epss_automatable: float = 0.04
 
 
 @dataclass
@@ -253,6 +254,24 @@ def valid_role(value, warn: bool = False) -> str:
     return "server"
 
 
+def _migrate(values: dict) -> dict:
+    """Old names a config file may still use. `[cve] epss_high` (the EPSS score that made a finding High) is now
+    `epss_automatable` (the EPSS probability above which a CVE CISA has not rated is estimated as automatable): both are an
+    EPSS probability above which a CVE counts as likely to be exploited, so the old value carries over, unless the file
+    also sets the new name."""
+    cve = values.get("cve")
+    if isinstance(cve, dict) and "epss_high" in cve:
+        cve = dict(cve)
+        old = cve.pop("epss_high")
+        if "epss_automatable" not in cve:
+            cve["epss_automatable"] = old
+        logging.getLogger("daemonsight").warning(
+            "[cve] epss_high is renamed epss_automatable (it now sets when a CVE CISA has not rated counts as automatable); "
+            "the value %r is used for it", old)
+        values = {**values, "cve": cve}
+    return values
+
+
 def config_path(path: str | os.PathLike | None = None) -> Path:
     return Path(path or os.environ.get("DAEMONSIGHT_CONFIG") or DEFAULT_PATH)
 
@@ -263,7 +282,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
     seen: set[str] = set()
     if candidate.exists():
         with candidate.open("rb") as fh:
-            _apply(cfg, tomllib.load(fh), "", seen)
+            _apply(cfg, _migrate(tomllib.load(fh)), "", seen)
     elif path:
         raise FileNotFoundError(candidate)
     if "collector.metrics_retention_hours" in seen:

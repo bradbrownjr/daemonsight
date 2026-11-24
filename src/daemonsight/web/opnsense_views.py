@@ -13,6 +13,7 @@ import time
 
 from .. import db, findings as rules
 from ..config import Config
+from ..cve import match, priority
 from ..remote import crowdsec, opnsense, opnsense_cves, opnsense_rules, roles as roles_mod, store
 from . import provenance as prov
 from . import views
@@ -117,14 +118,19 @@ def _adv_view(a: dict) -> dict:
 
 
 def _fill_rows(out: dict, c: dict) -> None:
-    """The headline, the ranked CVE rows and the advisories of a matched range (`c` has "cves", "advisories", "epss_high")."""
-    s = opnsense_cves.summary(c["cves"], c["epss_high"], c.get("advisories"))
+    """The headline, the ranked CVE rows and the advisories of a matched range (`c` has "cves", "advisories",
+    "epss_automatable")."""
+    s = opnsense_cves.summary(c["cves"], c["epss_automatable"], c.get("advisories"))
     n, k = len(s["fixable"]), len(s["unresolved"])
     out["kev"] = len(s["kev"])
+    out["deadline"] = s["worst"]["rating"].deadline if s["worst"] else None
+    out["severity"] = s["severity"]
+    out["why"] = match.finding_text(s["worst"], s["exposure"].why)[1] if s["worst"] else []
     out["headline"] = opnsense_cves.headline(n, out["kev"], adv=k) if n or k else "Fixes no CVE or security advisory that OPNsense's changelog names"
     for x in s["fixable"][:opnsense_cves.LIST_MAX]:
         out["rows"].append({"cve": x["cve"], "url": x["url"], "kev": x["kev"], "kev_name": x.get("kev_name") or "",
-                            "epss": x["epss"], "epss_text": views._epss_text(x["epss"]), "epss_v": _epss_v(x["epss"]),
+                            "epss": x["epss"], "epss_text": priority.epss_text(x["epss"], x.get("pctile")), "epss_v": _epss_v(x["epss"]),
+                            "fix": views.fix_cell(x, s["exposure"].why), "cvss": views.cvss_text(x),
                             "release": x["release"], "date": x["date"] or "", "changelog": x["changelog"], "line": x["line"],
                             "via": x.get("via") or []})
     out["more"] = max(0, n - opnsense_cves.LIST_MAX)
