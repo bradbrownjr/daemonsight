@@ -667,3 +667,136 @@ def test_the_vulnerabilities_pages_data_feeds_list_the_secdb_files(page_with, tm
     main = rows[-1]
     assert main["title"] == "Alpine security database v3.17 main" and main["state"] == "Up to date" and main["alpine"] and main["rows"] > 0
     assert main["src"]["entries"][0]["text"] == "https://secdb.alpinelinux.org/v3.17/main.json" and "Attribution-ShareAlike 4.0" in main["terms"]
+
+
+# --- a finding resolves only when the CVEs are known to be gone -----------------------------------------------------------------------
+
+def _prior(findings):
+    import dataclasses
+    return {(f.rule, f.key): dataclasses.asdict(f) for f in findings if f.rule == "docker.image_cves"}
+
+
+def _image_cves(data, cves, prior=None):
+    return [f for f in di.evaluate(data, None, cves, TODAY, prior=prior) if f.rule == "docker.image_cves"]
+
+
+def _without(raw, *names):
+    """The summary of a system the named images (and their containers) were removed from."""
+    gone = {IDS[n] for n in names}
+    raw = copy.deepcopy(raw)
+    raw["images"] = [i for i in raw["images"] if i["id"] not in gone]
+    raw["containers"] = [c for c in raw["containers"] if c["image_id"] not in gone]
+    return raw
+
+
+NO_MATCHES = {"enabled": True, "available": True, "epss_automatable": 0.04, "feed_at": 1.0, "alpine": {}, "ubuntu": {}, "images": {}}
+
+
+@pytest.fixture
+def open_one(cvedb):
+    e = entry(IDS["nginx"], DEB12, BOOKWORM_PACKAGES)
+    first = _image_cves(stored([e]), matched(cvedb, [e]))
+    assert len(first) == 1
+    return e, first[0], _prior(first)
+
+
+def test_an_image_whose_packages_are_not_read_yet_keeps_its_finding_as_it_was(open_one):
+    e, f, prior = open_one
+    unread = entry(IDS["nginx"], None, None, error="not read yet", container=None, read_at=None)
+    assert _image_cves(stored([unread]), NO_MATCHES) == []                                 # without `prior` the rule says nothing: the old bug
+    assert _image_cves(stored([unread]), NO_MATCHES, prior) == [f]                         # same severity, title, detail, basis
+    # a failed read, and an image only a stopped container uses
+    for err in ("packages not read: docker said no", "not read: stopped"):
+        assert _image_cves(stored([entry(IDS["nginx"], None, None, error=err, container=None, read_at=None)]), NO_MATCHES, prior) == [f]
+
+
+def test_an_image_read_again_keeps_its_finding_until_the_chore_has_matched_it(open_one, cvedb):
+    e, f, prior = open_one
+    assert _image_cves(stored([e]), NO_MATCHES, prior) == [f]                              # packages read, matches not made yet
+    # the matcher's data can also be missing for the release (Ubuntu feed not fetched yet)
+    ub = entry(IDS["postgres"], UBU24, UBUNTU_PACKAGES, container="db")
+    ubf = _image_cves(stored([ub]), matched(cvedb, [ub]))
+    assert len(ubf) == 1
+    pend = matched(cvedb, [ub])
+    pend["ubuntu"]["noble"]["state"] = "pending"
+    pend["images"][ub["image_id"]]["matched"] = False                                      # what load_cves says while the feed is pending
+    assert _image_cves(stored([ub]), pend) == [] and _image_cves(stored([ub]), pend, _prior(ubf)) == ubf
+
+
+def test_a_matched_image_with_no_fixable_cves_left_resolves(open_one, cvedb):
+    e, f, prior = open_one
+    fixed = entry(IDS["nginx"], DEB12, [("libbrotli1", "brotli", "1.1.0-2+deb13u1", "")])
+    assert _image_cves(stored([fixed]), matched(cvedb, [fixed]), prior) == []
+
+
+def test_an_image_removed_from_the_system_resolves_but_one_still_in_the_image_list_stays(open_one, cvedb):
+    e, f, prior = open_one
+    other = entry(IDS["postgres"], UBU24, UBUNTU_PACKAGES, container="db")
+    raw = _without(summary_with([other]), "nginx")
+    gone = ds.parse_summary(raw, None, None, NOW)
+    assert not any(IDS["nginx"] == i["id"] for i in gone["images"]) and not any(c["image_id"] == IDS["nginx"] for c in gone["containers"])
+    assert [x for x in _image_cves(gone, matched(cvedb, [other]), prior) if x.key == "nginx:1.27"] == []
+    # Still listed by the reader (no package row for it, e.g. the reader has not got to it): unknown, so kept.
+    assert [x for x in _image_cves(stored([other]), matched(cvedb, [other]), prior) if x.key == "nginx:1.27"] == [f]
+    # Only its container is gone, the image is still in the list: kept. Its tag is the name the finding was keyed by.
+    no_ctr = _without(summary_with([other]), "nginx")
+    no_ctr["images"] = summary_with([other])["images"]
+    assert [x for x in _image_cves(ds.parse_summary(no_ctr, None, None, NOW), matched(cvedb, [other]), prior) if x.key == "nginx:1.27"] == [f]
+
+
+def test_without_package_data_or_with_cve_off_the_set_is_not_changed(open_one):
+    e, f, prior = open_one
+    assert _image_cves(None, None, prior) == [f]                                           # no summary: the reader was never reached
+    old_reader = ds.parse_summary({k: v for k, v in summary_with([]).items() if k != "image_packages"}, None, None, NOW)
+    assert old_reader["image_packages"] is None and _image_cves(old_reader, None, prior) == [f]
+    assert _image_cves(stored([]), None, prior) == [f]
+    off = {"enabled": False, "available": False, "epss_automatable": 0.04, "images": {}}
+    assert _image_cves(stored([e]), off, prior) == []                                      # switched off on the Settings page: they go, as before
+
+
+
+
+def test_a_restart_keeps_the_image_findings_open_end_to_end(world, tmp_path):
+    seeded_world(world, tmp_path, image_entries())
+    t = time.time()
+    world.poll(t + 700)
+    before = {k: dict(v) for k, v in finding_rows(world).items() if k[0] == "docker.image_cves"}
+    assert len(before) == 3
+
+    def same():
+        after = {k: dict(v) for k, v in finding_rows(world).items() if k[0] == "docker.image_cves"}
+        assert after.keys() == before.keys()
+        assert all(after[k]["basis"] == before[k]["basis"] and after[k]["title"] == before[k]["title"] and after[k]["detail"] == before[k]["detail"]
+                   and after[k]["severity"] == before[k]["severity"] and after[k]["id"] == before[k]["id"] for k in before)
+
+    # The reader restarts: every image is "not read yet". The next poll stores that and the chore forgets the matches.
+    unread = [entry(i, None, None, error="not read yet", container=None, read_at=None) for i in (IDS["nginx"], IDS["postgres"], IDS["widget-new"], IDS["inuse2"])]
+    world.reader.summary = summary_with(unread)
+    world.poll(t + 1400)
+    run_chore(world.cfg, tmp_path, t + 1410)
+    cdb = cvestore.connect_reader(world.cfg.cve_db_path)
+    assert not cdb.execute("SELECT 1 FROM matched WHERE host LIKE 'docker:%'").fetchone()           # the matches are gone ...
+    cdb.close()
+    world.poll(t + 1420)
+    same()                                                                                         # ... and the findings stay
+    # The reader has read the packages again, the chore has not matched yet: still open.
+    world.reader.summary = summary_with(image_entries())
+    world.poll(t + 2100)
+    world.poll(t + 2110)
+    same()
+    # The chore matches: still open with the same basis, and nothing was ever resolved.
+    run_chore(world.cfg, tmp_path, t + 2200)
+    world.poll(t + 2210)
+    same()
+    conn = conn_of(world.cfg)
+    assert not conn.execute("SELECT 1 FROM events WHERE kind = 'finding_resolved' AND title LIKE '%fixable CVE%'").fetchone()
+    # Matches made for an older package list are not the image's: the image reads as pending until the chore matches it again.
+    changed = image_entries()
+    changed[0] = entry(IDS["nginx"], DEB12, BOOKWORM_PACKAGES + [("curl", "", "7.0", "")], container="web")
+    world.reader.summary = summary_with(changed)
+    world.poll(t + 2900)
+    data = db.get_snapshot(conn, "tower", ds.SNAPSHOT).data
+    row = {r["id"]: r for r in di.analyze(data, None, di.load_cves(world.cfg, conn, "tower", data))["rows"]}
+    assert row[IDS["nginx"]]["cve"] == {"state": "pending"} and row[IDS["postgres"]]["cve"]["state"] == "matched"
+    conn.close()
+    same()

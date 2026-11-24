@@ -458,6 +458,43 @@ def test_chore_end_to_end(tmp_path):
     state.close()
 
 
+def test_a_host_finding_stays_open_while_its_matches_are_not_made(tmp_path):
+    """A hub restart can leave a host with no `matched` row for a pass: that is not "no CVEs", so its findings stay as they are."""
+    cfg = Config(host_id="hub", data_dir=str(tmp_path / "d"))
+    cfg.hub.enabled = True
+    state = db.connect_writer(cfg.db_path)
+    state.execute("INSERT INTO hosts (id, token_hash, created_at) VALUES ('web1', 'x', 0)")
+    put_inventory(state, "web1", [["brotli", "1.0.9-2", ["libbrotli1"]]])
+
+    async def go():
+        chore = run.Chore(cfg, state, serve(tmp_path))
+        now = time.time()
+        await chore.run_once(now)
+        before = {(r["rule"], r["key"]): dict(r) for r in db.open_findings(state, "web1") if r["rule"] == "cve.package"}
+        assert ("cve.package", "brotli") in before
+        conn = store.connect(cfg.cve_db_path)
+        conn.execute("DELETE FROM match")
+        conn.execute("DELETE FROM matched")
+        conn.close()
+        chore.dirty = True
+        await chore._findings({"web1": _inventories_of(state)["web1"]}, now + 5)
+        after = {(r["rule"], r["key"]): dict(r) for r in db.open_findings(state, "web1") if r["rule"] == "cve.package"}
+        assert after.keys() == before.keys() and after[("cve.package", "brotli")]["basis"] == before[("cve.package", "brotli")]["basis"]
+        # the next pass matches again and the finding is still there
+        await chore.run_once(now + 10)
+        assert ("cve.package", "brotli") in {(r["rule"], r["key"]) for r in db.open_findings(state, "web1")}
+        # a host that was matched and has nothing fixable resolves
+        put_inventory(state, "web1", [["brotli", "1.1.0-2+deb13u1", ["libbrotli1"]]], taken_at=now + 2 * DAY)
+        await chore.run_once(now + 20)
+        assert not [r for r in db.open_findings(state, "web1") if r["rule"] == "cve.package"]
+    asyncio.run(go())
+    state.close()
+
+
+def _inventories_of(state):
+    return run._inventories(state)
+
+
 def test_a_host_on_a_new_release_reparses_the_saved_file(tmp_path):
     cfg = Config(host_id="hub", data_dir=str(tmp_path / "d"))
     cfg.hub.enabled = True

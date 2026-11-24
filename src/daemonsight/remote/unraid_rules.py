@@ -425,5 +425,5 @@ def evaluate(data: dict[str, dict | None], now: float) -> list[Finding]:
     out += ups_rules(data.get("ups"))
     out += os_update_rule(data.get("system"), data.get("release"))
     out += docker_storage.evaluate(data.get("docker_storage"), data.get("docker"))
-    out += docker_images.evaluate(data.get("docker_storage"), data.get("docker"), data.get("image_cves"))
+    out += docker_images.evaluate(data.get("docker_storage"), data.get("docker"), data.get("image_cves"), prior=data.get("prior"))
     return out

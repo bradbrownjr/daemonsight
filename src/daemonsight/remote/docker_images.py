@@ -284,8 +284,10 @@ def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
                     out["ubuntu"][release] = _ubuntu_state(cdb, release)
                 pending = out["ubuntu"][release]["state"] == "pending"
             ph = pseudo_host(host, e["image_id"])
-            row = cdb.execute("SELECT note FROM matched WHERE host = ?", (ph,)).fetchone()
-            done = row is not None and not pending
+            row = cdb.execute("SELECT note, inv_hash FROM matched WHERE host = ?", (ph,)).fetchone()
+            inv = pseudo_inventory(e)
+            # Matches made for other package lists (the image was rebuilt or read again since) are not this image's yet.
+            done = row is not None and not pending and (inv is None or row["inv_hash"] == inv["hash"])
             out["images"][e["image_id"]] = {"matched": done, "note": (row["note"] or "") if row else "",
                                             "exposure": exposures.get(e["image_id"]) or cve_exposure.unknown([]),
                                             "cves": match.host_cves(cdb, ph, ("fix", "esm", "nofix")) if done else []}
@@ -391,11 +393,55 @@ def _plural(n: int, one: str, many: str) -> str:
     return one if n == 1 else many
 
 
+def _images_present(data: dict) -> set[str]:
+    """Every name an image of this system goes by, from the reader's image list and the containers (never the package state)."""
+    images = {i["id"]: i for i in data.get("images", [])}
+    by_image: dict[str, list[dict]] = {}
+    for c in data.get("containers", []):
+        if c.get("image_id"):
+            by_image.setdefault(c["image_id"], []).append(c)
+    names = {t for i in images.values() for t in i.get("tags", [])}
+    names |= {_ref(iid, by_image.get(iid, []), images) for iid in images.keys() | by_image.keys()}
+    names |= {c["image"] for c in data.get("containers", []) if c.get("image")}
+    return names
+
+
+def _unknown(rows: list[dict]) -> bool:
+    """Some image of this name has no answer yet: packages not read (yet), the read failed, or the CVE data is not matched for it."""
+    return any(r["state"] in ("waiting", "stopped", "failed") or (r["cve"] or {}).get("state") in ("pending", "unmapped", "absent")
+               for r in rows)
+
+
+def _held_images(a: dict, data: dict, emitted: set[str], prior: dict) -> list[Finding]:
+    """The open `docker.image_cves` findings that must stay. A finding resolves only when the image was matched with no fixable CVE
+    left, or is no longer on the system (not in the reader's image list and used by no container). An image whose packages are
+    not read yet, whose read failed or whose matches are pending keeps its finding as it was."""
+    by_name: dict[str, list[dict]] = {}
+    for r in a["rows"]:
+        by_name.setdefault(r["name"], []).append(r)
+    present = None
+    out = []
+    for rule, key in sorted(prior):
+        if rule != "docker.image_cves" or key in emitted:
+            continue
+        rows = by_name.get(key)
+        if rows is None:
+            present = _images_present(data) if present is None else present
+            keep = key in present
+        else:
+            keep = _unknown(rows)
+        if keep:
+            out.append(rules.held(prior, rule, key))
+    return out
+
+
 def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | None = None,
-             today: date | None = None) -> list[Finding]:
+             today: date | None = None, prior: dict | None = None) -> list[Finding]:
+    """`prior` maps (rule, key) to this system's open findings. Without package data at all (no summary, a reader from before
+    package lists, an empty list) every open `docker.image_cves` finding is emitted unchanged."""
     a = analyze(data, unraid_docker, cves, today)
-    if not a:
-        return []
+    if not a or not data.get("image_packages"):
+        return [rules.held(prior, *k) for k in sorted(prior or {}) if k[0] == "docker.image_cves"]
     from ..cve import match
     out: list[Finding] = []
     eol = a["eol"]
@@ -432,5 +478,7 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
         out.append(Finding("docker.image_cves", r["name"], c["severity"], title[:300], detail[:3900],
                            f"{LINK}#{r['anchor']}", None, f"{r['repo']}:{digest(x['cve'] for x in fixable)}",
                            "\n".join(((HOWTO_CVES_ALPINE if r["kind"] == "alpine" else HOWTO_CVES).split("\n") + why))[:3900]))
+    if prior and (cves or {}).get("enabled"):          # with CVE matching switched off the findings go, as before
+        out += _held_images(a, data, {f.key for f in out if f.rule == "docker.image_cves"}, prior)
     out.sort(key=lambda f: (priority.SEV_ORDER.index(f.severity), f.rule, f.title))
     return out

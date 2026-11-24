@@ -73,6 +73,13 @@ def _put_source(conn, host: str, source: str, now: float, ok: bool, error: str |
     db.put_snapshot(conn, host, source, now, ok, error, data)
 
 
+def open_findings(conn, host: str, prefixes: tuple[str, ...]) -> dict:
+    """(rule, key) -> row of the host's open findings under these rule prefixes: what a rule re-emits when it cannot tell yet
+    whether a finding still holds (findings.held)."""
+    return {(r["rule"], r["key"]): r for r in conn.execute("SELECT * FROM findings WHERE host = ? AND resolved_at IS NULL", (host,))
+            if r["rule"].startswith(prefixes)}
+
+
 def _rule_inputs(conn, host: str, cfg: Config | None = None) -> dict[str, dict | None]:
     snaps = db.get_snapshots(conn, host)
     out: dict[str, dict | None] = {}
@@ -84,6 +91,7 @@ def _rule_inputs(conn, host: str, cfg: Config | None = None) -> dict[str, dict |
     out["docker_storage"] = s.data if s and s.data else None
     # What the CVE chore found in the Debian and Alpine images (needs the CVE database, so only with the config).
     out["image_cves"] = docker_images.load_cves(cfg, conn, host, out["docker_storage"]) if cfg is not None else None
+    out["prior"] = open_findings(conn, host, ("docker.image_cves",)) if cfg is not None else None
     return out
 
 
@@ -165,7 +173,8 @@ def opnsense_rules_evaluate(conn, host: str, now: float, cfg: Config | None = No
     from . import opnsense_cves, opnsense_rules
     inputs = opnsense_inputs(conn, host)
     cves = opnsense_cves.load(cfg, conn, host, inputs.get("firmware")) if cfg is not None else None
-    out = opnsense_rules.evaluate(inputs, now, roles.load_overrides(conn, host), opnsense.collector_hosts(conn), cves)
+    prior = open_findings(conn, host, ("opnsense.updates", "opnsense.unseen_release")) if cfg is not None else None
+    out = opnsense_rules.evaluate(inputs, now, roles.load_overrides(conn, host), opnsense.collector_hosts(conn), cves, prior)
     snap = db.get_snapshot(conn, host, crowdsec.SNAPSHOT)
     if snap is not None and snap.data:
         out += crowdsec.evaluate(snap.data, None if snap.ok else snap.error)
