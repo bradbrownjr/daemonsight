@@ -67,6 +67,10 @@ These apply to every page. Owner rules, kept as written.
   page. A tab whose page has two or more sections has a small chevron that opens
   a menu of them; the tab name still goes to the page. (Owner. The menu is a
   native popover.)
+- **Phone: the header is at most two rows.** Row 1 is the logo and the host
+  pill (the name truncates, full name in `title`); row 2 is the filter with the
+  menu button beside it, 44 px square. Without a filter the button sits at the
+  right of row 1.
 - **Phone: one vertical list.** Under 768 px the hamburger panel is a single
   list, one row per item, full width: the hub's items (Hosts, Add a system), a
   line, then the host's pages. Wrapped rows of pills read as scattered.

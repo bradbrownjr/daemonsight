@@ -51,7 +51,7 @@
       <span class="fw-bold fs-3">DaemonSight</span>
     </a>
     {% if host %}
-    <div class="ds-hostpill d-flex flex-wrap align-items-center gap-2">
+    <div class="ds-hostpill d-flex flex-wrap align-items-center gap-2" title="{{ host.id }}">
       <span class="status-dot {{ 'status-dot-animated status-green' if host.fresh else 'status-red' }}"></span>
       <span class="fw-bold">{{ host.id }}</span>
       <span class="text-secondary">{{ host.os or '' }}{% if host.uptime %} · up {{ host.uptime }}{% endif %}</span>
