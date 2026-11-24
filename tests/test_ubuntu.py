@@ -19,7 +19,7 @@ import pytest
 from daemonsight import db
 from daemonsight.collector.sources import inventory as inv
 from daemonsight.config import Config
-from daemonsight.cve import debver, feeds, match, run, store, ubuntu
+from daemonsight.cve import debver, exposure, feeds, match, run, store, ubuntu
 
 from .test_cve import DAY, FIX, epss_gz, kev_gz, put_inventory, serve  # noqa: F401
 from .test_hub import hub_cfg, token  # noqa: F401 (fixtures)
@@ -231,9 +231,9 @@ OPEN = [("", "open", None)]
     (FIXED, "2.46-1", None, "medium", ("fix", "2.47-1ubuntu0.24.04.1")),
     (FIXED, "2.47-1ubuntu0.24.04.1", None, "medium", None),                    # fixed already
     (FIXED, "2.47-1ubuntu0.24.04.2", None, "medium", None),
-    (FIXED, "2.46-1", None, "negligible", ("minor", "2.47-1ubuntu0.24.04.1")),  # a fix exists, Ubuntu calls it negligible: listed, never a finding
+    (FIXED, "2.46-1", None, "negligible", ("fix", "2.47-1ubuntu0.24.04.1")),  # negligible does not change the state; the vendor rule of cve/priority.py uses it
     (OPEN, "1.0", None, "medium", ("nofix", None)),
-    (OPEN, "1.0", None, "negligible", ("minor", None)),
+    (OPEN, "1.0", None, "negligible", ("nofix", None)),
     (OPEN, "1.0", None, "", ("nofix", None)),
     (ESM_APPS, "1.2-4.1ubuntu2.24.0.4.1+esm2", None, "low", ("esm", "1.2-4.1ubuntu2.24.0.4.1+esm3")),
     (ESM_APPS, "1.2-4.1ubuntu2.24.0.4.1+esm2", frozenset(), "low", ("esm", "1.2-4.1ubuntu2.24.0.4.1+esm3")),
@@ -277,8 +277,8 @@ def test_a_noble_host_gets_each_state(tmp_path):
     assert got[("libxml-parser-perl", "CVE-2006-10002")] == ("fix", "2.46-1", "2.47-1ubuntu0.24.04.1", "medium")
     assert got[("libxml2", "CVE-2022-49043")] == ("fix", "2.9.14+dfsg-1.3ubuntu3", "2.9.14+dfsg-1.3ubuntu3.1", "medium")
     assert ("openssl", "CVE-2023-5363") not in got
-    assert got[("krb5", "CVE-2024-26458")] == ("minor", "1.20.1-6ubuntu2.4", "1.20.1-6ubuntu2.5", "negligible")
-    assert got[("nvidia-cg-toolkit", "CVE-2008-5144")] == ("minor", "3.1.0013-5", None, "negligible")
+    assert got[("krb5", "CVE-2024-26458")] == ("fix", "1.20.1-6ubuntu2.4", "1.20.1-6ubuntu2.5", "negligible")
+    assert got[("nvidia-cg-toolkit", "CVE-2008-5144")] == ("nofix", "3.1.0013-5", None, "negligible")
     assert got[("gcc-mingw-w64", "CVE-2002-2439")] == ("nofix", "26ubuntu1", None, "low")
     assert got[("libxmltok", "CVE-2012-1148")][:3] == ("esm", "1.2-4.1ubuntu2.24.0.4.1+esm2", "1.2-4.1ubuntu2.24.0.4.1+esm3")     # no Pro: not available
     assert got[("libxmltok", "CVE-2025-66382")][0] == "nofix" and not [k for k in got if k[0] == "bash"]
@@ -337,19 +337,25 @@ def test_a_release_with_no_data_and_a_host_that_is_not_ubuntu_say_so_and_match_n
     assert conn.execute("SELECT COUNT(*) FROM match WHERE host = 'u1'").fetchone()[0] == n > 5
 
 
+EXPOSURE = exposure.Exposure(False, "test")
+
+
 # --- findings for a host -----------------------------------------------------------------------------------------------------
 
 def findings_for(conn, host, **kw):
-    return {f.key: f for f in match.package_findings(match.host_cves(conn, host, ("fix", "esm", "nofix")), {}, set(), 0.10, "apt", False, "ubuntu")}
+    return {f.key: f for f in match.package_findings(match.host_cves(conn, host, ("fix", "esm", "nofix")), {}, set(), EXPOSURE, 0.04, "apt", False, "ubuntu")}
 
 
 def test_findings_say_ubuntu_name_the_priority_and_do_not_count_an_esm_fix_as_an_ordinary_update(tmp_path):
     conn = loaded(tmp_path)
     ubuntu.match_host(conn, "u1", ubuntu_inv(NOBLE_HOST), "g")
     f = findings_for(conn, "u1")
-    assert set(f) == {"libxml-parser-perl", "libxml2", "libxmltok"}                 # minor and open-low rows raise nothing
+    assert set(f) == {"libxml-parser-perl", "libxml2", "libxmltok", "krb5"}         # open rows with no KEV entry raise nothing
     p = f["libxml-parser-perl"]
-    assert p.severity == "medium" and p.title == "libxml-parser-perl: CVE-2006-10002 is fixed in an update"
+    # Not exposed, not in KEV, no EPSS score (so not automatable) and an estimated partial impact: Table 1 row 16, fix at the upgrade.
+    assert p.severity == "low" and p.title == "libxml-parser-perl: CVE-2006-10002 is fixed in an update; fix at the next upgrade"
+    k = f["krb5"]                                                    # the same, and Ubuntu calls it negligible: the vendor rule says so
+    assert k.severity == "low" and "lowered by the vendor's rating" in k.howto and "Ubuntu priority negligible" in k.detail
     assert "fixed in 2.47-1ubuntu0.24.04.1" in p.detail and "Ubuntu priority medium" in p.detail and "Debian" not in p.detail
     assert p.fix.startswith("sudo apt") and "pro " not in p.fix
     e = f["libxmltok"]
@@ -370,7 +376,9 @@ def test_a_known_exploited_cve_makes_a_high_finding_and_an_unfixed_one_says_ubun
     ubuntu.match_host(conn, "u1", ubuntu_inv(NOBLE_HOST), "g")
     f = findings_for(conn, "u1")
     assert f["libxml2"].severity == "high" and "CISA KEV" in f["libxml2"].title
-    assert f["libxml-parser-perl"].severity == "high" and "high exploit score" in f["libxml-parser-perl"].title and "EPSS 50%" in f["libxml-parser-perl"].title
+    # EPSS 0.5 is at or above the 0.04 default: automatable (estimated). Not exposed, not KEV, partial: row 14, 60 days.
+    assert f["libxml-parser-perl"].severity == "medium" and f["libxml-parser-perl"].title.endswith("fix within 60 days")
+    assert "EPSS 50.0% (97th)" in f["libxml-parser-perl"].detail and f["libxml2"].title.endswith("fix within 14 days")
     g = f["gcc-mingw-w64"]                                        # an exploited CVE with no fix: still raised, and the text is Ubuntu's
     assert g.severity == "high" and "Ubuntu has no fix yet" in g.detail and "https://ubuntu.com/security/CVE-2002-2439" in g.detail and "Debian" not in g.detail
 
@@ -380,10 +388,10 @@ def test_the_kernel_finding_names_the_flavor_and_asks_for_a_reboot(tmp_path):
     src = [["linux-aws", "6.8.0-1005.5", ["linux-image-6.8.0-1005-aws"]]]
     ubuntu.match_host(conn, "k1", ubuntu_inv(src), "g")
     f = {f.key: f for f in match.package_findings(match.host_cves(conn, "k1", ("fix", "esm", "nofix")), {"linux-aws": ["linux-image-6.8.0-1005-aws"]},
-                                                  set(), 0.10, "apt", False, "ubuntu")}["linux-aws"]
+                                                  set(), EXPOSURE, 0.04, "apt", False, "ubuntu")}["linux-aws"]
     assert "Running kernel 6.8.0-1005.5" in f.detail and f.fix.endswith("sudo reboot")
     g = {f.key: f for f in match.package_findings(match.host_cves(conn, "k1", ("fix", "esm", "nofix")), {"linux-aws": ["linux-image-6.8.0-1005-aws"]},
-                                                  set(), 0.10, "apt", True, "ubuntu")}["linux-aws"]
+                                                  set(), EXPOSURE, 0.04, "apt", True, "ubuntu")}["linux-aws"]
     assert g.fix == "sudo reboot" and "A newer kernel is installed" in g.detail
 
 
@@ -548,7 +556,7 @@ def test_the_chore_matches_an_ubuntu_host_and_its_findings_fire_and_clear(tmp_pa
         await ch.run_once(now)
         open_ = {(r["rule"], r["key"]): r for r in db.open_findings(state, "u1")}
         assert {k for k in open_ if k[0] == "cve.package"} == {("cve.package", "libxml-parser-perl"), ("cve.package", "libxmltok"), ("cve.package", "linux")}
-        assert open_[("cve.package", "libxml-parser-perl")]["severity"] == "medium" and "Ubuntu Pro" in open_[("cve.package", "libxmltok")]["title"]
+        assert open_[("cve.package", "libxml-parser-perl")]["severity"] == "low" and "Ubuntu Pro" in open_[("cve.package", "libxmltok")]["title"]
         assert len([1 for h, _d in calls if h == ubuntu.OVAL_HOST]) == 1                      # the one release this host runs
         cdb = store.connect(cfg.cve_db_path)
         assert {r[0] for r in cdb.execute("SELECT DISTINCT source FROM ubu WHERE kernel = 1")} == {"linux"}      # the flavor this host runs
