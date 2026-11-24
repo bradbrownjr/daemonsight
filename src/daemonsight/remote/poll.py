@@ -136,7 +136,7 @@ def _record_success(conn, row, now: float, system: dict | None, cfg: Config | No
 def reconcile(conn, host: str, kind: str, now: float, cfg: Config | None = None) -> None:
     """Make the open findings of this kind of system match what its stored readings say now, with events. `cfg` lets
     an Unraid system's image CVE findings read the CVE database; without it they are not evaluated."""
-    current = opnsense_rules_evaluate(conn, host, now) if kind == "opnsense" else unraid_rules_evaluate(conn, host, now, cfg)
+    current = opnsense_rules_evaluate(conn, host, now, cfg) if kind == "opnsense" else unraid_rules_evaluate(conn, host, now, cfg)
     for change, f in db.reconcile_findings(conn, host, now, current, only_prefix=RULE_PREFIX.get(kind, ("unraid.", "docker."))):
         if change == "opened":
             db.add_event(conn, host, now, "finding_opened", f.title, severity=f.severity, detail=f.detail, link=f.link)
@@ -159,9 +159,13 @@ def opnsense_inputs(conn, host: str) -> dict[str, dict | None]:
     return out
 
 
-def opnsense_rules_evaluate(conn, host: str, now: float) -> list[Finding]:
-    from . import opnsense_rules
-    out = opnsense_rules.evaluate(opnsense_inputs(conn, host), now, roles.load_overrides(conn, host), opnsense.collector_hosts(conn))
+def opnsense_rules_evaluate(conn, host: str, now: float, cfg: Config | None = None) -> list[Finding]:
+    """`cfg` lets the pending update's CVEs (matched by the CVE chore) into the updates finding; without it that finding
+    has no CVEs in it."""
+    from . import opnsense_cves, opnsense_rules
+    inputs = opnsense_inputs(conn, host)
+    cves = opnsense_cves.load(cfg, conn, host, inputs.get("firmware")) if cfg is not None else None
+    out = opnsense_rules.evaluate(inputs, now, roles.load_overrides(conn, host), opnsense.collector_hosts(conn), cves)
     snap = db.get_snapshot(conn, host, crowdsec.SNAPSHOT)
     if snap is not None and snap.data:
         out += crowdsec.evaluate(snap.data, None if snap.ok else snap.error)
@@ -412,7 +416,7 @@ async def poll_opnsense(conn, cfg: Config, row, net: Net, now: float) -> None:
         db.add_metrics(conn, host, now, {"mem.percent": results["opnsense_system"][2]["memory"].get("percent")})
     fwd = snaps.get("opnsense_firmware")
     version = fwd.data.get("version") if fwd and fwd.data and fwd.data.get("available") is not False else None
-    _record_success(conn, current, now, {"version": version})
+    _record_success(conn, current, now, {"version": version}, cfg)
 
 
 async def run_once(conn, cfg: Config, net: Net, now: float | None = None) -> int:

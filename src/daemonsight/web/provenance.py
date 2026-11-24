@@ -707,7 +707,33 @@ def opnsense_section(source: str, url: str | None = None, interval: int = 60) ->
     return {"title": src.title, "read": "OPNsense REST API, GET only: " + ", ".join(paths), "entries": entries}
 
 
-CROWDSEC_DOCS = "https://docs.crowdsec.net/docs/next/local_api/authentication"
+def opnsense_cves(c: dict | None) -> dict:
+    """The panel of the CVE list on the firewall's updates card: where the data comes from and how to check it in OPNsense."""
+    from ..cve import opnsense
+    p = (c or {}).get("plan") or {}
+    span = f"{p['installed']} to {p['offered']}" if p.get("ok") else "the pending update"
+    entries = [url("Changelog data", opnsense.REPO, opnsense.REPO),
+               url("Downloaded as", opnsense.URL, opnsense.URL),
+               url("The same notes, rendered", opnsense.DOCS_URL, opnsense.DOCS_URL),
+               plain("Terms", "BSD 2-Clause licence, https://github.com/opnsense/changelog/blob/master/LICENSE"),
+               plain("Matched", f"Every changelog section above {p['installed']} and up to {p['offered']} (releases and the hotfixes "
+                                "under them), in OPNsense's own version order" if p.get("ok") else
+                                "Needs a new OPNsense release in the pending update"),
+               plain("What counts", "A CVE id written in a patch-note line, or in a footnote that line points to. Advisories named with no CVE "
+                                    "id (FreeBSD and GitHub) are counted and listed, not ranked. CVE ids mentioned only in a release's "
+                                    "introduction are not counted. Treat the number as a floor"),
+               plain("In OPNsense", f"System, Firmware, Changelog: open each release from {span} and read the lines that name a CVE"),
+               plain("Audit of the installed packages", "System, Firmware, Status, Run an audit, Security runs pkg audit, FreeBSD's check of "
+                                                         "what is installed against its vulnerability database. DaemonSight never runs it"),
+               cmd("Check the download", f"curl -sI {q(opnsense.URL)}")]
+    if p.get("ok"):
+        entries.append(url("The offered version's changelog", opnsense.changelog_url(p["offered"]), opnsense.changelog_url(p["offered"])))
+    return {"title": "CVEs this update fixes", "read": "The hub downloads OPNsense's published changelog, keeps the sections the pending "
+                                                       "update brings and ranks the CVE ids in them with CISA's KEV list and EPSS. "
+                                                       "Nothing is sent to the firewall", "entries": entries}
+
+
+CROWDSEC_DOCS ="https://docs.crowdsec.net/docs/next/local_api/authentication"
 
 
 def crowdsec_section(url: str | None, interval: int = 60, sample: str = "192.0.2.10") -> dict:

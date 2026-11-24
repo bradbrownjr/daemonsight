@@ -13,7 +13,9 @@ Thresholds, and where they come from. Where the number is DaemonSight's own choi
 * Firmware: OPNsense's own firmware status (`/api/core/firmware/status`) is the last check's result; DaemonSight never
   starts a check. The API does not say how old an update is, so "behind for more than 30 days" is counted from when the
   hub first saw updates waiting (`pending_since`). 5 packages or a new release: Medium; 20 packages or 30 days: High.
-  Own choice.
+  Own choice. When the CVE chore found CVEs that the offered release fixes (remote/opnsense_cves.py, from OPNsense's
+  changelog), the finding names them and is at least Medium, and High when one is on CISA's KEV list or has an EPSS score
+  at or above `[cve] epss_high`: the rule for a Debian host's package (cve/match.py `package_findings`).
 * Gateways: OPNsense's own alarm states (`status` is `down`, `loss`, `delay` or `delay+loss`, from
   `scripts/routes/gateway_status.php`) plus loss of 10% or more, or a round trip of 300 ms or more. Own choice.
 * WireGuard: no handshake for a day. WireGuard sends a handshake about every 2 minutes while a peer has traffic or a
@@ -32,7 +34,9 @@ from __future__ import annotations
 
 import re
 
+from ..cve import opnsense
 from ..findings import Finding, anchor, digest
+from . import opnsense_cves
 from . import roles as roles_mod
 
 FW_UI = "the OPNsense web UI"
@@ -71,7 +75,37 @@ HOWTO_REBOOT = steps(
     "Pick a time when the network can be offline for a few minutes, then use Power, Reboot (or install the update, which reboots when it must)")
 
 
-def firmware_rules(fw: dict | None, now: float) -> list[Finding]:
+HOWTO_UPDATES_CVES = (
+    "The Updates card on this firewall's Overview page lists the CVEs, each with its exploit score, whether CISA lists it as exploited, and the release that fixes it",
+    "Read the changelog for the version being offered: {url} (or System, Firmware, Changelog in the firewall)",
+    "Back up the configuration: System, Configuration, Backups, Download configuration",
+    "Open System, Firmware, Updates to see the pending updates and install them. DaemonSight only reads; it never starts a check or an update",
+    "Plan for the firewall to be offline while it installs, and for a reboot if the page says one is needed",
+    "This finding goes away when the firewall's next firmware check shows nothing pending")
+
+
+def _worse(a: str, b: str | None) -> str:
+    order = ("low", "medium", "high")
+    return b if b and order.index(b) > order.index(a) else a
+
+
+def _cve_text(cv: dict) -> tuple[dict, str]:
+    """The ranking of a pending update's CVEs, and the sentence about them for the finding's detail."""
+    s = opnsense_cves.summary(cv["cves"], cv["epss_high"])
+    n = len(s["fixable"])
+    top = ", ".join(opnsense_cves.describe(c) for c in s["fixable"][:opnsense_cves.SHOWN])
+    top += f" and {n - opnsense_cves.SHOWN} more" if n > opnsense_cves.SHOWN else ""
+    text = (f" Updating to {cv['plan']['offered']} fixes {n} {'CVE' if n == 1 else 'CVEs'} named in OPNsense's changelog"
+            + (f", {len(s['kev'])} on CISA's list of exploited vulnerabilities (KEV)" if s["kev"] else "")
+            + (f", {len(s['hot'])} with a high exploit score" if s["hot"] else "") + f". Top CVEs: {top}.")
+    if cv["advisories"]:
+        k = len(cv["advisories"])
+        text += (f" The changelog also names {k} security {'advisory' if k == 1 else 'advisories'} with no CVE id "
+                 "(FreeBSD and GitHub advisories); they are listed on the page and not ranked.")
+    return s, text
+
+
+def firmware_rules(fw: dict | None, now: float, cves: dict | None = None) -> list[Finding]:
     if not fw or not (fw.get("count") or fw.get("needs_reboot")):
         return []
     out = []
@@ -93,9 +127,19 @@ def firmware_rules(fw: dict | None, now: float) -> list[Finding]:
                   + (" Installing them needs a reboot." if fw.get("needs_reboot") else "")
                   + " The check result is only as new as the firewall's last check; DaemonSight never starts one.")
         names = sorted({p["name"] for p in fw.get("packages", [])} | {p["name"] for p in fw.get("sets", [])})
-        out.append(Finding("opnsense.updates", "updates", sev, title, detail, "/#firmware", None,
-                           digest(f"{p['name']}={p['new']}" for p in fw.get("packages", []) + fw.get("sets", [])) if names else "updates",
-                           HOWTO_UPDATES))
+        basis = digest(f"{p['name']}={p['new']}" for p in fw.get("packages", []) + fw.get("sets", [])) if names else "updates"
+        howto = HOWTO_UPDATES
+        # The CVEs the update fixes (the hub's CVE chore matched them against the changelog). Severity follows the Debian
+        # host rule: KEV or a high EPSS score is High, any other fixable CVE Medium. The basis carries the offered version
+        # and the CVE ids, so an accepted finding comes back when either changes.
+        if cves and cves.get("state") == "ok" and cves.get("cves"):
+            s, text = _cve_text(cves)
+            sev = _worse(sev, s["severity"])
+            title += "; " + opnsense_cves.headline(len(s["fixable"]), len(s["kev"]), lower=True)
+            detail += text
+            basis = f"{basis}:{cves['plan']['offered']}:{digest(c['cve'] for c in s['fixable'])}"
+            howto = steps(*(x.format(url=opnsense.changelog_url(cves["plan"]["offered"])) for x in HOWTO_UPDATES_CVES))
+        out.append(Finding("opnsense.updates", "updates", sev, title[:300], detail[:3900], "/#firmware", None, basis, howto))
     if fw.get("needs_reboot"):
         out.append(Finding("opnsense.reboot", "reboot", "medium", "A reboot is needed to finish the pending update",
                            "The firewall says the pending firmware update needs a reboot to take effect.", "/#firmware", None,
@@ -573,15 +617,16 @@ def interface_roles(data: dict[str, dict | None], overrides: dict[str, str] | No
 
 
 def evaluate(data: dict[str, dict | None], now: float, overrides: dict[str, str] | None = None,
-             hosts: dict[str, dict] | None = None) -> list[Finding]:
+             hosts: dict[str, dict] | None = None, cves: dict | None = None) -> list[Finding]:
     """`data` maps short source names (firmware, gateways, interfaces, wireguard, rules, nat, caddy, tailscale,
     services, system) to their latest stored data, or None when that source can't be read (no privilege, not
     installed, never read). `overrides` are the owner's interface roles. `hosts` maps a hub host to
     {"ips": {...}, "listeners": [{"proto", "port", "addresses"}]}, for the checks that compare a forward or a
-    site with what a collector sees listening."""
+    site with what a collector sees listening. `cves` is what the CVE chore found for the pending update
+    (opnsense_cves.load); without it the updates finding has no CVEs in it."""
     roles = interface_roles(data, overrides)
     out: list[Finding] = []
-    out += firmware_rules(data.get("firmware"), now)
+    out += firmware_rules(data.get("firmware"), now, cves)
     out += gateway_rules(data.get("gateways"))
     out += wireguard_rules(data.get("wireguard"), now)
     if roles:

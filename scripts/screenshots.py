@@ -297,6 +297,15 @@ def seed_remotes(conn, cfg, workdir):
               now=NOW - 100, crowdsec_url="http://192.0.2.1:8180", crowdsec_key=CSKEY,
               crowdsec_never=["203.0.113.50", "198.51.100.128/25"])
     asyncio.run(poll.run_once(conn_w, cfg, net, NOW))
+    # The firewall's pending update (26.1.2_3 to 26.1.5): the real changelog files in tests/fixtures, as the CVE chore would load them.
+    from daemonsight.cve import opnsense as chg
+    from tests import fake_changelog
+    cdb = cvestore.connect(cfg.cve_db_path)
+    chg.load(cdb, fake_changelog.write_tarball(workdir / "changelog.tar.gz"), {"26.1"})
+    chg.match_host(cdb, chg.pseudo_host("firewall"), {"installed": "26.1.2_3", "offered": "26.1.5"}, "g")
+    feeds.feed_row(cdb, feeds.OPNSENSE_FEED)
+    feeds._record(cdb, feeds.OPNSENSE_FEED, checked_at=NOW, ok_at=NOW - 3600, changed_at=NOW, status="ok", rows=3, size=1000, note="")
+    cdb.close()
     asyncio.run(poll.run_once(conn_w, cfg, net, NOW + 700))
     return net
 

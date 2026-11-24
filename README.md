@@ -51,7 +51,7 @@ one list of what to fix, without a SIEM.
 | Host package CVEs | Debian security tracker, CISA KEV and EPSS; Fedora advisories |
 | Container image CVEs | Debian and Alpine images; Ubuntu next |
 | Unraid | GraphQL API, Viewer-only key |
-| OPNsense and CrowdSec | REST API, GET only; CrowdSec Local API, read-only key |
+| OPNsense and CrowdSec | REST API, GET only, and the project's changelog for the CVEs a pending update fixes; CrowdSec Local API, read-only key |
 | Seen from outside | Shodan InternetDB or API (off by default) |
 
 Details, and how it differs from general monitors and SIEMs: [docs/FEATURES.md](docs/FEATURES.md).

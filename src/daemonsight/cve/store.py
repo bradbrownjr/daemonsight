@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 -- One row per feed: when it was tried, when it last answered, and what it said.
@@ -54,6 +54,25 @@ CREATE TABLE IF NOT EXISTS apk (
     PRIMARY KEY (release, origin, cve, fixed)
 ) WITHOUT ROWID;
 
+-- OPNsense's changelog (github.com/opnsense/changelog, community/), only the series the hub's firewalls need (see
+-- cve/opnsense.py). `opn_release` is one row per release file; `opn_fix` is one row per security issue a section names.
+-- `version` is the section's: the release (26.1.11) or a hotfix under it (26.1.11_3). `kind` is `cve`, or `adv` for a GitHub
+-- or FreeBSD advisory with no CVE id (`ref` is then `GHSA:...` or `FREEBSD-SA:...`). `line` is the changelog bullet.
+CREATE TABLE IF NOT EXISTS opn_release (
+    version TEXT PRIMARY KEY,
+    series  TEXT NOT NULL,
+    date    TEXT             -- ISO date of the announcement
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS opn_fix (
+    version TEXT NOT NULL,
+    release TEXT NOT NULL,   -- the file the section is in
+    kind    TEXT NOT NULL,
+    ref     TEXT NOT NULL,
+    line    TEXT NOT NULL,
+    PRIMARY KEY (version, kind, ref)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS cve (
     id    TEXT PRIMARY KEY,
     descr TEXT NOT NULL
@@ -81,7 +100,7 @@ CREATE TABLE IF NOT EXISTS match (
     cve       TEXT NOT NULL,
     state     TEXT NOT NULL,  -- fix, nofix, minor, undetermined
     installed TEXT,
-    fixed     TEXT,           -- Debian: fixed source version. Fedora: advisory id
+    fixed     TEXT,           -- Debian: fixed source version. Fedora: advisory id. OPNsense: the changelog section
     urgency   TEXT,
     PRIMARY KEY (host, source, cve)
 ) WITHOUT ROWID;

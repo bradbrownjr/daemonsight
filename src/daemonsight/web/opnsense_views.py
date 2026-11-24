@@ -13,7 +13,7 @@ import time
 
 from .. import db, findings as rules
 from ..config import Config
-from ..remote import crowdsec, opnsense, opnsense_rules, roles as roles_mod, store
+from ..remote import crowdsec, opnsense, opnsense_cves, opnsense_rules, roles as roles_mod, store
 from . import provenance as prov
 from . import views
 from .views import fmt_ago, fmt_bytes, fmt_duration, level_class, pct_class, status_of
@@ -69,6 +69,54 @@ def _when(ts: float | None) -> str:
 
 
 # --- Overview --------------------------------------------------------------------------------------------------
+
+def _epss_v(score) -> str:
+    return "" if score is None else f"{score:.5f}"
+
+
+ADVISORY_KIND = {"FREEBSD-SA": "FreeBSD", "GHSA": "GitHub"}
+
+
+def _cves_view(c: dict | None) -> dict | None:
+    """The CVE part of the updates card, from opnsense_cves.load: a sentence when there is nothing to list, else the
+    headline and the ranked rows (the worst first, as a host's CVEs are). None when no update is pending."""
+    if not c or c["state"] == "none":
+        return None
+    p = c["plan"]
+    feed = c["feed"]
+    out = {"state": c["state"], "text": None, "headline": None, "rows": [], "more": 0, "advisories": [], "kev": 0,
+           "error": None, "note": c.get("note") or "", "releases": len(c.get("releases") or []),
+           "src": prov.opnsense_cves(c)}
+    if feed.get("error"):
+        out["error"] = (f"The last try to read OPNsense's changelog failed: {feed['error']}. "
+                        + (f"These are from the last good copy, {_ago(feed['ok_at'])}." if feed.get("ok_at") else "Nothing was read before it."))
+    if c["state"] == "off":
+        out["text"] = "CVE matching is off in Settings, so the CVEs this update fixes are not listed."
+    elif c["state"] == "unmapped":
+        out["text"] = {
+            "no_release": "The pending updates are for packages, with no new OPNsense release. OPNsense's changelog covers releases, so no CVEs are listed.",
+            "version": f"DaemonSight cannot order the versions {p.get('installed') or '?'} and {p.get('offered') or '?'}, so no CVEs are listed.",
+            "series": f"{p.get('installed') or '?'} is not a community release series (the Business Edition changelog is not read), so no CVEs are listed.",
+        }.get(p.get("why"), "No CVEs are listed for this update.")
+    elif c["state"] == "pending":
+        out["text"] = (f"The CVEs fixed between {p['installed']} and {p['offered']} are not known yet."
+                       if feed.get("error") else
+                       f"Looking up the CVEs fixed between {p['installed']} and {p['offered']}: the hub reads OPNsense's changelog on its next CVE pass.")
+    else:
+        s = opnsense_cves.summary(c["cves"], c["epss_high"])
+        n = len(s["fixable"])
+        out["kev"] = len(s["kev"])
+        out["headline"] = opnsense_cves.headline(n, out["kev"]) if n else "Fixes no CVE that OPNsense's changelog names"
+        for x in s["fixable"][:opnsense_cves.LIST_MAX]:
+            out["rows"].append({"cve": x["cve"], "url": x["url"], "kev": x["kev"], "kev_name": x.get("kev_name") or "",
+                                "epss": x["epss"], "epss_text": views._epss_text(x["epss"]), "epss_v": _epss_v(x["epss"]),
+                                "release": x["release"], "date": x["date"] or "", "changelog": x["changelog"], "line": x["line"]})
+        out["more"] = max(0, n - opnsense_cves.LIST_MAX)
+        out["advisories"] = [{"ref": a["ref"].split(":", 1)[1], "kind": ADVISORY_KIND.get(a["ref"].split(":", 1)[0], "Other"),
+                              "url": a["url"], "version": a["version"], "line": a["line"]}
+                             for a in c["advisories"]][:opnsense_cves.LIST_MAX]
+    return out
+
 
 def overview(conn, cfg: Config) -> dict:
     host = cfg.host_id
@@ -149,6 +197,8 @@ def overview(conn, cfg: Config) -> dict:
         firmware = {"rows": [{"name": p["name"], "old": p["old"], "new": p["new"], "reason": p["reason"]} for p in (fw["packages"] or fw["sets"])][:60],
                     "count": fw["count"], "version": fw.get("version"), "new": fw.get("new_version"), "reboot": fw.get("needs_reboot"),
                     "last_check": fw.get("last_check"), "since": _ago(fw.get("pending_since")) if fw.get("pending_since") else None}
+    if firmware:
+        firmware["cves"] = _cves_view(opnsense_cves.load(cfg, conn, host, fw))
     resources = None
     if sysd and (sysd.get("disks") or sysd.get("temperatures")):
         resources = {"disks": [{"mount": x["mount"], "device": x["device"], "type": x["type"], "percent": x.get("percent"),
@@ -163,6 +213,7 @@ def overview(conn, cfg: Config) -> dict:
         "top": None, "firmware": firmware, "resources": resources,
         "src": {"system": prov.opnsense_section("opnsense_system", url, interval), "findings": prov.section("findings", cfg),
                 "events": prov.section("events", cfg), "firmware": prov.opnsense_section("opnsense_firmware", url, interval),
+                "cves": ((firmware or {}).get("cves") or {}).get("src"),
                 "resources": prov.opnsense_section("opnsense_system", url, interval)},
     }
 

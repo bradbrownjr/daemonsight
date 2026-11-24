@@ -542,6 +542,7 @@ tracker. It needs outbound HTTPS, nothing inbound, to:
 | `security-tracker.debian.org` | Debian security tracker (JSON) | 15 MB as sent |
 | `epss.empiricalsecurity.com` | EPSS scores, from FIRST | 3 MB |
 | `www.cisa.gov` | CISA's Known Exploited Vulnerabilities list | 0.2 MB |
+| `codeload.github.com` | The OPNsense project's changelog (a tarball of github.com/opnsense/changelog), only while an OPNsense firewall has a release update pending | 0.6 MB |
 
 It fetches each every 24 hours, asking only for what changed, keeps them in
 `/data/cve/` and loads them into `/data/cve.db` (about 60 MB on disk, not
