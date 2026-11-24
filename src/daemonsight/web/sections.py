@@ -24,6 +24,7 @@ SECTIONS: dict[str, dict[str, list[tuple[str, str]]]] = {
         "overview": [("findings", "Findings"), ("glance", "At a glance"), ("events", "Recent changes")],
         "disks": [("array", "Array"), ("disks", "Disks")],
         "docker": [("images", "Unused images"), ("volumes", "Unused volumes"), ("cache", "Build cache")],
+        "images": [("image-list", "Images"), ("image-coverage", "What is checked")],
         "report": [("steps", "Steps"), ("decide", "Decide"), ("all", "All findings"), ("accepted", "Accepted")],
     },
     "opnsense": {

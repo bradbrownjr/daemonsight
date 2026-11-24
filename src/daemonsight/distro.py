@@ -21,7 +21,9 @@ from importlib import resources
 
 SYSTEM_DIR = "/usr/share/distro-info"
 SUPPORTED_DISTROS = ("debian", "ubuntu", "fedora")
-NAMES = {"debian": "Debian", "ubuntu": "Ubuntu", "fedora": "Fedora"}
+NAMES = {"debian": "Debian", "ubuntu": "Ubuntu", "fedora": "Fedora", "alpine": "Alpine", "centos": "CentOS"}
+# Container images only (evaluate_image): their end-of-life dates are bundled in data/endoflife/<name>.csv.
+IMAGE_EOL_ONLY = ("alpine", "centos")
 EOL_SOON_DAYS = 60
 LTS_URL = "https://wiki.debian.org/LTS"
 
@@ -217,6 +219,45 @@ def evaluate(ident: dict, today: date | None = None) -> Support:
     if esm and today < esm:
         return Support("extended", f"ESM only (Ubuntu Pro) until {esm.isoformat()}", until=esm, **base)
     return Support("eol", "End of life", until=esm, **base)
+
+
+def _endoflife_rows(name: str) -> list[dict]:
+    text = (resources.files("daemonsight.data") / "endoflife" / f"{name}.csv").read_text(encoding="utf-8")
+    return [{k: (v or None) for k, v in r.items()} for r in csv.DictReader(io.StringIO(text))]
+
+
+def evaluate_image(os_info: dict | None, today: date | None = None) -> Support:
+    """Whether the base operating system of a container image still gets security updates. `os_info` is the Docker
+    reader's os dict: id, version_id, codename, pretty.
+
+    Debian, Ubuntu and Fedora go through `evaluate`, the code hosts use. Alpine (cycle "3.17" from VERSION_ID
+    "3.17.2") and CentOS Linux (the major version) use the endoflife.date data in data/endoflife: supported until
+    the `eol` date, then end of life. CentOS Stream shares CentOS's os-release ID and is not judged. A release the
+    data does not list is unknown, not supported."""
+    os_info = os_info or {}
+    today = today or date.today()
+    os_id, version = (os_info.get("id") or "").lower(), (os_info.get("version_id") or "").strip()
+    if os_id in SUPPORTED_DISTROS or os_id == "raspbian":
+        return evaluate({"os_id": os_id, "version_id": version or None,
+                         "version_codename": (os_info.get("codename") or "").lower() or None}, today)
+    if os_id not in IMAGE_EOL_ONLY or not version:
+        return UNKNOWN
+    if os_id == "centos" and "stream" in (os_info.get("pretty") or "").lower():
+        return UNKNOWN
+    cycle = ".".join(version.split(".")[:2]) if os_id == "alpine" else version.split(".")[0]
+    rows = _endoflife_rows(os_id)
+    row = next((r for r in rows if r["version"] == cycle), None)
+    eol, released = _parse_date(row.get("eol") if row else None), _parse_date(row.get("released") if row else None)
+    if not row or not eol or (released and released > today):
+        return UNKNOWN
+    # The newest release still supported, to say what to move to (CentOS Linux has none: it is discontinued).
+    newest = max((r for r in rows if (_parse_date(r["released"]) or today) <= today and (_parse_date(r["eol"]) or today) > today),
+                 key=lambda r: _parse_date(r["released"]), default=None) if os_id == "alpine" else None
+    base = dict(distro=os_id, version=cycle, released=released, eol=eol,
+                current_version=newest["version"] if newest else "")
+    if today >= eol:
+        return Support("eol", "End of life", **base)
+    return Support("supported", "Supported", **base)
 
 
 STATUS_BADGE = {"supported": "bg-green-lt", "extended": "bg-yellow-lt", "ended": "bg-red-lt", "eol": "bg-red-lt"}

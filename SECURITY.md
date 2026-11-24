@@ -315,7 +315,7 @@ follow the same rules.
 ## The Docker reader
 
 The Docker reader (`daemonsight docker-reader`) lets the hub see an Unraid server's Docker images, volumes and build cache,
-which Unraid's API does not list. It is the most privileged piece of DaemonSight. It runs as its own container and mounts
+which Unraid's API does not list, and the package list of each image a container runs. It is the most privileged piece of DaemonSight. It runs as its own container and mounts
 `/var/run/docker.sock`, and **access to the Docker socket is root-equivalent on the host**: anything that can send requests
 to it can start a privileged container that mounts the host's disks. Install it only if the images and volumes list is worth
 that. The rest of this section says what limits it and what does not.
@@ -327,8 +327,33 @@ that. The rest of this section says what limits it and what does not.
   can't ask Docker anything else. There are no docs or OpenAPI routes and no request log.
 - **GET, from a fixed list.** The reader's Docker client has one method, which sends GET over the unix socket and refuses
   any target that is not in a fixed list compared as a whole string: `/_ping`, `/version`, `/containers/json?all=1`,
-  `/images/json?all=0&digests=1`, `/images/sha256:<64 hex>/json`, `/volumes` and `/system/df?verbose=1`. Tests send about 25
-  near misses and check that each is refused before anything is sent, and that the fake engine received only GETs from the list.
+  `/images/json?all=0&digests=1`, `/images/sha256:<64 hex>/json`, `/volumes`, `/system/df?verbose=1` and the container
+  archive read described in the next item. Tests send about 25 near misses and check that each is refused before anything is
+  sent, and that the fake engine received only GETs from the list.
+- **One more endpoint: a container's archive, for four fixed paths.** `GET /containers/{id}/archive?path=<p>` is Docker's
+  "Get an archive of a filesystem resource in a container" (operationId ContainerArchive in the Engine API v1.54 swagger,
+  https://docs.docker.com/reference/api/engine/version/v1.54.yaml). The reader sends it only for `/usr/lib/os-release`,
+  `/etc/os-release`, `/var/lib/dpkg/status` and `/lib/apk/db/installed`, URL-encoded exactly, and only with a container's
+  64-digit hex id (a name is refused). So it can read an image's operating system name and its installed package names and
+  versions, and no other file: not environment files, keys, configuration or data. A path that is not one of the four, a
+  `..`, a differently encoded form, an extra query parameter or a trailing newline is refused before anything is sent.
+  - **Why PutContainerArchive is never sent.** The same URL with PUT is "Extract an archive of files or folders to a directory
+    in a container" (PutContainerArchive): it writes files into a container, which is code execution inside it. The client
+    sends GET only and `check_allowed` refuses any other method, so a PUT (or a HEAD, ContainerArchiveInfo) is not built even by
+    mistake. A test checks that the fake engine saw only GETs.
+  - **What is read from the tar stream.** The reply is a tar stream, held in memory up to the file's cap plus 32 KiB and read
+    with `tarfile` in streaming mode (`r|`: no seeking, no decompression, so a gzip or bzip2 bomb is not unpacked). It must
+    hold exactly one member, and that member must be a regular file no bigger than the cap: 64 KB for os-release, 16 MB for
+    dpkg's status file, 4 MB for apk's installed database. A symlink (`/etc/os-release` usually is one) is not followed, which
+    is why `/usr/lib/os-release` is read first; a hard link, directory, device, a second member or a stream cut short is
+    refused. Nothing is written to disk and no member name is used as a path. Lines of the files are parsed for the named
+    fields only (`ID`, `ID_LIKE`, `VERSION_ID`, `VERSION_CODENAME`, `PRETTY_NAME`; `Package`, `Status`, `Version`, `Source`,
+    `Architecture`; `P`, `V`, `o`), cut to 100 characters each and 4,000 packages per image, and the rest is dropped.
+  - **How often.** One running container per image is read, once, and the result is kept by image id in the reader's memory, so
+    it is read again only after the image changes. At most 10 images are read per minute, one after another, so a server under
+    load is not asked for much. Stopped containers are never read.
+  - **The template needs no change.** The reader's container already has the socket and the network the archive read uses.
+    Read access to those four files is not a new permission on the socket.
 - **No inspect of containers.** `/containers/{id}/json` is never called, because it returns each container's environment,
   where passwords are. The image inspect reply has `Env`, `Cmd` and `Entrypoint`; they are dropped as it arrives. A test puts
   a secret in each place Docker would and checks it is absent from the output. Image labels are kept only for

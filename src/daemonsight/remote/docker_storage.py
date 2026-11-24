@@ -198,6 +198,38 @@ def _labels(v, prefixes: tuple[str, ...]) -> dict[str, str]:
             if isinstance(k, str) and k.startswith(prefixes)}
 
 
+PACKAGES_KEPT = 4000          # per image, the same cap the reader applies
+IMAGES_WITH_PACKAGES_KEPT = 1000
+
+
+def _os_info(v) -> dict | None:
+    if not isinstance(v, dict):
+        return None
+    return {"id": _text(v.get("id"), 40).lower(), "like": [_text(x, 40).lower() for x in (v.get("like") if isinstance(v.get("like"), list) else [])[:6] if isinstance(x, str)],
+            "version_id": _text(v.get("version_id"), 40), "codename": _text(v.get("codename"), 40).lower(),
+            "pretty": _text(v.get("pretty"), 80)}
+
+
+def _image_packages(raw) -> list[dict] | None:
+    """The reader's `image_packages`, checked and cut again. None when the reader did not send the field (a reader
+    from before package lists), which is not the same as an empty list."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for e in raw[:IMAGES_WITH_PACKAGES_KEPT]:
+        if not isinstance(e, dict) or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(e.get("image_id") or "")):
+            continue
+        pkgs = []
+        for p in (e.get("packages") if isinstance(e.get("packages"), list) else [])[:PACKAGES_KEPT]:
+            if isinstance(p, list) and len(p) >= 3 and all(isinstance(x, str) for x in p[:4]) and p[0] and p[2]:
+                pkgs.append([_text(p[0], 100), _text(p[1], 100), _text(p[2], 100), _text(p[3], 100) if len(p) > 3 else ""])
+        manager = e.get("manager") if e.get("manager") in ("dpkg", "apk") else None
+        out.append({"image_id": e["image_id"], "container": _text(e.get("container"), 80) or None, "read_at": _int(e.get("read_at")),
+                    "os": _os_info(e.get("os")), "manager": manager, "count": _int(e.get("count")) or 0, "packages": pkgs,
+                    "error": _text(e.get("error"), 200) or None})
+    return out
+
+
 def parse_summary(raw: dict, prev: dict | None, unraid_docker: dict | None, now: float) -> dict:
     """What is stored for this server: the summary, re-checked and trimmed again, with the volumes cut down to the
     unused ones and a count of the rest. `prev` is the last stored value (the remembered apps), `unraid_docker`
@@ -233,6 +265,7 @@ def parse_summary(raw: dict, prev: dict | None, unraid_docker: dict | None, now:
     return {"generated": now, "docker": {"version": _text(d.get("version"), 40), "api": _text(d.get("api"), 10)},
             "df_at": _int(raw.get("df_at")), "df_error": _text(raw.get("df_error"), 200) or None,
             "df_running": raw.get("df_running") is True,
+            "image_packages": _image_packages(raw.get("image_packages")),
             "images": images, "containers": containers, "images_reclaimable": _int(raw.get("images_reclaimable")),
             "volumes": {"total": vols, "in_use": in_use, "unknown": unknown, "total_size": known_size, "unused": unused[:5000]},
             "build_cache": {"count": _int(bc.get("count")), "size": _int(bc.get("size"))} if bc else None,

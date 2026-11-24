@@ -10,8 +10,10 @@ import asyncio
 import contextlib
 import copy
 import hashlib
+import io
 import json
 import re
+import tarfile
 
 import httpx
 
@@ -118,6 +120,36 @@ def standard_replies(df_shape: str = "new") -> dict:
     return replies
 
 
+def tar_of(name: str, data: bytes = b"", kind: bytes = tarfile.REGTYPE, link: str = "", extra: tuple = ()) -> bytes:
+    """A tar stream as ContainerArchive answers: one member (plus `extra` (name, data) regular members), uncompressed."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        info = tarfile.TarInfo(name)
+        info.type = kind
+        info.linkname = link
+        info.size = len(data) if kind == tarfile.REGTYPE else 0
+        tf.addfile(info, io.BytesIO(data) if kind == tarfile.REGTYPE else None)
+        for n, d in extra:
+            i2 = tarfile.TarInfo(n)
+            i2.size = len(d)
+            tf.addfile(i2, io.BytesIO(d))
+    return buf.getvalue()
+
+
+def archive_key(container_name: str, path: str) -> str:
+    """The engine's reply key (without the /v1.54 prefix) for one archive read of the container called `container_name`."""
+    from urllib.parse import quote
+    return f"/containers/{hashlib.sha256(container_name.encode()).hexdigest()}/archive?path={quote(path, safe='')}"
+
+
+def serve_files(replies: dict, container_name: str, files: dict) -> None:
+    """Make `replies` answer archive reads for a container. A value that is bytes becomes a one-file tar of that
+    content; a ("tar", raw) pair is sent as the raw tar stream given. A path not listed stays a 404."""
+    for path, content in files.items():
+        raw = content[1] if isinstance(content, tuple) else tar_of(path.rsplit("/", 1)[1], content)
+        replies[archive_key(container_name, path)] = raw
+
+
 class FakeEngine:
     def __init__(self, path, replies=None):
         self.path = str(path)
@@ -148,8 +180,8 @@ class FakeEngine:
         if callable(reply):
             reply = reply(bare)
         status, body = (reply if isinstance(reply, tuple) else (200, reply)) if reply is not None else (404, {"message": "page not found"})
-        raw = body.encode() if isinstance(body, str) else json.dumps(body).encode()
-        ctype = "text/plain" if isinstance(body, str) else "application/json"
+        raw = body if isinstance(body, bytes) else body.encode() if isinstance(body, str) else json.dumps(body).encode()
+        ctype = "application/x-tar" if isinstance(body, bytes) else "text/plain" if isinstance(body, str) else "application/json"
         writer.write(f"HTTP/1.1 {status} X\r\nContent-Type: {ctype}\r\nContent-Length: {len(raw)}\r\nConnection: close\r\n\r\n".encode() + raw)
         with contextlib.suppress(ConnectionError):
             await writer.drain()
@@ -217,6 +249,7 @@ def standard_summary() -> dict:
         images.append(dr.trim_image(s, s["Id"] in used, ins))
     for c in containers:
         c.pop("volumes")
+        c.pop("id")
     return {"v": 1, "generated": 1_800_000_000, "docker": {"version": "29.0.0", "api": "1.54"}, "df_at": 1_800_000_000,
             "df_error": None, "df_running": False, "containers": containers, "images": images,
             "images_reclaimable": df["images_reclaimable"], "volumes": dr.trim_volumes(r["/volumes"], df["volumes"], mounted),

@@ -36,7 +36,21 @@ for this file (https://docs.docker.com/reference/api/engine/version/v1.54/).
   `{Size, RefCount}`), `BuildCacheUsage` (`TotalCount`, `TotalSize`); before it, `Volumes` and `BuildCache` arrays.
   Both are read.
 
-Nothing else is sent: `Docker.get` refuses any other target, and has no method that sends anything but GET.
+* `GET /containers/{id}/archive?path=<p>`: "Get an archive of a filesystem resource in a container" (ContainerArchive, a
+  tar stream; the swagger file is https://docs.docker.com/reference/api/engine/version/v1.54.yaml). Only for the four
+  paths in docker_packages.ARCHIVE_PATHS (os-release twice, dpkg's status file, apk's installed database), URL-encoded,
+  and only with a container's 64-digit id. It is how an image's package list is read: see "Package lists" below. The
+  same URL with PUT (PutContainerArchive) writes files into a container and with HEAD (ContainerArchiveInfo) reads a
+  path's metadata; neither is ever sent.
+
+Nothing else is sent: `Docker.get` and `Docker.archive` refuse any other target, and nothing here sends anything but GET.
+
+Package lists. For each image a running container uses, one such container is read once and the result is kept by
+image id, so it is read again only when the image id changes (an update) or, after an error, 30 minutes later. At most
+ARCHIVE_IMAGES_PER_CYCLE images are read per SUMMARY_SECONDS, one after another in a background task (like the df read),
+so a server under load is never asked for much at once and the first full pass is spread over several minutes. An image
+only stopped containers use is reported as "not read: stopped". The summary carries `image_packages`: per image the
+OS (`id`, `like`, `version_id`, `codename`, `pretty`), the package manager, the package count, the list and any error.
 """
 
 from __future__ import annotations
@@ -58,10 +72,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from . import docker_packages as pk
 
 log = logging.getLogger("daemonsight.docker_reader")
 
 MAX_API = (1, 54)                  # the newest Engine API version whose reference was read (see the module doc)
+ARCHIVE_IMAGES_PER_CYCLE = 10      # images whose package list is read per SUMMARY_SECONDS
+PACKAGES_RETRY_SECONDS = 30 * 60   # an image whose read failed is tried again after this long
+MAX_PACKAGES_SENT = 40000          # across the whole summary; past it an image's list is left out (its count stays)
 DF_SECONDS = 30 * 60               # /system/df at most this often
 INSPECT_SECONDS = 30 * 60          # an image's inspect is reused this long
 SUMMARY_SECONDS = 60               # the whole summary is reused this long
@@ -119,8 +137,13 @@ class Docker:
         await self._http.aclose()
 
     @staticmethod
-    def check_allowed(target: str) -> None:
-        if target not in UNVERSIONED and target not in VERSIONED and not _INSPECT.match(target):
+    def check_allowed(target: str, method: str = "GET") -> None:
+        """Raise ValueError unless this is a GET of a listed target, compared as a whole string. A PUT or HEAD of the
+        archive URL is refused here too, though nothing in this file builds one."""
+        if method != "GET":
+            raise ValueError("only GET may be sent to Docker")
+        if target not in UNVERSIONED and target not in VERSIONED and not _INSPECT.fullmatch(target) \
+                and not pk.ARCHIVE_TARGET.fullmatch(target):
             raise ValueError("only the listed read-only Docker endpoints may be requested")
 
     def _url(self, target: str) -> str:
@@ -130,15 +153,15 @@ class Docker:
             raise DockerError("Docker's API version is not known yet.")
         return f"/v{self.api[0]}.{self.api[1]}{target}"
 
-    async def get(self, target: str, timeout: httpx.Timeout | None = None):
-        self.check_allowed(target)
+    async def _fetch(self, target: str, limit: int, timeout: httpx.Timeout | None = None) -> tuple[int, bytes]:
+        """GET `target` (already checked) and return (status, body), the body capped at `limit` bytes."""
         url = self._url(target)
         try:
             async with self._http.stream("GET", url, **({"timeout": timeout} if timeout else {})) as r:
                 body = bytearray()
                 async for chunk in r.aiter_bytes():
                     body += chunk
-                    if len(body) > MAX_BODY:
+                    if len(body) > limit:
                         raise DockerError("Docker's reply was too large; ignored.")
                 status = r.status_code
         except DockerError:
@@ -147,14 +170,41 @@ class Docker:
             raise DockerError("Docker did not answer in time.") from None
         except httpx.HTTPError as exc:
             raise DockerError(f"Could not reach Docker's socket ({type(exc).__name__}).") from None
+        return status, bytes(body)
+
+    async def get(self, target: str, timeout: httpx.Timeout | None = None):
+        self.check_allowed(target)
+        if target.startswith("/containers/") and "/archive?" in target:
+            raise ValueError("an archive is read with Docker.archive")
+        status, body = await self._fetch(target, MAX_BODY, timeout)
         if status != 200:
             raise DockerError(f"Docker answered HTTP {status}.")
         if target == "/_ping":
-            return bytes(body).decode("ascii", "replace").strip()[:20]
+            return body.decode("ascii", "replace").strip()[:20]
         try:
             return json.loads(body)
         except ValueError:
             raise DockerError("Docker's reply was not JSON.") from None
+
+    async def archive(self, container_id: str, path: str) -> bytes | None:
+        """The one file at `path` in a container, from ContainerArchive's tar stream, or None when Docker says it
+        does not exist (404). `path` must be one of docker_packages.ARCHIVE_PATHS and the id 64 hex digits. The tar is
+        held in memory up to the path's cap and read by docker_packages.read_single_file, which refuses anything but
+        one regular file; raises DockerError for a bad archive or any other status."""
+        target = pk.archive_target(container_id, path)
+        self.check_allowed(target)
+        cap = pk.CAPS[path]
+        status, body = await self._fetch(target, cap + pk.TAR_OVERHEAD)
+        if status == 404:
+            return None
+        if status != 200:
+            raise DockerError(f"Docker answered HTTP {status}.")
+        try:
+            return pk.read_single_file(body, cap)
+        except pk.ArchiveSymlink:
+            raise
+        except pk.ArchiveError as exc:
+            raise DockerError(str(exc)) from None
 
     async def negotiate(self) -> dict:
         """Read `/version` and fix the API version to use. Returns {"version", "api"} (what the daemon says)."""
@@ -207,7 +257,8 @@ def trim_containers(raw) -> list[dict]:
         mounts = c.get("Mounts") if isinstance(c.get("Mounts"), list) else []
         vols = sorted({clean(m.get("Name"), 100) for m in mounts[:200]
                        if isinstance(m, dict) and m.get("Type") == "volume" and m.get("Name")})
-        out.append({"name": clean(names[0] if names else "", 80).lstrip("/"), "image": clean(c.get("Image"), 200),
+        cid = c.get("Id") if isinstance(c.get("Id"), str) and _HEX64.match(c.get("Id")) else ""
+        out.append({"id": cid, "name": clean(names[0] if names else "", 80).lstrip("/"), "image": clean(c.get("Image"), 200),
                     "image_id": clean(c.get("ImageID"), 80), "state": clean(c.get("State"), 20).lower(),
                     "volumes": vols})
     out.sort(key=lambda c: c["name"].lower())
@@ -278,6 +329,57 @@ def trim_volumes(raw, usage: dict[str, dict], mounted: dict[str, int]) -> list[d
     return out
 
 
+# --- package lists ---------------------------------------------------------------------------------------------------
+
+def blank_entry(iid: str, container: str | None, error: str | None) -> dict:
+    return {"image_id": iid, "container": container, "read_at": None, "os": None, "manager": None, "count": 0,
+            "packages": [], "error": error}
+
+
+async def read_image(docker: Docker, iid: str, container: str, cid: str, now: float) -> tuple[dict, bool]:
+    """Read one image's os-release and package database through running container `cid`. Returns (entry, permanent):
+    permanent is True when reading again would give the same answer (it worked, or the OS has no dpkg or apk), False
+    after an error that may pass."""
+    entry = blank_entry(iid, container, None)
+    entry["read_at"] = int(now)
+    try:
+        os_info, note = None, ""
+        for path in pk.OS_RELEASE_PATHS:
+            try:
+                raw = await docker.archive(cid, path)
+            except pk.ArchiveSymlink:
+                note = "os-release is a link, which is not followed"
+                continue
+            if raw is not None:
+                os_info = pk.parse_os_release(raw.decode("utf-8", "replace"))
+                break
+        entry["os"] = os_info
+        kind = pk.os_kind(os_info)
+        if kind == "other":
+            name = os_info.get("pretty") or os_info.get("id")
+            entry["error"] = f"packages not read: {name} does not use dpkg or apk"
+            return entry, True
+        order = {"dpkg": ["dpkg"], "apk": ["apk"], "unknown": ["dpkg", "apk"]}[kind]
+        for manager in order:
+            path = pk.DPKG_STATUS if manager == "dpkg" else pk.APK_INSTALLED
+            raw = await docker.archive(cid, path)
+            if raw is None:
+                continue
+            parse = pk.parse_dpkg_status if manager == "dpkg" else pk.parse_apk_installed
+            entry["packages"], entry["count"] = parse(raw.decode("utf-8", "replace"))
+            entry["manager"] = manager
+            return entry, True
+        why = "no dpkg or apk package database in the image (a distroless or minimal image)"
+        entry["error"] = f"packages not read: {why}" + (f"; {note}" if note and os_info is None else "")
+        return entry, False
+    except pk.ArchiveSymlink:
+        entry["error"] = "packages not read: the package database is a link, which is not followed"
+        return entry, True
+    except DockerError as exc:
+        entry["error"] = f"packages not read: {exc}"
+        return entry, False
+
+
 # --- the summary --------------------------------------------------------------------------------------------------
 
 @dataclass
@@ -297,6 +399,13 @@ class Summarizer:
     df_task: asyncio.Task | None = None
     _inspect: dict[str, tuple[float, dict]] = field(default_factory=dict)
     _info: dict | None = None
+    max_reads: int = ARCHIVE_IMAGES_PER_CYCLE      # images whose package list is read per `pace` seconds
+    pace: float = SUMMARY_SECONDS
+    read_packages: bool = True                      # False in tests that count requests
+    pk_task: asyncio.Task | None = None
+    _pk: dict[str, tuple[float | None, dict]] = field(default_factory=dict)    # image id -> (retry at, entry)
+    _pk_targets: dict[str, tuple[str, str]] = field(default_factory=dict)      # image id -> (container name, id) to read
+    _pk_stopped: set[str] = field(default_factory=set)                         # images only stopped containers use
 
     async def health(self) -> dict:
         reply = await self.docker.get("/_ping")
@@ -311,10 +420,12 @@ class Summarizer:
             now = self.clock()
             self._maybe_start_df(now)
             if self._summary is not None and now - self._built < SUMMARY_SECONDS:
-                return {**self._summary, **self._df_state()}
+                self._maybe_start_packages(now)
+                return {**self._summary, **self._df_state(), "image_packages": self._pk_entries()}
             self._summary = await self._build(now)
             self._built = now
-            return {**self._summary, **self._df_state()}
+            self._maybe_start_packages(now)
+            return {**self._summary, **self._df_state(), "image_packages": self._pk_entries()}
 
     def _maybe_start_df(self, now: float) -> None:
         running = self.df_task is not None and not self.df_task.done()
@@ -371,10 +482,79 @@ class Summarizer:
         images = [trim_image(s, in_use, ins) for (s, in_use), ins in zip(todo, results)]
         for iid in set(self._inspect) - live:
             del self._inspect[iid]
+        self._note_containers(containers)
         for c in containers:     # the reader sends which volumes a container uses, not the mounts themselves
             c.pop("volumes", None)
+            c.pop("id", None)
         return {"v": 1, "generated": int(now), "docker": dict(self._info), "containers": containers, "images": images,
                 "volumes": trim_volumes(volumes_raw, (self._df or parse_df(None))["volumes"], mounted)}
+
+    # --- package lists ---------------------------------------------------------------------------------------
+
+    def _note_containers(self, containers: list[dict]) -> None:
+        """Which container to read for each image (the first running one by name, with a 64-digit id), which images
+        only stopped containers use, and drop what is cached for images no container uses any more."""
+        targets: dict[str, tuple[str, str]] = {}
+        used: set[str] = set()
+        for c in containers:           # sorted by name
+            if not c["image_id"]:
+                continue
+            used.add(c["image_id"])
+            if c["state"] == "running" and c["id"] and c["image_id"] not in targets:
+                targets[c["image_id"]] = (c["name"], c["id"])
+        self._pk_targets = targets
+        self._pk_stopped = used - set(targets)
+        for iid in set(self._pk) - used:
+            del self._pk[iid]
+
+    def _pk_pending(self, now: float) -> list[str]:
+        """Image ids to read now: a running container uses them and nothing is cached, or an error's retry time is past."""
+        out = []
+        for iid in self._pk_targets:
+            hit = self._pk.get(iid)
+            if hit is None or (hit[0] is not None and now >= hit[0]):
+                out.append(iid)
+        return sorted(out, key=lambda i: self._pk_targets[i][0])
+
+    def _maybe_start_packages(self, now: float) -> None:
+        running = self.pk_task is not None and not self.pk_task.done()
+        if self.read_packages and not running and self.docker.api is not None and self._pk_pending(now):
+            self.pk_task = asyncio.create_task(self._packages_pass())
+
+    async def _packages_pass(self) -> None:
+        """Read the pending images, `max_reads` per `pace` seconds, until none is pending."""
+        try:
+            while await self.read_batch():
+                await asyncio.sleep(self.pace)
+        except Exception:
+            log.exception("Reading image package lists failed")
+
+    async def read_batch(self) -> int:
+        """Read up to `max_reads` pending images, one after another. Returns how many were read."""
+        todo = self._pk_pending(self.clock())[: self.max_reads]
+        for iid in todo:
+            name, cid = self._pk_targets.get(iid, (None, None))
+            if cid is None:
+                continue
+            entry, permanent = await read_image(self.docker, iid, name, cid, self.clock())
+            self._pk[iid] = (None if permanent else self.clock() + PACKAGES_RETRY_SECONDS, entry)
+        return len(todo)
+
+    def _pk_entries(self) -> list[dict]:
+        out, total = [], 0
+        if not self.read_packages:
+            return out
+        for iid in sorted(self._pk_targets.keys() | self._pk_stopped):
+            hit = self._pk.get(iid)
+            if hit is not None:
+                entry = dict(hit[1])
+            else:
+                entry = blank_entry(iid, None, "not read: stopped" if iid in self._pk_stopped else "not read yet")
+            if total + len(entry["packages"]) > MAX_PACKAGES_SENT:
+                entry["packages"], entry["error"] = [], entry["error"] or "package list left out: the summary would be too large"
+            total += len(entry["packages"])
+            out.append(entry)
+        return out
 
     async def _inspected(self, iid: str, now: float) -> dict | None:
         hit = self._inspect.get(iid)
@@ -444,6 +624,9 @@ def create_app(token: str, docker: Docker):
     @contextlib.asynccontextmanager
     async def lifespan(_app):
         yield
+        for task in (summarizer.pk_task, summarizer.df_task):
+            if task is not None and not task.done():
+                task.cancel()
         with contextlib.suppress(Exception):
             await docker.aclose()
 

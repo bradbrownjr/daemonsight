@@ -586,7 +586,7 @@ supports ntfy and SMTP email. Daily digest optional.
 3. Package and CVE checks.
    3a. Pending updates, reboots, services on old libraries: the `packages` source, `pkg` rules and Packages page. Done for apt and, since Fedora support, for dnf5 too.
    3b. CVE matching on the hub: collectors send installed packages (source name and version) and the release; the hub matches them against the Debian security tracker, ranks by EPSS and CISA's KEV list, and raises one finding per package. Vulnerabilities page, `cve.*` rules, and Fedora's pending advisories. No scanner binary on the hosts. Done for Debian and Raspberry Pi OS; Ubuntu is next (see "CVE matching"). See also the automatic-updates advice in 3a (`pkg.auto_updates_off`).
-   3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases.
+   3c. CVEs in container images: the package list read from each running Debian- or Ubuntu-based container through the Docker API, matched the same way; Alpine through its security database. Trivy may come later, opt-in and pinned, for other bases. Part 1 is done: the reader reads each running image's package list, the Container images page shows each image's base OS and support status (`docker.eol_base`), and Debian images are matched against the Debian tracker (`docker.image_cves`). Ubuntu images (with phase 3b's Ubuntu matcher) and Alpine images (secdb) are next. See "Docker reader", "Container images".
 4. Alerts, recent-changes feed, history charts with drill-down. See "History charts and drill-down (planned)".
 5. `.deb` package and docs.
 
@@ -1831,7 +1831,7 @@ Data flow:
  Docker daemon          Docker reader container                hub container
  ┌────────────┐  unix   ┌───────────────────────┐  HTTP, bearer ┌───────────────────────┐
  │ Engine API │ socket  │ docker_reader.py      │  token, over  │ remote/poll.py        │
- │ (root)     │◄────────┤ GET only, 6 fixed     │  the network  │  every 10 min at most │
+ │ (root)     │◄────────┤ GET only, fixed       │  the network  │  every 10 min at most │
  │            │  GET    │ targets, no inspect   │  `daemonsight`│ GET /v1/summary       │
  └────────────┘         │ serves /v1/summary    │◄──────────────┤ snapshot              │
                         │ and /v1/health only   │   JSON        │ unraid_docker_storage │
@@ -1859,6 +1859,7 @@ https://docs.docker.com/reference/api/engine/version/v1.54.yaml).
 | `GET /images/{id}/json` | Inspect an image (ImageInspect), for an image no container uses, and only with a `sha256:` id of 64 hex digits | `Metadata.LastTagTime`, `Config.Labels` |
 | `GET /volumes` | List volumes (VolumeList) | `Name`, `Driver`, `CreatedAt`, `Labels` |
 | `GET /system/df?verbose=1` | Get data usage information (SystemDataUsage); `verbose`: "Show detailed information on space usage" | volume `UsageData` (`Size`, `RefCount`); build cache `TotalCount` and `TotalSize` (from API 1.52; before it `Volumes` and `BuildCache` arrays, which are read too) |
+| `GET /containers/{id}/archive?path=<p>` | Get an archive of a filesystem resource in a container (ContainerArchive; "Get a tar archive of a resource in the filesystem of container id"; produces `application/x-tar`) | One file per read, only for the four paths below, with the container's 64-hex id |
 
 Why `all=0` and not `all=1`: with `all=0` the list already has dangling images (untagged leaves, the ones `docker image
 prune` removes). `all=1` adds the intermediate layers of builds, which nobody can remove on their own and which would show
@@ -1964,6 +1965,85 @@ Not verified: the exact requests on the wire against this daemon, and the JSON s
 which is read from the reference and tested against a fake engine only; what group Unraid's `/var/run/docker.sock` has;
 that `--group-add` with a name that does not exist stops the container from starting (it is meant to); and whether this
 Unraid version's hub template offers "Additional Networks".
+
+### Container images (phase 3c, part 1)
+
+Which images the containers run, what operating system and packages each holds, whether that base still gets security
+updates and which Debian packages have CVEs an update fixes. Sources: https://docs.docker.com/reference/api/engine/version/v1.54.yaml
+(`GET /containers/{id}/archive`, operationId ContainerArchive; its sibling `PUT` is PutContainerArchive, "Extract an archive of
+files or folders to a directory in a container", and `HEAD` is ContainerArchiveInfo; neither is ever sent).
+
+**Reading the lists** (`docker_reader.py`, `docker_packages.py`).
+
+- Four paths, fixed in code and URL-encoded: `/usr/lib/os-release`, `/etc/os-release` (a symlink to the first on most images;
+  an archive of a symlink holds the link, which is not followed, so the first is read first), `/var/lib/dpkg/status` (Debian,
+  Ubuntu) and `/lib/apk/db/installed` (Alpine). The id must be 64 hex digits. `Docker.check_allowed` takes the method as well
+  and refuses anything but GET.
+- The tar reply is read from memory with `tarfile` in streaming mode (`r|`): one member, a regular file, within the cap (64 KB
+  os-release, 16 MB dpkg, 4 MB apk), nothing written to disk. A link, a directory, a second member, a gzip stream or a cut
+  stream is refused with a short message.
+- os-release gives `ID`, `ID_LIKE`, `VERSION_ID`, `VERSION_CODENAME`, `PRETTY_NAME`. dpkg status: only stanzas whose `Status` is
+  exactly `install ok installed` (`deinstall ok installed` is not), with `Package`, `Version`, `Source` and its optional
+  version in parentheses (`Source: brotli (1.0.9-2)`: the tracker is keyed by the source name and that version, which differ
+  from the binary's after a rebuild such as `1.0.9-2+b6`) and `Architecture` (a package present for two architectures is one
+  entry). apk: `P:` name, `V:` version, `o:` origin. A package is `[name, source, version, source version]` with the last two
+  left empty when they equal the first and third; at most 4,000 per image.
+- An OS with neither dpkg nor apk (CentOS, Void, Arch) says "packages not read: <name> does not use dpkg or apk" and is never
+  read again. An image with no package database (distroless) says so and is tried again after 30 minutes, as is any read that
+  failed.
+- Per image, not per container: the first running container by name is read once and kept by image id in the reader's memory;
+  a new image id (an update) reads again. Images only stopped containers use are "not read: stopped". A background task reads at
+  most 10 images per minute, so the first full pass over about a hundred images takes ten minutes and a loaded server is never
+  asked for much at once. The summary carries `image_packages` for every image a container uses, with `read_at`, `os`,
+  `manager`, `count`, `packages` and `error`; "not read yet" marks one still waiting. The summary keeps `v: 1`: an older hub
+  ignores the field, and a newer hub with an older reader shows "does not send package lists yet". Memory: the reply and its
+  parsed text are held at once, a few tens of MB for a 16 MB file, inside the template's 256 MB limit.
+
+**Base OS and end of life** (`remote/docker_images.py`, `distro.evaluate_image`). The same code path as hosts: Debian, Ubuntu and
+Fedora go through `distro.evaluate` (distro-info data, Fedora's endoflife.date copy). Alpine and CentOS Linux read
+endoflife.date's data, bundled in `data/endoflife/` (https://endoflife.date/api/v1/products/alpine-linux/ and `.../centos/`;
+the address `.../alpine/` redirects to `alpine-linux`, the product name this uses). Alpine's cycle is the first two parts of
+`VERSION_ID` (3.17.2 is 3.17); CentOS Stream shares `ID=centos` and is not judged; a release the data does not list is
+"unknown", never "supported". Finding `docker.eol_base` (Medium, one for the system, key `all`): every image whose status is
+`eol`, or `ended` (Debian past LTS: only paid ELTS covers it). An image on Debian LTS or Ubuntu ESM still gets some updates,
+so the page shows it in yellow and the finding does not count it. The basis is the set of image repositories and release names
+(`nginx@Debian 10`), with no dates and no patch versions, so an acceptance stays until the set changes.
+
+**Debian CVEs** (`cve/run.py`, `cve/match.py`, `docker_images.py`). The CVE chore matches each Debian image like a host: a
+pseudo inventory (source packages with their source versions and binary names) under the id `docker:<system>:<image id, 16
+hex>`, which cannot collide with a host id (no colons there). The release comes from the codename, or from `VERSION_ID` through
+Debian's release data when the codename is absent; Raspberry Pi OS counts as Debian; a Debian derivative with its own id is
+"not matched". The chore loads the tracker for the images' releases as well as the hosts', and keeps their rows in the same
+`match` table. Kernel sources are skipped without a kernel image, as for a host, so `linux-libc-dev` raises nothing. At each poll
+the hub reads those rows (`load_cves`) and `docker.image_cves` is evaluated with the Unraid rules: no schema change.
+
+One finding per image, key the image's name (the tag a container uses, else the image's first tag), linked to its row on the
+Container images page.
+
+- **High** if a fixable CVE is on CISA's KEV list or has an EPSS score at or above `[cve] epss_high`; **Medium** otherwise.
+  Title: `nginx:1.27 (Debian 12): 3 fixable CVEs, 1 known exploited`.
+- Only a CVE the tracker lists as fixed in a newer version counts (a host's `fix` state). CVEs with no fix yet are counted on
+  the page as information and raise nothing, because updating the image cannot fix them; this differs from a host's
+  `cve.package`, which is High for an unfixed KEV CVE since a host's owner can mitigate it. "Minor" and "being assessed"
+  rows are not counted.
+- The basis is the image repository and the sorted ids of the fixable CVEs: an accepted finding stays through a rebuilt image
+  with the same CVEs and returns as Changed when the set changes.
+- Fix: update the image (Unraid: Docker tab, Check for Updates, apply; or pull a newer tag). `apt upgrade` inside a container
+  does not persist. If no newer image exists, the maintainer has not rebuilt it.
+- Ubuntu images count as "Ubuntu matching not built yet (phase 3b)" and Alpine as "Alpine matching next"; neither is a finding.
+- A release the tracker no longer lists has no rows, so an end-of-life Debian image may show no CVEs; the end-of-life finding
+  covers it.
+
+**The page.** Its own tab, Container images (`/images`), because the Docker storage page already lists up to 250 rows and this
+one has a row per image in use. Cards: Images in use (a sentence, then a table: image, base OS, support, packages, fixable CVEs
+with a KEV badge and the top EPSS score, status; the status label is the image's finding's, Accepted rows stay visible) and What
+is checked (counts: read, Debian matched, Ubuntu, Alpine, other OS, stopped, waiting, failed). Each row's (i) panel names the
+reader endpoint, the Docker call and the equivalent command: `docker cp -L <container>:/var/lib/dpkg/status - | tar -xO`.
+Registered in `web/sections.py`. The Overview's glance has a line for it.
+
+Not verified: the exact bytes Docker 29 sends for a one-file archive and for a symlink on a live server (the tests build
+the tar with Python's `tarfile`; the swagger file only says the reply is a tar stream), and that a reader on the owner's
+server finishes its first pass in ten minutes.
 
 ### Provider firewalls
 

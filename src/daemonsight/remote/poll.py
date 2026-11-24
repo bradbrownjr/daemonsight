@@ -40,7 +40,7 @@ import time
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import crowdsec, docker_storage, opnsense, release, roles, store, unraid
+from . import crowdsec, docker_images, docker_storage, opnsense, release, roles, store, unraid
 from .client import Graph, Net, RemoteError, Rest
 
 log = logging.getLogger("daemonsight.remote")
@@ -73,7 +73,7 @@ def _put_source(conn, host: str, source: str, now: float, ok: bool, error: str |
     db.put_snapshot(conn, host, source, now, ok, error, data)
 
 
-def _rule_inputs(conn, host: str) -> dict[str, dict | None]:
+def _rule_inputs(conn, host: str, cfg: Config | None = None) -> dict[str, dict | None]:
     snaps = db.get_snapshots(conn, host)
     out: dict[str, dict | None] = {}
     for src in unraid.SOURCES:
@@ -82,6 +82,8 @@ def _rule_inputs(conn, host: str) -> dict[str, dict | None]:
     out["release"] = release.stored(conn)
     s = snaps.get(docker_storage.SNAPSHOT)
     out["docker_storage"] = s.data if s and s.data else None
+    # What the CVE chore found in the Debian images (needs the CVE database, so only with the config).
+    out["image_cves"] = docker_images.load_cves(cfg, conn, host, out["docker_storage"]) if cfg is not None else None
     return out
 
 
@@ -117,7 +119,7 @@ def _record_failure(conn, row, now: float, error: str) -> None:
     _set_unreachable(conn, store.get(conn, row["id"]), now, error)
 
 
-def _record_success(conn, row, now: float, system: dict | None) -> None:
+def _record_success(conn, row, now: float, system: dict | None, cfg: Config | None = None) -> None:
     host = row["id"]
     kind = row["kind"]
     was_down = (row["fails"] or 0) > 0
@@ -128,12 +130,13 @@ def _record_success(conn, row, now: float, system: dict | None) -> None:
     if was_down:
         _event(conn, host, now, "remote_back", "Reading this system again")
     _set_unreachable(conn, store.get(conn, host), now, None)
-    reconcile(conn, host, kind, now)
+    reconcile(conn, host, kind, now, cfg)
 
 
-def reconcile(conn, host: str, kind: str, now: float) -> None:
-    """Make the open findings of this kind of system match what its stored readings say now, with events."""
-    current = opnsense_rules_evaluate(conn, host, now) if kind == "opnsense" else unraid_rules_evaluate(conn, host, now)
+def reconcile(conn, host: str, kind: str, now: float, cfg: Config | None = None) -> None:
+    """Make the open findings of this kind of system match what its stored readings say now, with events. `cfg` lets
+    an Unraid system's image CVE findings read the CVE database; without it they are not evaluated."""
+    current = opnsense_rules_evaluate(conn, host, now) if kind == "opnsense" else unraid_rules_evaluate(conn, host, now, cfg)
     for change, f in db.reconcile_findings(conn, host, now, current, only_prefix=RULE_PREFIX.get(kind, ("unraid.", "docker."))):
         if change == "opened":
             db.add_event(conn, host, now, "finding_opened", f.title, severity=f.severity, detail=f.detail, link=f.link)
@@ -141,9 +144,9 @@ def reconcile(conn, host: str, kind: str, now: float) -> None:
             db.add_event(conn, host, now, "finding_resolved", f"Resolved: {f['title']}", link=f["link"])
 
 
-def unraid_rules_evaluate(conn, host: str, now: float) -> list[Finding]:
+def unraid_rules_evaluate(conn, host: str, now: float, cfg: Config | None = None) -> list[Finding]:
     from . import unraid_rules
-    return unraid_rules.evaluate(_rule_inputs(conn, host), now)
+    return unraid_rules.evaluate(_rule_inputs(conn, host, cfg), now)
 
 
 def opnsense_inputs(conn, host: str) -> dict[str, dict | None]:
@@ -341,7 +344,7 @@ async def poll_one(conn, cfg: Config, row, net: Net, now: float | None = None) -
     else:
         old = db.get_snapshot(conn, host, "unraid_system")
         system = old.data if old else None
-    _record_success(conn, current, now, system)
+    _record_success(conn, current, now, system, cfg)
 
 
 async def poll_opnsense(conn, cfg: Config, row, net: Net, now: float) -> None:

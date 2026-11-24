@@ -51,7 +51,12 @@ the row they are about, and a port's panel shows the process behind it.
   by an update, an app that was removed, its source label, a base image), with the
   `docker` command for each. Findings: old image versions, unused images, unused
   volumes (with a data-loss warning) and a build cache over 5 GB. DaemonSight never
-  deletes anything. The reader holds the Docker socket, which is root on the
+  deletes anything. The reader also reads each running image's package list (four
+  fixed files, through Docker's container archive call). The Container images page
+  shows each image's base OS and whether it still gets security updates (finding:
+  images on an end-of-life base) and matches Debian images' packages against
+  Debian's security tracker, ranked by CISA KEV and EPSS (finding: one per image,
+  with the fixable CVEs). The reader holds the Docker socket, which is root on the
   server: read [SECURITY.md](SECURITY.md) first.
 - **OPNsense, read over its API.** The hub polls an OPNsense firewall with a
   dedicated user's API key and secret, no agent on the firewall. Its pages
@@ -171,7 +176,7 @@ these gaps.
 | Listening and open ports | `ss` / `/proc/net`, nftables rules |
 | Network traffic, CPU, memory, disk | `/proc`, psutil |
 | CVEs in host packages | Debian security tracker, CISA KEV and EPSS, matched on the hub; Fedora security advisories (dnf5) |
-| CVEs in container images | Planned |
+| CVEs in container images | Debian images done; Alpine and Ubuntu next |
 
 Targets: a Debian VPS running Caddy and Docker, and Debian LXC containers.
 

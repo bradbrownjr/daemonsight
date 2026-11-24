@@ -10,7 +10,7 @@ from .test_remote import KEY
 from .test_web import client, login, seeded  # noqa: F401 (fixture)
 
 PAGE_KEYS = {"": {"overview", "exposure", "routes", "services", "packages", "vulnerabilities", "fail2ban", "report"},
-             "unraid": {"overview", "disks", "containers", "docker", "vms", "notifications", "report"},
+             "unraid": {"overview", "disks", "containers", "docker", "images", "vms", "notifications", "report"},
              "opnsense": {"overview", "firewall", "vpn", "network", "report"},
              "hub": {"hosts"}}
 

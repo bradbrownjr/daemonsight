@@ -9,13 +9,13 @@ import time
 
 from .. import db, findings as rules
 from ..config import Config
-from ..remote import docker_storage, release, store, unraid, unraid_notify, unraid_rules
+from ..remote import docker_images, docker_storage, release, store, unraid, unraid_notify, unraid_rules
 from . import provenance as prov
 from . import views
 from .views import _sortval, fmt_ago, fmt_bytes, fmt_duration, level_class, pct_class, status_of
 from ..remote.docker_storage import fmt_size
 
-PAGES = ("overview", "disks", "containers", "docker", "vms", "notifications")
+PAGES = ("overview", "disks", "containers", "docker", "images", "vms", "notifications")
 
 STATE_BADGE = {"STARTED": "bg-green-lt", "RECON_DISK": "bg-yellow-lt"}
 DISK_OK = "DISK_OK"
@@ -160,6 +160,12 @@ def overview(conn, cfg: Config) -> dict:
                        "value": f"{n_img} unused image{'s' if n_img != 1 else ''}, {n_vol} unused volume{'s' if n_vol != 1 else ''}",
                        "note": f"{fmt_size(sum(i['size'] or 0 for i in ds['unused_images']))} of images, "
                                f"{fmt_size(sum(v['size'] or 0 for v in ds['unused_volumes']))} of volumes"})
+    ia = docker_images.analyze(_data(snaps, docker_storage.SNAPSHOT), dk, docker_images.load_cves(cfg, conn, host, _data(snaps, docker_storage.SNAPSHOT)))
+    if ia:
+        n_fix = sum(1 for r in ia["rows"] if (r["cve"] or {}).get("fixable"))
+        glance.append({"title": "Container images", "alert": "end of life" if ia["eol"] else None, "link": "/images",
+                       "value": f"{len(ia['eol'])} on an end-of-life OS, {n_fix} with fixable CVEs",
+                       "note": f"{ia['counts']['read']} of {len(ia['rows'])} package lists read"})
     if vm:
         vs = vm["vms"]
         glance.append({"title": "VMs", "value": f"{sum(1 for v in vs if v['state'] == 'RUNNING')} of {len(vs)} running",
@@ -375,6 +381,86 @@ def docker(conn, cfg: Config) -> dict:
     }
 
 
+def _image_findings(conn, host: str) -> dict[tuple[str, str], dict]:
+    active, held = views.findings_lists(conn, host)
+    return {(f["rule"], f["key"]): f for f in active + held if f["rule"] in ("docker.eol_base", "docker.image_cves")}
+
+
+def _cve_cell(r: dict) -> dict:
+    """The "Fixable CVEs" cell of one image: {"text", "kev", "top", "note", "v"}."""
+    kind, c = r["kind"], r["cve"]
+    if kind == "debian" and c and c["state"] == "matched":
+        n = len(c["fixable"])
+        top = c["fixable"][0] if c["fixable"] else None
+        from ..cve import match
+        return {"text": f"{n} fixable" if n else "None fixable", "kev": len(c["kev"]), "hot": len(c["hot"]),
+                "top": match.pct(top["epss"]) if top and top["epss"] is not None else None,
+                "note": f"{c['unfixed']} with no fix yet" if c["unfixed"] else None, "v": n}
+    if kind == "debian":
+        return {"text": "CVE matching is off" if c and c["state"] == "off" else "Waiting for the CVE matcher", "v": -1}
+    if kind == "ubuntu":
+        return {"text": "Ubuntu matching not built yet (phase 3b)", "v": -1}
+    if kind == "alpine":
+        return {"text": "Alpine matching next", "v": -1}
+    if kind == "other" and r["manager"]:
+        return {"text": "Not matched for this OS", "v": -1}
+    return {"text": "—", "v": -1}
+
+
+def _packages_cell(r: dict) -> dict:
+    if r["state"] == "read":
+        return {"text": f"{r['count']} read", "note": r["manager"], "v": r["count"]}
+    reasons = {"stopped": "Not read: stopped", "waiting": "Waiting for its first read"}
+    err = r["error"] or "not read"
+    return {"text": reasons.get(r["state"]) or err[:1].upper() + err[1:], "note": None, "v": -1}
+
+
+def images(conn, cfg: Config) -> dict:
+    """The Container images page: each image a container uses, its base OS and support, and the CVEs in its Debian
+    packages, from the Docker reader's package lists and the hub's CVE data."""
+    host = cfg.host_id
+    snaps = db.get_snapshots(conn, host)
+    remote = _remote(conn, host)
+    reader_url = remote["reader_url"] if remote else None
+    data = _data(snaps, docker_storage.SNAPSHOT)
+    cves = docker_images.load_cves(cfg, conn, host, data)
+    a = docker_images.analyze(data, _data(snaps, "unraid_docker"), cves)
+    found = _image_findings(conn, host)
+    snap = snaps.get(docker_storage.SNAPSHOT)
+    now = time.time()
+    rows = []
+    for r in (a or {}).get("rows", []):
+        cands = []
+        if (("docker.image_cves", r["name"])) in found:
+            cands.append(found[("docker.image_cves", r["name"])])
+        if r["support"]["status"] in ("eol", "ended") and ("docker.eol_base", "all") in found:
+            cands.append(found[("docker.eol_base", "all")])
+        sts = [(views.status_of(False, f), f) for f in cands]
+        st, f = next(((s, f) for s, f in sts if s["attention"]), sts[0] if sts else (None, None))
+        sup = r["support"]
+        rows.append({**r, "status": st, "pk": _packages_cell(r), "cvec": _cve_cell(r),
+                     "sup_badge": distro_badge(sup["status"]), "sup_v": sup["eol"] or "",
+                     "containers_text": ", ".join(r["containers"][:3]) + (f" and {len(r['containers']) - 3} more" if len(r["containers"]) > 3 else ""),
+                     "src": {**prov.docker_image_row(r), "finding": f, "anchor": r["anchor"]}})
+    counts = (a or {}).get("counts") or {}
+    fixable = sum(1 for r in rows if r["cvec"]["v"] > 0)
+    kev = sum(1 for r in rows if r["cvec"].get("kev"))
+    return {
+        "host": views._host(cfg, snaps), "configured": bool(reader_url), "state": views._source_state(snaps, docker_storage.SNAPSHOT),
+        "edit": f"/remotes/{host}/edit#docker-reader", "ago": fmt_ago(snap.taken_at, now) if snap and snap.data else None,
+        "has_data": bool(data), "old_reader": bool(data) and a is None,
+        "rows": rows, "counts": counts, "eol": len((a or {}).get("eol", [])), "fixable": fixable, "kev": kev,
+        "cve_off": bool(cves) and not cves["enabled"], "cve_missing": bool(cves) and cves["enabled"] and not cves["available"],
+        "feed_ago": fmt_ago(cves["feed_at"], now) if cves and cves.get("feed_at") else None,
+        "src": {"images": prov.images_section(reader_url)},
+    }
+
+
+def distro_badge(status: str) -> str:
+    from .. import distro
+    return distro.STATUS_BADGE.get(status, "bg-secondary-lt")
+
+
 def _groups(rows: list[dict], folders: dict | None) -> list[dict]:
     """The container rows grouped by the folders on Unraid's Docker tab, in the owner's order, then "Ungrouped".
     Every row appears exactly once. Without folder data (an older Unraid, or the read failed) there is one group
@@ -433,5 +519,5 @@ def notifications(conn, cfg: Config) -> dict:
             "src": {"notifications": prov.unraid_section("unraid_notifications", url, interval)}}
 
 
-PAGE_FUNCS = {"overview": overview, "disks": disks, "containers": containers, "docker": docker, "vms": vms,
+PAGE_FUNCS = {"overview": overview, "disks": disks, "containers": containers, "docker": docker, "images": images, "vms": vms,
               "notifications": notifications}

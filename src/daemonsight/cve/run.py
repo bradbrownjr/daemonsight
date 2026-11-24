@@ -38,6 +38,22 @@ def _inventories(conn) -> dict[str, dict]:
     return out
 
 
+def _image_inventories(conn) -> dict[str, dict]:
+    """pseudo-host -> inventory for every Debian container image an Unraid system's Docker reader listed (see
+    remote/docker_images.py). They are matched like hosts but never get findings here: poll.py raises
+    `docker.image_cves` from the matches."""
+    from ..remote import docker_images, docker_storage
+    stored = {}
+    for r in conn.execute("SELECT host, data FROM snapshots WHERE source = ?", (docker_storage.SNAPSHOT,)):
+        try:
+            d = json.loads(r["data"]) if r["data"] else None
+        except ValueError:
+            d = None
+        if isinstance(d, dict):
+            stored[r["host"]] = d
+    return docker_images.image_inventories(stored)
+
+
 def _pending_names(conn, host: str) -> set[str]:
     snap = db.get_snapshot(conn, host, "packages")
     ups = (snap.data or {}).get("updates", []) if snap and snap.data and snap.data.get("available") is not False else []
@@ -92,7 +108,10 @@ class Chore:
             self._epss_high = self.cfg.cve.epss_high
             self.dirty = True          # the High threshold moved
         invs = _inventories(self.state)
-        releases = {i["codename"] for i in invs.values() if match.release_of(i)}
+        # Debian container images are matched like hosts, under pseudo-host ids, and their releases are loaded too.
+        imgs = _image_inventories(self.state)
+        every = {**invs, **imgs}
+        releases = {i["codename"] for i in every.values() if match.release_of(i)}
         conn = await asyncio.to_thread(self.factory)
         try:
             changed = await self._refresh(conn, releases, now)
@@ -101,15 +120,15 @@ class Chore:
             matched = {r["host"]: r for r in conn.execute("SELECT * FROM matched")}
         finally:
             conn.close()
-        todo = [h for h, inv in invs.items()
+        todo = [h for h, inv in every.items()
                 if h not in matched or matched[h]["inv_at"] != inv["taken_at"] or matched[h]["gen"] != gen]
         if todo:
-            await asyncio.to_thread(self._match, {h: invs[h] for h in todo}, gen)
+            await asyncio.to_thread(self._match, {h: every[h] for h in todo}, gen)
             self.dirty = True
         if changed:
             self.dirty = True
         # Hosts that are gone (revoked) leave rows behind; drop them.
-        await asyncio.to_thread(self._forget, set(invs))
+        await asyncio.to_thread(self._forget, set(every))
         await self._findings(invs, now)
 
     async def _refresh(self, conn, releases: set[str], now: float) -> bool:

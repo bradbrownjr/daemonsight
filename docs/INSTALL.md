@@ -759,7 +759,14 @@ The steps below are run by you, on the Unraid server and on the hub. DaemonSight
 
 7. **Wait for the first read.** The hub reads the reader every 10 minutes at most. Docker works out volume sizes slowly (more
    than 15 minutes on a busy server), so the page first shows the unused volumes with unknown sizes and fills them in later.
-   Then open the Docker storage tab.
+   Then open the Docker storage tab, and Container images for what is inside each image.
+
+**Update the reader to the newest image before using Container images.** The page needs a reader from this version: it
+reads each running image's package list, which earlier readers do not send. Until you update, the page says the reader sends
+no package lists. Update the reader's container the same way as the hub (Docker tab, Check for Updates, apply) and restart
+it; the template and the token stay as they are. The first pass reads 10 images a minute, so a server with many images
+takes a few minutes to fill the page. Debian CVE matching also needs `[cve]` switched on (Settings) and the Debian tracker
+downloaded; the hub loads the releases the images use by itself.
 
 To change the token, write a new one to the file (step 2), restart the reader, and type it in the hub's Edit form. To stop
 reading, untick the box and Save (this deletes the hub's copy of the token), then remove the reader's container and

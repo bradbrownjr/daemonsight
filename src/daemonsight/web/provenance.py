@@ -448,7 +448,7 @@ def forward(f: dict) -> dict:
 
 PAGE_NAME = {"/": "Overview", "/exposure": "Exposure", "/routes": "Routes", "/services": "Services",
              "/fail2ban": "fail2ban", "/packages": "Packages", "/vulnerabilities": "Vulnerabilities",
-             "/disks": "Array & disks", "/containers": "Containers", "/docker": "Docker storage", "/vms": "VMs", "/notifications": "Notifications",
+             "/disks": "Array & disks", "/containers": "Containers", "/docker": "Docker storage", "/images": "Container images", "/vms": "VMs", "/notifications": "Notifications",
              "/firewall": "Firewall", "/vpn": "VPN", "/network": "Gateways & interfaces"}
 
 RULE_SOURCE = {"unraid": "unraid", "opnsense": "opnsense", "remote": "remote", "svc": "systemd", "ctr": "docker", "expose": "ports", "route": "caddy", "caddy": "caddy",
@@ -599,6 +599,52 @@ def docker_image(i: dict) -> dict:
     return {"title": f"Image {i['name']}", "read": "The Docker reader: the image's tags, digests, size, LastTagTime and "
                                                     "labels (only org.opencontainers.image.* and net.unraid.*)",
             "entries": entries}
+
+
+# --- Container images (package lists read by the Docker reader, matched on the hub) ----------------------------------------
+
+IMAGES_READ = ("GET /containers/{id}/archive?path=<p> on the Docker socket (Engine API operation ContainerArchive), for "
+               "exactly four paths: /usr/lib/os-release, /etc/os-release, /var/lib/dpkg/status and /lib/apk/db/installed. "
+               "One running container per image is read, once, and again only when the image changes")
+
+
+def images_section(reader_url: str | None) -> dict:
+    """The panel of the Container images card: where the lists come from, how they are matched, and the CLI."""
+    entries = [plain("Reader endpoint", f"GET {reader_url or 'http://<reader>:8467'}/v1/summary, field image_packages"),
+               plain("Docker call", IMAGES_READ),
+               plain("Limits", "Each file is capped (16 MB dpkg, 4 MB apk, 64 KB os-release) and must be a single regular file in the tar "
+                               "stream; a link is not followed and nothing is written to disk. At most 10 images are read per minute"),
+               plain("Support status", "Debian, Ubuntu and Fedora bases use the same release data as a host (distro-info). Alpine and "
+                                       "CentOS Linux use endoflife.date's end dates, bundled with DaemonSight"),
+               plain("CVEs", "Debian images only, for now: each package is matched by its source package and version against "
+                             "Debian's security tracker, ranked by CISA KEV and EPSS as a host's packages are. Ubuntu and Alpine are "
+                             "not matched yet. A CVE counts as fixable only when the tracker names a fixed version"),
+               cmd("One image's packages, on the server", "docker cp -L <container>:/var/lib/dpkg/status - | tar -xO"),
+               plain("Alpine instead", "docker cp -L <container>:/lib/apk/db/installed - | tar -xO"),
+               cmd("Its OS", "docker cp -L <container>:/usr/lib/os-release - | tar -xO")]
+    if reader_url:
+        entries.append(text("Same read, $TOKEN", f"curl -s -H \"Authorization: Bearer $TOKEN\" {q(reader_url + '/v1/summary')}"))
+    return {"title": "Container images", "read": "The Docker reader on this server (GET only) and the hub's CVE data", "entries": entries}
+
+
+def docker_image_row(r: dict) -> dict:
+    """The panel of one container image: what was read, how, and the CLI for that image."""
+    from ..cve import match
+    cname = r["read_container"] or (r["containers"][0] if r["containers"] else "<container>")
+    entries = [plain("Base OS", f"{r['os_name']}" + (f", {r['support']['label']}" if r["support"]["status"] != "unknown" else "")),
+               plain("Packages", f"{r['count']} read with {r['manager']}" if r["manager"] else (r["error"] or "not read")),
+               plain("Read through container", cname)]
+    c = r.get("cve")
+    if c and c.get("state") == "matched":
+        entries.append(plain("CVEs", f"{len(c['fixable'])} fixable, {c['unfixed']} with no fix yet"))
+        for x in c["fixable"][:5]:
+            entries.append({"kind": "url", "label": x["cve"], "text": match._describe(x).removeprefix(x["cve"]).strip(" ()") or x["cve"],
+                            "href": match.TRACKER_URL + x["cve"]})
+    path = "/lib/apk/db/installed" if r["manager"] == "apk" else "/var/lib/dpkg/status"
+    entries.append(cmd("Its packages", f"docker cp -L {q(cname)}:{path} - | tar -xO"))
+    entries.append(cmd("Its OS", f"docker cp -L {q(cname)}:/usr/lib/os-release - | tar -xO"))
+    entries.append(plain("Fix", "Update the image: on Unraid, Docker tab, Check for Updates, then apply. apt upgrade inside a container does not persist"))
+    return {"title": f"Image {r['name']}", "read": "The Docker reader's package list for this image, and the hub's matching of it", "entries": entries}
 
 
 def docker_volume(v: dict) -> dict:

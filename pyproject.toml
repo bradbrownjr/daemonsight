@@ -34,7 +34,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "daemonsight.web" = ["templates/*.html", "templates/partials/*.html", "static/*", "static/vendor/*"]
-"daemonsight.data" = ["distro-info/*", "fedora/*"]
+"daemonsight.data" = ["distro-info/*", "fedora/*", "endoflife/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
