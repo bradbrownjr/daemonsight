@@ -396,15 +396,25 @@ day (see "Back up and restore").
 
 Create the folder with the right owner first, then start the container.
 
-On Unraid, use the template so the Docker tab manages the container like any
-other app: icon, web UI link, autostart (from Unraid's autostart list), "Check for updates" and Edit. Copy
-`deploy/unraid/daemonsight.xml` to
-`/boot/config/plugins/dockerMan/templates-user/my-daemonsight.xml`, then add
-the container from Docker → Add Container → Template. A container started
-with `docker run` instead shows on the Docker tab but can't be updated or
-edited there.
+**On Unraid**, use the template so the Docker tab manages the container like
+any other app: icon, web UI link, autostart (from Unraid's autostart list),
+"Check for updates" and Edit. A container started with `docker run` instead
+shows on the Docker tab but can't be updated or edited there.
 
-Anywhere else, this command sets the same options:
+```bash
+mkdir -p /mnt/user/appdata/daemonsight
+chown 10001:10001 /mnt/user/appdata/daemonsight
+cp deploy/unraid/daemonsight.xml /boot/config/plugins/dockerMan/templates-user/my-daemonsight.xml
+```
+
+Then add the container from Docker → Add Container → Template, and set the
+password once it runs:
+
+```bash
+docker exec -it daemonsight daemonsight set-password
+```
+
+**Anywhere else**, this command sets the same options:
 
 ```bash
 mkdir -p /mnt/user/appdata/daemonsight
@@ -419,10 +429,10 @@ docker exec -it daemonsight daemonsight set-password
 ```
 
 `edge` follows `main`. Once releases are tagged, use a version such as
-`:0.2.0`, or `:latest` for the newest release. On Unraid, update from the
-Docker tab; Unraid pulls the image and recreates the container. Elsewhere,
-`docker pull` and start a new container. Pulling alone doesn't change the
-running container. The data stays in `/data` either way.
+`:0.2.0`, or `:latest` for the newest release. To update on Unraid, see
+"Updating: hub first, then hosts". Elsewhere, `docker pull` and start a new
+container. Pulling alone doesn't change the running container. The data
+stays in `/data` either way.
 
 On its first start the container writes `/data/config.toml`. Edit it to set
 your reverse proxy's address, then restart the container:
@@ -466,6 +476,15 @@ upload.example.com {
 Hosts on the LAN upload through the dashboard's name. Uploads need HTTPS, so
 both names need certificates.
 
+**The hub's address for collectors.** A collector uploads only over HTTPS
+(plain http is accepted only for a hub on the same machine) and checks the
+hub's certificate against the system's CA store. So put the hub behind a
+reverse proxy with a certificate a CA in that store signed, as in the Caddy
+example above, or install your private CA's certificate on each host. The
+upload path can have its own hostname that allows only `/api/v1/ingest`, as
+`upload.example.com` does above. [SECURITY.md](../SECURITY.md#the-hub) and
+[DESIGN.md](DESIGN.md) give the reasons.
+
 ### Add a host
 
 On the hub, create the host and copy the token it prints. The token is shown
@@ -474,6 +493,10 @@ once; the hub keeps only its hash.
 ```bash
 docker exec -it daemonsight daemonsight hub add-host vps
 ```
+
+The name uses letters, digits, `.`, `_` and `-`, no spaces, starting with a
+letter or digit, 63 characters at most. It is part of the host's page address
+and can't be changed later.
 
 On the host, with DaemonSight installed, save the token and the hub's
 address. `--url` sets `[upload] url` in `/etc/daemonsight/config.toml` and
@@ -669,17 +692,24 @@ with links to Unraid's own docs on API keys
 1. In Unraid, open Settings → Management Access → API Keys and add a key.
    Give it the Viewer role and nothing else: no other role, no extra
    permissions. Copy it; Unraid shows it once.
-2. On the hub, open Hosts, then "Add a system". Choose Unraid, give it a name,
-   the server's web address (for example `https://tower.example.lan`, the
-   address you use for its web UI; HTTPS only) and paste the key.
+2. On the hub, press the + in the header ("Add a system"). Choose Unraid and give
+   it a name:
+   letters, digits, `.`, `_` and `-`, no spaces, starting with a letter or
+   digit, 63 characters at most. It is part of the system's page address and
+   can't be changed later.
+   Then enter the server's web address (for example
+   `https://tower.example.lan`, the address you use for its web UI; HTTPS only)
+   and paste the key. If Unraid's Settings → Management Access → Use SSL/TLS is
+   Strict, use the myunraid.net address shown there.
 3. Press Test connection. It shows the server's name, Unraid version, array
    state, the number of disks and containers, and the key's roles. A key with
    more than Viewer is refused with a message saying so; make a new one.
 4. If Unraid uses its own self-signed certificate, the test says so and shows
    the certificate's SHA-256 fingerprint. Compare it with the one in Unraid
    (Settings → Management Access, certificate details), then choose "Pin this
-   certificate". Nothing is sent until you do. If Unraid has a certificate your
-   browser trusts, leave verification on.
+   certificate". Nothing is sent until you do. A pinned certificate's dates are
+   ignored (the pin names that one certificate; SECURITY.md has the reason). If
+   Unraid has a certificate your browser trusts, leave verification on.
 5. Save. The first read happens within a few seconds, and the server appears on
    the Hosts page as "Unraid · API" with its own pages.
 
@@ -690,6 +720,13 @@ changes the address, interval or certificate pin, replaces the key (type a new
 one; the saved one is never shown) or turns reading off. Remove asks you to type
 the name, deletes the key file and the server's history. Revoke the key in
 Unraid as well.
+
+If the hub runs as an Unraid container, it has to be able to reach Unraid's own
+address. On the default bridge network it can. On a custom network with its own
+IP address (macvlan or ipvlan), a container can't reach the Unraid host
+itself: use the bridge network, or turn on "Host access to custom networks" in
+Settings → Docker, or point the hub at a different address that reaches the
+server. If Test connection says the server did not answer, check this first.
 
 ### Add the Docker reader to an Unraid server
 
@@ -730,8 +767,8 @@ The steps below are run by you, on the Unraid server and on the hub. DaemonSight
    ls -ln /var/run/docker.sock
    ```
 
-   The fourth column is the group id. If it is `0` (root), the group is root's: say so to yourself before going on, because
-   the reader then runs with root's group. (What Unraid shows here was not checked.)
+   The fourth column is the group id. If it is `0` (root), gid 0 means the reader runs with root's group, which is wider than
+   a docker group; continue only if you accept that. (What Unraid shows here was not checked.)
 
 4. **Add the reader's template.** Copy `deploy/unraid/daemonsight-docker-reader.xml` from this repository to
    `/boot/config/plugins/dockerMan/templates-user/` on the server (Unraid reads user templates from that folder: webgui
@@ -803,9 +840,13 @@ https://docs.opnsense.org/manual/how-tos/user-local.html).
    A privilege you leave out turns off only the page it feeds; the others work.
 3. Save, edit the user again and create an API key (the + in API keys). OPNsense
    downloads a text file once with two lines: `key=...` and `secret=...`.
-4. On the hub, open Hosts, then "Add a system", choose OPNsense, give it a name,
-   the web GUI's address with its port (for example `https://fw.example.lan:8443`,
-   HTTPS only) and paste the key and the secret.
+4. On the hub, press the + in the header ("Add a system"), choose OPNsense and give
+   it a name:
+   letters, digits, `.`, `_` and `-`, no spaces, starting with a letter or
+   digit, 63 characters at most. It is part of the system's page address and
+   can't be changed later.
+   Then enter the web GUI's address with its port (for example
+   `https://fw.example.lan:8443`, HTTPS only) and paste the key and the secret.
 5. Press Test connection. It lists every source as Readable, "Needs privilege X"
    or "Plugin not installed". A user that can read none of them is refused.
 6. If the firewall uses its own self-signed certificate, the test shows its
@@ -821,15 +862,11 @@ port forwards and Caddy are read every 5 minutes, or at the interval if that is
 longer. On the Gateways & interfaces page you can correct an interface's role
 (WAN, LAN, VPN, other); the findings about "internet-facing" rules and forwards
 follow the roles, not the interface names. Roles are saved in the hub, not on
-the firewall. Edit, Remove and the certificate pin work as for Unraid; delete the
+the firewall. Edit, Remove and the certificate pin (dates ignored, as for Unraid) work as for Unraid; delete the
 user's API key in OPNsense as well when you remove the system.
 
-If the hub runs as an Unraid container, it has to be able to reach Unraid's own
-address. On the default bridge network it can. On a custom network with its own
-IP address (macvlan or ipvlan), a container can't reach the Unraid host
-itself: use the bridge network, or turn on "Host access to custom networks" in
-Settings → Docker, or point the hub at a different address that reaches the
-server. If Test connection says the server did not answer, check this first.
+If the hub is an Unraid container and Test connection can't reach the firewall,
+see the network note under "Add an Unraid server".
 
 The poller runs with the hub. To stop all remote reading, turn off "Read remote
 systems" on the Settings page, or set `[remote] enabled = false` in
@@ -838,26 +875,29 @@ systems" on the Settings page, or set `[remote] enabled = false` in
 ### Read CrowdSec bans from an OPNsense firewall
 
 If the firewall runs CrowdSec, the hub can show when CrowdSec bans an address that must never be banned: the firewall's own
-addresses, a host the hub knows, or an address you list. It is optional and needs the firewall added first (above). Read
+addresses, a host the hub knows, or an address you list. It is optional and needs the firewall added first (above). It was checked against os-crowdsec 1.0.12 and CrowdSec 1.8.2. Read
 "CrowdSec bans" in [SECURITY.md](../SECURITY.md) before you start; the Local API is plain http on your LAN by default.
 
-1. Find the Local API's address. The bouncer's config on the firewall has it as `api_url`, for example
+1. Find the Local API's address. The plugin's Local API listens on the firewall's LAN address, port 8180. To find it, read
+   `api_url` in `/usr/local/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml` on the firewall, for example
    `http://192.168.1.1:8180/`. The hub has to be able to reach that port: check the firewall's rules for the LAN
    interface.
 2. On the firewall, in a shell, make a key for the hub:
 
    ```
-   cscli bouncers add daemonsight-hub
+   cscli bouncers add daemonsight-hub -o raw
    ```
 
-   It prints the key once; copy it. A bouncer can only read decisions. Give the hub its own key: CrowdSec ties a key to the
+   It prints only the key, once; copy it. A bouncer can only read decisions. Give the hub its own key: CrowdSec ties a key to the
    first address that uses it.
 3. On the hub, open Hosts, Edit the firewall, tick "Read CrowdSec bans" and enter the address and the key.
 4. Under "Addresses that must never be banned", list the addresses you depend on, one address or network per line (50 at
    most): the services whose loss would hurt, such as the range of an AI provider or a backup target. DaemonSight lists none
    of its own. A public network wider than /16 (IPv6: /48) is refused.
 5. Press Test CrowdSec: it asks for one local decision, which proves the address and the key. Then Save.
-6. Within a few minutes the Firewall page has a CrowdSec card: every address and network checked, with a status label, and the
+6. `cscli bouncers list` on the firewall now shows the bouncer as validated, with the hub's source address. A hub in a
+   bridge-mode container shows as the Unraid server's address.
+7. Within a few minutes the Firewall page has a CrowdSec card: every address and network checked, with a status label, and the
    count of local bans by scenario.
 
 To stop, untick the option and save: the key file, the list and the readings are deleted. Remove the bouncer on the firewall as
@@ -934,12 +974,17 @@ with its next upload, installs that commit, and reports back. The page shows
 "Updated to …", or why it failed.
 
 The target is always the hub's own version, so update the hub first, then
-its hosts. On Unraid, update the container from the Docker tab.
+its hosts. On Unraid, "Updating: hub first, then hosts" below has a script
+for both.
 
-The order matters from this version on. A collector now sends a fix command
-and a basis with some findings, and a hub from before that refuses the upload
-until the hub is updated. The hub's database moves to schema 4 on its first
-start; no action is needed.
+Update the hub first. The hub's database migrates when the hub starts, with
+no action from you. A hub ignores top-level fields it doesn't know, but it
+checks everything inside an upload strictly: a collector that sends a field
+or value an older hub doesn't know gets a 422 and the whole upload is
+refused. The collector keeps its data and sends it once the hub is updated.
+A hub also won't start on a database from a newer version, so never go back
+to an older image after an update without restoring a backup (see "Back up
+and restore").
 
 From the command line, on the hub:
 
@@ -964,6 +1009,50 @@ remote_update = false
 What a hub can and can't make a host do is in
 [SECURITY.md](../SECURITY.md), "The hub".
 
+### Updating: hub first, then hosts
+
+The order is always the same: hub, then the Docker reader if you run one, then
+the hosts. `deploy/unraid/update-hub.sh` does all of it for a hub that runs as
+an Unraid container from the template. Run it on the Unraid server as root.
+
+1. Push to `main`, then wait for CI to publish the `:edge` image. Watch the run
+   with `gh run watch`, or on the repository's Actions page. The script can't
+   tell a stale `:edge` from a new one unless you give it the commit.
+2. Run the script, with the commit's sha if you want it checked:
+
+   ```bash
+   bash deploy/unraid/update-hub.sh            # whatever :edge is now
+   bash deploy/unraid/update-hub.sh 1165709    # stop unless :edge is that commit
+   ```
+
+3. Open each host's Recent changes and look for "Updated to …". A host that
+   failed says why.
+
+What the script does:
+
+- Takes the lock `/tmp/daemonsight-update.lock`, so two runs can't overlap.
+  Overlapping runs once left the container dead.
+- Pulls `ghcr.io/bradbrownjr/daemonsight:edge`. With a sha, it checks the
+  image's `org.opencontainers.image.revision` label starts with it. If not, it
+  stops and leaves every container as it was.
+- Builds the `docker run` command from the container's Unraid template with
+  Unraid's own PHP, and checks it contains `--name='daemonsight'` before
+  anything is stopped. It doesn't call Unraid's `rebuild_container` or
+  `update_container` scripts, which once failed silently and left no container.
+- Stops the hub with a 20 second grace period, removes it and runs the new
+  command.
+- Waits up to five minutes for the container to be healthy, then prints
+  `daemonsight --version`.
+- If a container named `daemonsight-docker-reader` exists, recreates it the same
+  way from its own template.
+- Runs `daemonsight hub update --all`, which asks every host that is behind to
+  install the hub's version.
+
+It never deletes data: `/data` is a folder on the server and `docker rm` leaves
+it alone. Each failure ends the script with its own exit code and a message
+(listed in the script's header). The script includes Unraid's webgui PHP, so it
+depends on Unraid's file layout; it was tested on Unraid 7.x.
+
 ## Remove
 
 ```bash
@@ -973,6 +1062,7 @@ sudo systemctl daemon-reload
 sudo rm -rf /opt/daemonsight /var/lib/daemonsight /etc/daemonsight
 sudo rm -f /usr/local/bin/daemonsight /usr/local/sbin/daemonsight-update
 sudo rm -f /etc/fail2ban/filter.d/daemonsight.conf /etc/fail2ban/jail.d/daemonsight.conf
+sudo rm -f /etc/sudoers.d/daemonsight-update   # only if you created it (see "Updating without a password")
 sudo systemctl reload fail2ban                 # only if you had the jail
 sudo userdel daemonsight
 ```

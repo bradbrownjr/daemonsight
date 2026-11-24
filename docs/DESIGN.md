@@ -1,6 +1,6 @@
 # DaemonSight design
 
-Status: phases 1, 2, 2c, 3a and 3b are built; 3c is next. Updated 2026-11-18.
+Status: phases 1, 2, 2c, 3a and 3b are built; phase 3c part 1 (container images: end-of-life bases and Debian CVEs) is built, and Ubuntu and Alpine images are next. Updated 2026-11-24.
 
 ## Goal
 
@@ -18,7 +18,7 @@ Targets for v1:
 - Log storage or shipping. DaemonSight reads logs to answer specific questions; it is not a SIEM. Log collection is planned after phase 3; see "Log collection and auditing (planned)".
 - Changing the host. v1 is read-only: no bans, restarts or firewall edits.
 - A hub that ships as anything but a container. A collector-and-web install can't also be a hub. (So a standalone host's Vulnerabilities page only says CVE matching runs on a hub.)
-- Podman, Kubernetes, nginx, Apache, iptables-legacy.
+- Kubernetes, nginx, Apache, iptables-legacy. Podman has no support of its own: `[collector] docker_socket` can point at Podman's Docker-compatible socket, which has not been tried (see INSTALL.md).
 
 ## Architecture
 
@@ -327,8 +327,8 @@ and the route's log settings. A config file can override the guess.
 
 ## Storage
 
-SQLite in WAL mode at `/var/lib/daemonsight/state.db`. The collector and
-scanner write; the web process opens it with `mode=ro`. On a hub, the hub's
+SQLite in WAL mode at `/var/lib/daemonsight/state.db`. The collector
+writes; the web process opens it with `mode=ro`. On a hub, the hub's
 web process is the writer.
 
 `[retention]` sets how long rows stay: metric points 48 hours by default,
@@ -340,7 +340,7 @@ precedence").
 - `snapshots`: source, taken_at, ok, error, data (JSON). The latest row per source is current state.
 - `findings`: rule, key, severity, title, detail, link, fix, basis, howto (schema version 6), first_seen, last_seen, resolved_at.
 - `accepted`: host, rule, key, fingerprint, note, accepted_at, accepted_by. Written by the hub's web process (see "Accepting a finding"). Schema version 4.
-- `remotes` (schema version 5): id, kind (`unraid`), url, enabled, tls (`verify` or `pin`), tls_pin (SHA-256 of the pinned certificate), tls_cert (its PEM), interval, created_at, last_ok, last_error, fails. A remote system is also a row in `hosts` with `hosts.kind` set (collector hosts have `kind` NULL) and a `token_hash` of `remote:<id>`, which no upload token can equal. The API key is not in the database: it is `<data>/remotes/<id>.key`, mode 0600 in a 0700 folder.
+- `remotes` (schema version 5): id, kind (`unraid` or `opnsense`), url, enabled, tls (`verify` or `pin`), tls_pin (SHA-256 of the pinned certificate), tls_cert (its PEM), interval, created_at, last_ok, last_error, fails. A remote system is also a row in `hosts` with `hosts.kind` set (collector hosts have `kind` NULL) and a `token_hash` of `remote:<id>`, which no upload token can equal. Schema 9 added `reader_url` (an Unraid server's Docker reader) and schema 10 added `crowdsec_url` and `crowdsec_never` (an OPNsense firewall's CrowdSec Local API and its never-ban list). The secrets are not in the database: each is a file in `<data>/remotes/`, mode 0600 in a 0700 folder: `<id>.key` (the API key), `<id>.reader-token` (the Docker reader's token) and `<id>.crowdsec-key` (the CrowdSec bouncer key).
 - `outside` (schema version 7): ip, first_try, checked_at, fetched_at, status (`ok`, `none` for a 404, `error`), data (the cleaned answer, JSON: an InternetDB answer as is; a Shodan API answer carries `source: "shodan"`, `services` and `last_update` as well), error. Hub only; see "The outside view".
 - `settings` (schema version 8): key, value (JSON), changed_at, changed_by. Hub only: what was saved on the Settings page, over the config file. See "Settings and configuration precedence".
 - `events`: changes worth showing in "Recent changes": a new port, a ban spike, a unit going down. Events are per host (`host` is NOT NULL and every list filters by it). A change that belongs to no host, a setting changed on the hub, is stored with the reserved host `""` (`db.HUB_HOST`), which no host id can equal (`hub.HOST_RE` needs at least one character). They show under "Recent hub changes" on the hub's Hosts page and on the Settings page, never under a host. The same retention applies to them. This reuses the one events table and its pruning, instead of a second log with its own retention and display code.
@@ -348,9 +348,10 @@ precedence").
 
 Backups (`backup.py`): one owner-only `.tar.gz` with a consistent copy of
 the database (SQLite's online backup API, so the writer keeps running), the
-config, the password hash, the session secret, any upload token and the
-remote systems' key files (`remotes/<id>.key`, checked by name on restore
-and written back 0600), plus a manifest. The folder is 0700 and each archive 0600. The hub, and a collector that keeps its own data, make one every
+config, the password hash, the session secret, any upload token, the Shodan
+key (`shodan.key`) and the remote systems' key files (`remotes/<id>.key`,
+`remotes/<id>.reader-token` and `remotes/<id>.crowdsec-key`, checked by name
+on restore and written back 0600), plus a manifest. The folder is 0700 and each archive 0600. The hub, and a collector that keeps its own data, make one every
 `[backup] interval_hours` (24) and keep `keep` (7). A collector that
 uploads skips them unless `interval_hours` is set: the hub's backups hold
 its history. `daemonsight restore` refuses while the writer
@@ -429,7 +430,7 @@ loads from a CDN at runtime, and there is no Node build step.
 Only Tabler's CSS and HTMX are vendored so far. Tabler Icons and uPlot come
 with the charts (phase 4).
 
-Why not React and MUI like ECTLogger: DaemonSight runs on the machine it
+Why not React and MUI: DaemonSight runs on the machine it
 protects, so its own dependency tree is attack surface and shows up in its own
 CVE scan. The pages are tables and a few charts that refresh every 30–60
 seconds, which server-rendered HTML with HTMX handles well.
@@ -453,7 +454,8 @@ and the uptime; a support status other than "Supported" (such as "LTS until
 2028-06-30") shows as a badge beside the OS. On Overview, "At a glance" lists
 the OS with its support status.
 
-Phone menu: the header chip on a phone shows only the status dot and host name.
+Phone header: two rows (docs/UI.md, "Navigation"). Row 1 is the logo and the host
+pill, whose name truncates; row 2 is the filter with the menu button beside it.
 The top of the menu panel holds one line with the OS, its support status when it
 is not plain "Supported", the kernel and the uptime. It appears on host pages
 only, never on the hub's Hosts page. The desktop header is unchanged.
@@ -572,8 +574,8 @@ supports ntfy and SMTP email. Daily digest optional.
 
 - `install.sh` for v1: creates a venv in `/opt/daemonsight`, the `daemonsight` user, the units (including the update path unit) and `/etc/daemonsight/config.toml`, and records its options in `/etc/daemonsight/install.options`. A `.deb` comes later.
 - `daemonsight-update` (in `/usr/local/sbin`) updates from GitHub into a root-owned clone and reruns `install.sh` with the recorded options. After installing it waits 20 seconds and goes back to the previous commit if the collector isn't running. Installing only from GitHub, never a user's checkout, is what makes a password-less sudo rule for it reasonable on a development server. See [INSTALL.md](INSTALL.md#update).
-- Requires `fail2ban`, `nftables` and `debsecan` from Debian, and Trivy from Aqua's apt repo.
-- Testing order: beta LXC first (Claude Code runs there and updates it with `sudo daemonsight-update` after each push), then alpha, then the VPS.
+- `install.sh` needs `python3` 3.11 or newer with its `venv` module (Fedora's `python3` includes it) and `git`, which `daemonsight-update` uses. `fail2ban` and `nftables` are optional: each source reports itself unavailable without its tool. Nothing else is installed: no `debsecan` and no Trivy (see "Data sources").
+- Testing order: a test LXC first (updated with `sudo daemonsight-update` after each push), then a second test host, then the production VPS.
 - VPS: the web process on `127.0.0.1:8466`, reached over WireGuard, or through Caddy with the hostname restricted to the WireGuard range.
 - LXC: the kernel belongs to the Unraid host, so kernel CVEs are skipped when `systemd-detect-virt` reports a container. An unprivileged LXC may not be able to read the nftables ruleset; that source then shows "unavailable" instead of failing.
 
@@ -595,8 +597,8 @@ Windows agent. Traffic maps can come any time after phase 3. See "Log
 collection and auditing (planned)", "Windows agent (planned)" and "Maps
 (planned)".
 
-Later: actions (ban, unban, restart), CrowdSec,
-Podman, and an optional check from outside the host to confirm what's
+Later: actions (ban, unban, restart, and CrowdSec decisions;
+read-only CrowdSec ban findings have shipped), Podman, and an optional check from outside the host to confirm what's
 reachable from the internet.
 
 See "Hub" for the central view.
@@ -796,8 +798,8 @@ secret, the database, `cve.db` and the saved feed files in `cve/` (about 60
 MB; not backed up, since the hub downloads them again), `backups/` and
 `daemonsight.log` (`log_file`, rotated at 5 MB, four files). The hub needs
 outbound HTTPS to `security-tracker.debian.org`, `epss.empiricalsecurity.com`
-and `www.cisa.gov`; it works without them, with `cve.feed_stale` after 3 days. The remote sources in phase 2b (OPNsense, Unraid)
-will run in the hub, since they are API calls from the LAN.
+and `www.cisa.gov`; it works without them, with `cve.feed_stale` after 3 days. The remote sources (OPNsense, Unraid)
+run in the hub, since they are API calls from the LAN.
 
 `deploy/unraid/daemonsight.xml` is an Unraid template for it: icon, web UI
 link, the read-only and no-capabilities options, and a data path and port.
@@ -1457,8 +1459,8 @@ every banned address that has any: `pfctl -k <ip>` and `pfctl -k 0.0.0.0/0 -k <i
 `pkg/pf/pf_context.go`, read 2026-11-19. A ban on the firewall's WAN address therefore drops every NAT'd connection.)
 
 **What is read.** One endpoint, `GET /v1/decisions`, on the LAPI, with a bouncer's API key in the `X-Api-Key` header. Nothing else is
-called. Read from the CrowdSec source (github.com/crowdsecurity/crowdsec, `master`, read 2026-11-24) and docs; no request was sent to a
-real LAPI (see "Unverified"):
+called. Read from the CrowdSec source (github.com/crowdsecurity/crowdsec, `master`, read 2026-11-24) and docs, and checked on a live firewall
+(see "Verified live" below):
 
 | Fact | Source |
 |------|--------|
@@ -1531,12 +1533,20 @@ columns and the snapshot, and the findings resolve at the next poll. The Add and
 bans" as a dependent option (address, key, never-ban list, Test CrowdSec); the Firewall page has a CrowdSec card (`web/sections.py`
 anchor `crowdsec`) with what was checked, status labels and the local ban count.
 
-**Unverified.** No request was sent to a real LAPI and no bouncer was added, by rule; the table above is the source and the docs only,
-so these rest on reading code and are untested against a live firewall: the `null` for no decisions; that `limit` works (it is in the
-source, not the swagger file, and an older CrowdSec that ignores it would only return more rows, which the hub still cuts to size);
-that the read behaviour is the same in the CrowdSec version on the firewall as in `master`; the status for a wrong key (403, from
-`api_key.go`). The docs name no version in which allowlists arrived (the swagger on `master` has them). LAPI TLS: a `https://` address is
-checked against the usual authorities only; pinning a self-signed LAPI certificate is not built.
+**Verified live (2026-11-24).** On an OPNsense firewall with os-crowdsec 1.0.12 and CrowdSec 1.8.2:
+
+- The plugin's Local API listens on the firewall's LAN address, port 8180. The address is `api_url` in
+  `/usr/local/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml` on the firewall.
+- `cscli bouncers add <name> -o raw` prints only the key.
+- A filtered `GET /v1/decisions` with that key worked from a hub container on an Unraid server.
+- `cscli bouncers list` shows the bouncer as validated, with the hub's source address. A hub in a bridge-mode container shows
+  as the Unraid server's address.
+
+**Unverified.** Still read from the source and not seen live: the `null` for no decisions; that `limit` works (it is in the
+source, not the swagger file, and an older CrowdSec that ignores it would only return more rows, which the hub still cuts to
+size); the status for a wrong key (403, from `api_key.go`). The docs name no version in which allowlists arrived (the swagger
+on `master` has them). LAPI TLS: a `https://` address is checked against the usual authorities only; pinning a self-signed LAPI
+certificate is not built.
 
 ### Unraid
 
@@ -1658,7 +1668,7 @@ nobody uploads for a remote system, and `hub update` skips these hosts.
 subscription: `Subscription.dockerContainerStats` in
 `api/generated-schema.graphql`, and no query or field on `DockerContainer`
 carries them [33][44]. What was read and checked live (read-only, against a
-real Unraid with 93 containers, 69 running):
+a real Unraid server with a large container count):
 
 - *Protocol.* The API server speaks `graphql-ws`, the library, so the
   WebSocket sub-protocol is `graphql-transport-ws`, at `/graphql` (the same
@@ -1683,7 +1693,7 @@ real Unraid with 93 containers, 69 running):
   `docker-stats.service.ts` runs `docker stats --format ... --no-trunc` while
   there is at least one subscriber and kills it when the last one leaves; the
   topic is registered in `docker.resolver.ts` with `SubscriptionTrackerService`).
-  All 69 running containers had reported by the end of the first tick.
+  Every running container had reported by the end of the first tick.
   Docker refreshes each figure once a second, so every second message repeats
   the one before. `memUsage` is Docker's own text, `<used> / <limit>` in binary
   units with four significant digits (`970MiB / 94.28GiB`; `-- / --` while a
@@ -1732,7 +1742,7 @@ most of a core for an hour" needs history, not one sample a minute earlier; it
 comes with the history charts (phase 4, "History charts and drill-down").
 Until then the readings are shown, not judged.
 
-Cost, measured against the owner's server (93 containers, 69 running; one
+Cost, measured against a large Unraid server (about a hundred containers; one
 Python process on the same machine, the median of 8 samples after a warm-up):
 about 22 ms of CPU per sample (TLS handshake, the exchange, parsing and
 encoding what is stored), 1.1 s of wall time (the sample ends when the last of
@@ -2042,8 +2052,8 @@ reader endpoint, the Docker call and the equivalent command: `docker cp -L <cont
 Registered in `web/sections.py`. The Overview's glance has a line for it.
 
 Not verified: the exact bytes Docker 29 sends for a one-file archive and for a symlink on a live server (the tests build
-the tar with Python's `tarfile`; the swagger file only says the reply is a tar stream), and that a reader on the owner's
-server finishes its first pass in ten minutes.
+the tar with Python's `tarfile`; the swagger file only says the reply is a tar stream), and that a reader on a large
+Unraid server finishes its first pass in ten minutes.
 
 ### Provider firewalls
 
@@ -2209,7 +2219,7 @@ The collector must stay light:
 - **D-Bus library: dbus-fast 5.2.** Unprivileged `ListUnitsByPatterns` and `Properties.GetAll` work as the systemd docs say. The system bus rejects more than 128 pending replies per connection (`LimitsExceeded`, `max_replies_per_connection`), so property reads are capped at 32 in flight.
 - **Docker API** paths, the health states, the log frame format and the CPU formula are taken from the v1.47 OpenAPI spec. The collector uses the server's own `ApiVersion` from `GET /version`. Not yet run against a real Docker host.
 - **Read-only SQLite** works while the collector holds the database open; when it's stopped, the web falls back to `immutable=1`.
-- **Web port** is 8466. 8090 is common and was already taken on beta.
+- **Web port** is 8466. 8090 is common and was already taken on the test LXC.
 - **`expose.docker_bypass`** moved into phase 1: it needs only Docker data.
 
 ## Answered in phase 2
@@ -2228,9 +2238,9 @@ The collector must stay light:
 - fail2ban 1.0.2 on Debian 12.
 - Fedora: `dnf needs-restarting -C -s` output (the parser takes lines naming `*.service`; not captured, since a container has no D-Bus), the JSON for "no reboot needed", the whole collector on a real Fedora 44 KDE host, and `install.sh` under SELinux enforcing. dnf5 was tested in `fedora:44` containers only.
 - CVE matching: the whole path on a real hub with real hosts (tested here against the real feeds and a real dpkg inventory, with the downloads and the hub's pages exercised by fakes of the three servers); Fedora advisories on a host with updates pending beyond the captured sample; what `apt install unattended-upgrades` writes on Debian 12 and 13 (read from the package scripts, not run); whether `dnf5-automatic.timer` set up from the steps in `pkg.auto_updates_off` installs security updates on a real Fedora 44 host (the config keys come from the docs and the shipped file, the run was not tested).
-- CrowdSec: no request was sent to a real Local API (no bouncer was added, by rule). `null` for no decisions, `limit`, the 403 for a wrong key, the `duration` format and the filter semantics are read from CrowdSec's source (`master`, 2026-11-24) and docs; run Test CrowdSec once against the real firewall before relying on it, and check the CrowdSec version there. That the pf bouncer drops the states of a banned address is the owner's account, not read from its source. See "CrowdSec bans on an OPNsense firewall".
+- CrowdSec: the read path was checked on a live firewall on 2026-11-24 (see "CrowdSec bans on an OPNsense firewall"). Still read from the source only: `null` for no decisions, `limit`, the 403 for a wrong key and the `duration` format. That the pf bouncer drops the states of a banned address is the owner's account, not read from its source.
 - Whether the Docker source works against Podman's Docker-compatible socket.
-- The Docker source on a real Docker host (alpha or the VPS).
+- The Docker source on a real Docker host other than Unraid's.
 - The systemd sandboxing in `daemonsight-web.service` inside an unprivileged LXC.
 - Unraid: every query ran against one real server (7.3.2) with an Admin key, read-only, and the fixtures in `tests/fixtures/unraid/` are trimmed copies of those replies. Not seen on a real server: the `me` reply for a Viewer-only key (its shape is read from the API source and the Admin reply, not captured), a failing SMART disk, an array that is stopped, a UPS on battery, and a Viewer key being refused or accepted by each query. The first poll with a real Viewer key is the check.
 - Unraid: the "how to use the API" page lists only the roles admin, connect and guest, while the schema and the CLI example (`--roles ADMIN,VIEWER`) have `VIEWER`; the Viewer role comes from the schema [33] and [32], and a Viewer key was not available to test.

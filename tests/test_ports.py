@@ -32,7 +32,7 @@ def test_classify():
     assert classify("::") == "all"
     assert classify("127.0.0.1") == "loopback"
     assert classify("::1") == "loopback"
-    assert classify("10.6.26.3") == "private"
+    assert classify("192.168.1.3") == "private"
     assert classify("fe80::1%eth0") == "private"
     assert classify("8.8.8.8") == "public"
 

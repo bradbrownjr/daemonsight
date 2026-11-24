@@ -241,7 +241,7 @@ def listener(port, proto="tcp", scope="all", addresses=("0.0.0.0",), unit=None, 
 
 
 def ports_data(listeners, public=True):
-    addrs = [{"nic": "eth0", "ip": "203.0.113.10" if public else "10.6.26.3",
+    addrs = [{"nic": "eth0", "ip": "203.0.113.10" if public else "192.168.1.3",
               "scope": "public" if public else "private"}]
     return {"listeners": listeners, "owners_known": True, "addresses": addrs}
 

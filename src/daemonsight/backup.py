@@ -5,7 +5,7 @@ A backup is one .tar.gz, readable by its owner only, holding:
                  backup API, so the collector or hub can keep writing)
   config.toml    the config file the install runs with
   password, secret, hub.token   when they exist and can be read
-  remotes/<name>.key   the API key of each system the hub reads (a hub only); <name>.reader-token the Docker reader's token
+  remotes/<name>.key   the API key of each system the hub reads (a hub only); <name>.reader-token the Docker reader's token; <name>.crowdsec-key a CrowdSec bouncer key
   shodan.key   the Shodan API key for the outside view, when one is saved (a hub only)
   manifest.json  version, schema, host and what's inside
 

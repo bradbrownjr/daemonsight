@@ -1,7 +1,120 @@
 # DaemonSight configuration. Every setting is optional; the values shown are
 # the defaults.
 #
-# On a hub, [retention], [backup] (interval_hours, keep), [cve], [outside]
+# On a hub, [retention], [backup] (interval_hours, keep), [cve], [outside] and
+# [remote] can also be changed on the Settings page (account menu, top right).
+# A value set there wins over this file, applies without a restart, and can be
+# reset to what this file says. This file is never rewritten. Everything else
+# here, and every setting on a host that isn't a hub, is changed only in this
+# file, followed by a restart.
+
+# Name shown in the UI and stored with every record. Defaults to the hostname.
+# host_id = "vps1"
+
+# data_dir = "/var/lib/daemonsight"
+
+# "server" (always on, the default) or "workstation" (a laptop or desktop that
+# is often off or asleep). A workstation that stops uploading is "Offline" on
+# the hub, a low finding, instead of a high "Not reporting". Any other value
+# counts as "server". Must stay above the first [section].
+# role = "server"
+
+# Also write log lines to this file (rotated at 5 MB, four files kept). The
+# journal has them already on a host; the hub container uses /data/daemonsight.log.
+# log_file = ""
+
+[web]
+# Keep this on loopback or a WireGuard address, never a public one.
+# listen = "127.0.0.1"
+# port = 8466
+
+# Proxies whose X-Forwarded-For is trusted, so logs and fail2ban see the real
+# client address. Caddy on the same host is 127.0.0.1.
+# trusted_proxies = ["127.0.0.1", "::1"]
+
+# Set true when the UI is only reached over HTTPS.
+# secure_cookies = false
+# session_hours = 12
+# password_file = "/etc/daemonsight/password"
+# secret_file = "/etc/daemonsight/secret"
+
+[collector]
+# Seconds between reads.
+# interval_system = 15
+# interval_systemd = 30
+# interval_ports = 60
+# interval_docker = 30
+# interval_caddy = 60
+# interval_fail2ban = 60
+# interval_firewall = 300
+# Pending apt or dnf updates, reboots and services on old libraries (never runs apt update
+# or dnf makecache).
+# interval_packages = 3600
+# docker_socket = "/var/run/docker.sock"
+# Podman's rootful socket speaks the Docker API: "/run/podman/podman.sock" (untested).
+# Caddy's admin address, written as Caddy writes it. A Unix socket is safer:
+# set `admin unix//run/caddy/admin.sock` in the Caddyfile and use the same here.
+# caddy_admin = "localhost:2019"
+# fail2ban_socket = "/var/run/fail2ban/fail2ban.sock"
+# nft = "nft"
+# service_patterns = ["*.service"]
+# Container log lines kept for the Logs view (secrets are masked).
+# log_tail_lines = 100
+# metrics_retention_hours = 48   # old name for [retention] metrics_hours; unset by default
+
+[exposure]
+# Ports meant to be reachable from the internet. Any other port listening on
+# a public address is a finding.
+# expected_public = ["22/tcp", "80/tcp", "443/tcp", "443/udp"]
+
+# Ports a provider firewall in front of the host allows (a cloud firewall
+# policy). Leave empty when there is none.
+# upstream_allow = ["22/tcp", "80/tcp", "443/tcp"]
+
+# Jails DaemonSight can't link to a service by name, journal match or log
+# path. Jail name = list of systemd units it protects.
+# [exposure.jail_covers]
+# nginx-http-auth = ["nginx.service"]
+
+# Web UIs to link from each source's (i) panel, keyed by source name:
+# system, systemd, ports, docker, caddy, fail2ban, firewall.
+# [links]
+# caddy = "https://router.example.lan/ui/caddy/reverse_proxy"
+# firewall = "https://cloud-panel.example.com/"
+
+[thresholds]
+# disk_percent = 90
+# memory_percent = 90
+# memory_minutes = 15
+
+[retention]
+# On a hub, also on the Settings page (it wins over this file).
+# How long this install keeps history. On a host the collector prunes its
+# own rows; on a hub the hub prunes every host's. 0 keeps it for good.
+# metrics_hours = 48            # chart points, about one a second
+# events_days = 0               # "Recent changes"
+# resolved_findings_days = 0    # findings that have cleared (open ones stay)
+
+[backup]
+# On a hub, interval_hours and keep are also on the Settings page; dir never is.
+# Scheduled backups (docs/INSTALL.md, "Back up and restore"): the database,
+# this file, the password, the session secret and any upload token, in one
+# owner-only .tar.gz. Made by the collector on a host and by the hub.
+# dir = ""                      # default: <data_dir>/backups
+# interval_hours = 24           # 0 turns them off; unset, a host that uploads to a hub skips them
+# keep = 7
+
+[cve]
+# CVE matching, on the hub only (docs/INSTALL.md, "CVE matching"). Also on the
+# Settings page, which wins over this file and needs no restart. The hub
+# downloads the Debian security tracker, EPSS scores and CISA's KEV list.
+# enabled = true
+# refresh_hours = 24
+# A fixable CVE with an EPSS score at or above this makes a package's finding
+# high. FIRST: "no universal threshold"; 0.10 is commonly cited (about the 95th percentile).
+# epss_high = 0.10
+
+[outside]
 # Shodan's outside view, on the hub only (docs/INSTALL.md, "Outside checks"). Turn
 # it on from the Settings page (account menu), or here: what the internet sees
 # of each host's public addresses, from Shodan. Off by default.

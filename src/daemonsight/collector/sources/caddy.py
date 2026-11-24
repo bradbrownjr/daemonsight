@@ -32,7 +32,7 @@ DENY_STATUSES = range(400, 500)
 def parse_dial(dial: str) -> dict:
     """Split an upstream dial address into network, host and port.
 
-    "localhost:8001", "10.6.26.2:80", "[::1]:9000", "unix//run/app.sock",
+    "localhost:8001", "192.168.1.2:80", "[::1]:9000", "unix//run/app.sock",
     and placeholders like "{http.request.host}:80" all occur in practice.
     """
     if "{" in dial:

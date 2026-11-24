@@ -190,6 +190,10 @@ These apply to every page. Owner rules, kept as written.
   or instructions are provided when content requires user input" [S14].
 - **Field help.** One or two short sentences under the control; the default and
   allowed range go on the line below. (Owner.)
+- **State the constraint in the hint.** A field's allowed characters, length
+  and other limits are in its hint, not only in the error after a wrong entry.
+  The Name field says which characters, that it starts with a letter or digit,
+  and the 63-character limit. (Owner.)
 - **GUI-first settings.** Every setting a user can change is on the Settings
   page, and a header control belongs in the one account menu. A config-file
   option with no control there is only for what a user should not change.

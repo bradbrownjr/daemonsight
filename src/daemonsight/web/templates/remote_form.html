@@ -34,7 +34,7 @@
       <input type="text" class="form-control" id="name" value="{{ existing.id }}" disabled>
       {% else %}
       <input type="text" class="form-control" id="name" name="name" value="{{ f.name }}" required maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,62}" aria-describedby="name-hint" title="Letters, digits, . _ and -; no spaces" placeholder="{{ 'firewall' if kind == 'opnsense' else 'tower' }}">
-      <div class="form-hint" id="name-hint">No spaces: letters, digits, <code>.</code> <code>_</code> and <code>-</code>, e.g. <code>{{ 'OPNsense-Firewall' if kind == 'opnsense' else 'Unraid-Tower' }}</code>. It is part of the system's page address and can't be changed later.</div>
+      <div class="form-hint" id="name-hint">Letters, digits, <code>.</code> <code>_</code> and <code>-</code>, no spaces; start with a letter or digit; 63 characters at most. For example <code>{{ 'OPNsense-Firewall' if kind == 'opnsense' else 'Unraid-Tower' }}</code>. It is part of the system's page address and can't be changed later.</div>
       {% endif %}
     </div>
     <div class="mb-3">

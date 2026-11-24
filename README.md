@@ -11,14 +11,19 @@
 
 ---
 
-**Status:** phase 3 of 5 is under way: package updates and CVE matching are
-built, and image scanning is next. The collector reads system health, systemd
+**Status:** phase 3 of 5 is under way: package updates, CVE matching and the
+first part of container image scanning (end-of-life bases and Debian image
+CVEs) are built. Ubuntu and Alpine images are next. The collector reads system health, systemd
 services, listening sockets, Docker, Caddy, fail2ban, the firewall and pending
 package updates. The web UI has Overview, Exposure, Routes, Services,
-fail2ban, Packages and (on a hub) Vulnerabilities pages, and a stacked layout
-on phones. Findings link to
+fail2ban, Packages and (on a hub) Vulnerabilities, Container images and Docker
+storage pages, a set of pages for each Unraid server and OPNsense firewall the
+hub reads, and a stacked layout on phones. Findings link to
 the row they are about, and a port's panel shows the process behind it.
 
+- **Navigation.** Each page with sections has a section menu in its tab. The
+  Hosts menu lists every host, A to Z, with its status. On a phone, one menu
+  button opens the whole list of pages.
 - **Hub.** A container image (with an Unraid template) shows every host on
   one page. Each host's collector uploads to it over HTTPS.
 - **CVE matching on the hub.** Hosts report which packages they have; the
@@ -28,8 +33,8 @@ the row they are about, and a port's panel shows the process behind it.
   OS hosts get the full list; Fedora hosts report their pending security
   advisories. Ubuntu is next. Hosts download nothing and run no scanner.
 - **Unraid, read over its API.** The hub polls an Unraid server with a
-  Viewer-only API key, with no agent on the server. Add it on the Hosts page
-  ("Add a system"): Test connection shows the server, version, array state
+  Viewer-only API key, with no agent on the server. Add it with the + in the
+  header ("Add a system"): Test connection shows the server, version, array state
   and the key's roles, and a key that could change anything is refused. The
   server gets its own pages (array and disks, containers grouped by your
   Docker folders, VMs, notifications with the date and text of every unread
@@ -165,18 +170,22 @@ where the gaps are:
 DaemonSight collects from the tools already on the server and reports on
 these gaps.
 
-## Planned coverage
+## Coverage
 
 | Area | Source |
 |------|--------|
 | Caddy routes and upstreams | Caddy admin API (`localhost:2019`) |
 | systemd services | systemd over D-Bus |
 | fail2ban jails, filters, log paths, bans | `fail2ban-client` / fail2ban socket |
-| Docker containers, health, logs | Docker API through a read-only socket proxy |
+| Docker containers, health, logs | The collector reads the Docker socket. On Unraid, a separate reader container with a fixed list of GET calls (images, volumes, build cache) |
+| Unraid servers | Unraid GraphQL API with a Viewer-only key, no agent |
+| OPNsense firewalls | OPNsense REST API with a dedicated user's key, GET only, no agent |
+| CrowdSec bans | CrowdSec Local API on an OPNsense firewall, read-only bouncer key |
+| What the internet sees of a host | Shodan InternetDB, or the Shodan API with your key (off by default) |
 | Listening and open ports | `ss` / `/proc/net`, nftables rules |
 | Network traffic, CPU, memory, disk | `/proc`, psutil |
 | CVEs in host packages | Debian security tracker, CISA KEV and EPSS, matched on the hub; Fedora security advisories (dnf5) |
-| CVEs in container images | Debian images done; Alpine and Ubuntu next |
+| CVEs in container images | Debian security tracker for Debian images (done); Ubuntu and Alpine images next |
 
 Targets: a Debian VPS running Caddy and Docker, and Debian LXC containers.
 

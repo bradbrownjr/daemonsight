@@ -86,7 +86,7 @@ GROUPS = {
                "intro": "Scheduled backups of the database, config file and secrets. The folder is set in the "
                         "config file only.", "note": ""},
     "remote": {"title": "Remote systems", "hub_only": True,
-               "intro": "Reading systems that have no collector (Unraid) over their API. Systems are added "
+               "intro": "Reading systems that have no collector (Unraid and OPNsense) over their API. Systems are added "
                         "under Hosts, Add a system; each one sets its own read interval there.", "note": ""},
 }
 
