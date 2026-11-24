@@ -96,6 +96,9 @@ echo "==> systemd units"
 install -m 0644 "$REPO/packaging/systemd/daemonsight-collector.service" /etc/systemd/system/
 install -m 0644 "$REPO/packaging/systemd/daemonsight-update.service" "$REPO/packaging/systemd/daemonsight-update.path" \
   /etc/systemd/system/
+# Runs `daemonsight uninstall` when the hub asks and [collector] allow_remote_uninstall is on.
+install -m 0644 "$REPO/packaging/systemd/daemonsight-uninstall.service" "$REPO/packaging/systemd/daemonsight-uninstall.path" \
+  /etc/systemd/system/
 if [[ $WITH_WEB -eq 1 ]]; then
   install -m 0644 "$REPO/packaging/systemd/daemonsight-web.service" /etc/systemd/system/
 fi
@@ -104,6 +107,7 @@ systemctl enable --now daemonsight-collector.service
 systemctl restart daemonsight-collector.service
 # Installs updates the hub asks for; [upload] remote_update = false turns that off.
 systemctl enable --now daemonsight-update.path
+systemctl enable --now daemonsight-uninstall.path
 
 if [[ $WITH_F2B -eq 1 ]]; then
   if [[ -d /etc/fail2ban/filter.d ]]; then

@@ -24,6 +24,7 @@ sudo systemctl start daemonsight-web
 | `daemonsight-collector` | root | Reads every source and writes the database |
 | `daemonsight-web` | `daemonsight` | Shows the pages |
 | `daemonsight-update.path` and `.service` | root | Installs an update the hub asks for (see "Updating from the hub") |
+| `daemonsight-uninstall.path` and `.service` | root | Uninstalls DaemonSight when the hub asks (see "Remove") |
 
 Options:
 
@@ -552,8 +553,11 @@ The **Manage** button at the end of each row opens the host's page:
   stays. To allow it again, add the same name as a new Linux host.
 - **Remove from hub** is `hub revoke NAME --purge`. The confirmation page lists
   what is deleted (snapshots, metric points, findings, events, accepted
-  findings, CVE matches and the token) and asks you to type the name. Nothing
-  changes on the host; stop its collector there.
+  findings, CVE matches and the token) and asks you to type the name. For a
+  host that is reporting it also has **Uninstall the collector first**, ticked:
+  see "Remove from the hub and uninstall the collector" below. Without it,
+  nothing changes on the host; remove DaemonSight there with
+  `sudo daemonsight uninstall --yes`.
 
 For an Unraid or OPNsense system, Manage opens its edit page, where it can be
 changed, disabled or removed.
@@ -1111,9 +1115,29 @@ depends on Unraid's file layout; it was tested on Unraid 7.x.
 
 ## Remove
 
+### Uninstall by hand
+
 ```bash
-sudo systemctl disable --now daemonsight-web daemonsight-collector daemonsight-update.path
-sudo rm /etc/systemd/system/daemonsight-{collector,web,update}.service /etc/systemd/system/daemonsight-update.path
+sudo daemonsight uninstall          # lists what it would remove and changes nothing
+sudo daemonsight uninstall --yes    # removes it
+```
+
+It stops and disables the services, then removes what `install.sh` installed:
+the units (`daemonsight-collector`, `-web`, `-update` and `-uninstall`, with their
+`.path` units), `/opt/daemonsight`, `/etc/daemonsight` (config, upload token,
+password, secret), `/var/lib/daemonsight` (database, backups), the
+`/usr/local/bin/daemonsight` and `/usr/local/sbin/daemonsight-update` commands,
+the fail2ban jail and filter if you installed them, the sudoers rule from
+"Updating without a password" if you added it, and the `daemonsight` user, when
+it is the account `install.sh` made (home `/var/lib/daemonsight`, no login).
+A data folder, token file or config you moved somewhere else is not touched.
+It is safe to run again: it removes nothing it cannot find.
+
+If the command is not there (a damaged install), the same steps by hand:
+
+```bash
+sudo systemctl disable --now daemonsight-web daemonsight-collector daemonsight-update.path daemonsight-uninstall.path
+sudo rm /etc/systemd/system/daemonsight-{collector,web,update,uninstall}.service /etc/systemd/system/daemonsight-{update,uninstall}.path
 sudo systemctl daemon-reload
 sudo rm -rf /opt/daemonsight /var/lib/daemonsight /etc/daemonsight
 sudo rm -f /usr/local/bin/daemonsight /usr/local/sbin/daemonsight-update
@@ -1122,3 +1146,49 @@ sudo rm -f /etc/sudoers.d/daemonsight-update   # only if you created it (see "Up
 sudo systemctl reload fail2ban                 # only if you had the jail
 sudo userdel daemonsight
 ```
+
+### Remove from the hub and uninstall the collector
+
+On a hub, Hosts, Manage, **Remove from hub** has a box, **Uninstall the
+collector first**, ticked when the host is reporting. With it ticked, nothing
+is removed yet. The host's page shows "Waiting for NAME to check in (its next
+upload, about every 30 seconds)". With its next upload the host is told to
+uninstall, runs `daemonsight uninstall` as above, and says so in a last
+upload. The hub then removes the host and deletes its stored data, as Remove
+does, and records "Host uninstalled and removed: NAME" under Recent hub
+changes.
+
+While it waits, the host's page has two buttons:
+
+- **Cancel uninstall** withdraws the request. The host stays as it was.
+- **Remove anyway** removes the host and its data from the hub now. The
+  collector stays installed and keeps trying to upload, and the hub refuses it.
+  Uninstall it by hand (above).
+
+From the command line: `daemonsight hub uninstall NAME` asks, and
+`daemonsight hub uninstall NAME --cancel` withdraws it. The hub's pending state
+is kept in its database, so a restart of the hub does not lose it.
+
+A host does not uninstall because of an error. It acts only on a successful
+reply to its own authenticated upload, over HTTPS with the certificate
+checked; a refused token, a wrong address, a certificate error or an
+unreachable hub never uninstall anything.
+
+If the host's token is refused (the hub says 401 or 403), the collector asks
+again once an hour instead of every interval. `daemonsight status` and the
+host's own web page say "the hub rejected this host's upload token". Replace
+the token (hub, Manage, Replace upload token, then `set-upload-token` on the
+host) and restart the collector to try at once.
+
+To lock a host against this, so only someone on the host can uninstall it:
+
+```toml
+[collector]
+allow_remote_uninstall = false
+```
+
+A locked host answers "refused". The hub shows that, with Cancel uninstall and
+Remove anyway. A host installed before this feature has no
+`daemonsight-uninstall.path` unit until it is updated (`sudo daemonsight-update`,
+or Update now on the hub), and also answers "refused" until then. What a hub
+can make a host do is in [SECURITY.md](../SECURITY.md), "The hub".

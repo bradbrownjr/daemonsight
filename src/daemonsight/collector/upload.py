@@ -28,19 +28,39 @@ import httpx
 
 from .. import db, full_version
 from ..config import Config
-from . import remote_update
+from . import remote_uninstall, remote_update
 
 log = logging.getLogger("daemonsight.upload")
 
 MAX_METRICS = 20_000
 MAX_EVENTS = 1_000
 MAX_BACKOFF = 300
+# The hub refused this host's token (401, 403): asking again every interval only fills its logs and trips its
+# rate limit, so ask once an hour. `systemctl restart daemonsight-collector` asks at once.
+REJECTED_RETRY = 3600
+REJECTED_MESSAGE = "the hub rejected this host's upload token"
 INVENTORY = "inventory"
 INVENTORY_RESEND = 86400  # send the package list again after a day even when unchanged
 
 
 class UploadError(Exception):
     pass
+
+
+class TokenRejected(UploadError):
+    """The hub answered 401 or 403: it doesn't accept this host's token."""
+
+
+def rejection(conn) -> dict | None:
+    """When the hub last rejected this host's token, as {"at", "status"}, or None while uploads are accepted.
+    Kept in the database so `daemonsight status` and the local web page can show it."""
+    at = db.get_meta(conn, "upload.rejected_at")
+    if at is None:
+        return None
+    try:
+        return {"at": float(at), "status": int(db.get_meta(conn, "upload.rejected_status", "0"))}
+    except ValueError:
+        return None
 
 
 def check_url(url: str) -> None:
@@ -156,6 +176,9 @@ class Uploader:
         self.client = httpx.AsyncClient(timeout=30.0, verify=True, follow_redirects=False,
                                         headers={"User-Agent": f"daemonsight/{full_version()}"})
         self._update_seen: tuple[str, str] | None = None
+        # What to tell the hub about an uninstall it asked for, sent with the next upload (see _hub_uninstall).
+        self._uninstall_ack: tuple[str, str] | None = None
+        self._uninstalling = False
 
     def _hub_asks(self, reply) -> None:
         """Act on an update the hub's reply asks for, logging each change."""
@@ -174,6 +197,45 @@ class Uploader:
                    "invalid": "the hub sent an update target that isn't a commit: %r"}.get(outcome)
             if msg:
                 (log.warning if outcome == "invalid" else log.info)(msg, target)
+
+    async def _hub_uninstall(self, r, seq: int) -> None:
+        """Act on `uninstall: true` in the reply. Called only for a successful reply to an upload sent with this
+        host's token to the configured URL, and never from any other response. The hub is told with a final upload
+        before anything is removed; the removal itself is handed to systemd (remote_uninstall.py)."""
+        if self._uninstalling:
+            return
+        try:
+            reply = r.json()
+        except (ValueError, AttributeError):
+            reply = None
+        try:
+            check_url(self.cfg.upload.url)  # HTTPS (or this machine), as for every upload
+        except UploadError:
+            reply = None
+        asked = isinstance(reply, dict) and reply.get("uninstall") is True and reply.get("last_seq") == seq
+        if not asked or not r.is_success or r.request.url != httpx.URL(self.cfg.upload.url):
+            self._uninstall_ack = None
+            return
+        ok, why = remote_uninstall.check(self.cfg)
+        if not ok:
+            if self._uninstall_ack is None:
+                log.warning("the hub asked this host to uninstall DaemonSight; refused: %s", why)
+            self._uninstall_ack = ("refused", why)
+            return
+        log.warning("the hub asked this host to uninstall DaemonSight (Remove from hub, \"Uninstall the collector "
+                    "first\"); uninstalling")
+        self._uninstalling = True
+        self._uninstall_ack = ("started", "")
+        try:
+            await self.upload_once()  # tell the hub, if it can be reached; the uninstall goes ahead either way
+        except UploadError as exc:
+            log.warning("could not tell the hub the uninstall started: %s", exc)
+        try:
+            remote_uninstall.request(self.cfg)
+        except OSError as exc:
+            log.error("could not start the uninstall: %s", exc.strerror)
+            self._uninstalling = False
+            self._uninstall_ack = ("failed", "the collector could not write the uninstall request")
 
     def _token(self) -> str:
         try:
@@ -198,6 +260,11 @@ class Uploader:
         payload["seq"] = seq
         payload["sent_at"] = time.time()
         payload["remote_update"] = self.cfg.upload.remote_update
+        payload["upload_interval"] = self.cfg.upload.interval
+        if self._uninstall_ack:
+            payload["uninstall"] = self._uninstall_ack[0]
+            if self._uninstall_ack[1]:
+                payload["uninstall_detail"] = self._uninstall_ack[1]
         last = remote_update.read_result(self.cfg.data_dir)
         if last:
             payload["update"] = last
@@ -211,9 +278,11 @@ class Uploader:
         if r.status_code == 200:
             async with self.lock:
                 db.set_meta(self.conn, {**cursors, "upload.last_ok": time.time()})
+                db.delete_meta(self.conn, "upload.rejected_at", "upload.rejected_status")
             log.debug("uploaded seq %d (%d bytes, %d metrics, %d events)", seq, len(body),
                       len(payload["metrics"]), len(payload["events"]))
             self._hub_asks(r)
+            await self._hub_uninstall(r, seq)
             return more
         if r.status_code == 409:
             # The hub has seen a higher number (our clock went back): jump past it.
@@ -224,6 +293,10 @@ class Uploader:
             async with self.lock:
                 db.set_meta(self.conn, {"upload.seq": max(last, seq)})
             raise UploadError(f"hub expects a sequence number above {last}; retrying")
+        if r.status_code in (401, 403):
+            async with self.lock:
+                db.set_meta(self.conn, {"upload.rejected_at": time.time(), "upload.rejected_status": r.status_code})
+            raise TokenRejected(f"{REJECTED_MESSAGE} (HTTP {r.status_code})")
         reason = r.text[:200].strip() if r.headers.get("content-type", "").startswith("text/") else ""
         raise UploadError(f"HTTP {r.status_code}{': ' + reason if reason else ''}")
 
@@ -246,6 +319,10 @@ class Uploader:
                 failing, backoff = False, 0
                 if more:
                     delay = 1
+            except TokenRejected as exc:
+                delay, backoff = REJECTED_RETRY, 0
+                (log.warning if not failing else log.debug)("upload failed: %s (next try in %d s)", exc, delay)
+                failing = True
             except UploadError as exc:
                 backoff = min(max(backoff * 2, self.cfg.upload.interval), MAX_BACKOFF)
                 delay = backoff

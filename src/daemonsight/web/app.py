@@ -149,7 +149,16 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
         if cfg.hub.enabled and not name.startswith("partials/") and name != "login.html":
             with reader() as conn:
                 menu_hosts = views.hosts_menu(conn) if conn else []
+        problem = None
+        if cfg.upload.url and not cfg.hub.enabled and not name.startswith("partials/") and name != "login.html":
+            # A host whose hub refuses its upload token: said on every page (daemonsight status says it too).
+            from ..collector import upload as collector_upload
+            with reader() as conn:
+                bad = collector_upload.rejection(conn) if conn else None
+            if bad:
+                problem = f"{collector_upload.REJECTED_MESSAGE} (HTTP {bad['status']}, {views.fmt_ago(bad['at'])})"
         ctx = {"theme": theme(request), "theme_pref": theme_pref(request), "path": request.url.path, "base": "", "hub": cfg.hub.enabled,
+               "upload_problem": problem,
                "can_accept": cfg.hub.enabled, "flash": notice, "menu_hosts": menu_hosts,
                "page_sections": sections.for_host(host.get("kind") if hasattr(host, "get") else None), **ctx}
         return templates.TemplateResponse(request, name, ctx, status_code=status)
@@ -672,4 +681,9 @@ def add_ingest(app: FastAPI, cfg: Config, conn) -> None:
         reply = {"last_seq": up.seq}
         if target:
             reply["update_to"] = target
+        now = time.time()
+        hub.handle_uninstall_ack(conn, row["id"], up, now, data_dir=cfg.data_dir, cve_path=cfg.cve_db_path)
+        # Only a host marked "uninstall pending" is told to uninstall (docs/DESIGN.md, "Uninstall from the hub").
+        if hub.uninstall_wanted(conn, row["id"]):
+            reply["uninstall"] = True
         return JSONResponse(reply)

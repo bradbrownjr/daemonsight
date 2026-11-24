@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Removed {{ name }} · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">Manage {{ name }}</div>
+  <h1 class="page-title">Removed {{ name }}</h1>
+</div>
+<section class="card mb-4" id="removed">
+  <div class="card-body">
+    <p>The hub deleted {{ name }}'s token and stored data. Its collector is still installed and its uploads are refused.</p>
+    <p class="mb-0">To remove the collector, run <code>sudo daemonsight uninstall --yes</code> on {{ name }}. The <a href="{{ install_url }}" target="_blank" rel="noopener noreferrer">manual steps in INSTALL</a> cover a host where that command is not available.</p>
+  </div>
+  <div class="card-footer"><a class="btn btn-primary" href="/">Back to Hosts</a></div>
+</section>
+{% endblock %}

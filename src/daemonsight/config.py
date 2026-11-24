@@ -51,6 +51,9 @@ class CollectorConfig:
     log_tail_lines: int = 100
     # Old name for [retention] metrics_hours; still read when set.
     metrics_retention_hours: int | None = None
+    # Let the hub uninstall DaemonSight from this host when an admin asks it to (Remove from hub, "Uninstall the
+    # collector first"). false locks the host against it: the collector answers "refused". The hub can't change this.
+    allow_remote_uninstall: bool = True
 
 
 @dataclass

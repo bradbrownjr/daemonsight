@@ -214,6 +214,42 @@ def cmd_set_upload_token(args, cfg) -> int:
     return 0
 
 
+def cmd_status(args, cfg) -> int:
+    """What this host's uploads are doing, from the collector's database. Read-only."""
+    from .collector import upload
+    print(f"Host:        {cfg.host_id}")
+    if not cfg.upload.url:
+        print("Hub:         none; this host keeps its data to itself")
+        return 0
+    print(f"Hub:         {cfg.upload.url}")
+    try:
+        conn = db.connect_reader(cfg.db_path)
+    except (FileNotFoundError, sqlite3.OperationalError):
+        print("Last upload: unknown (no database yet; start the collector)")
+        return 0
+    try:
+        ok = db.get_meta(conn, "upload.last_ok")
+        bad = upload.rejection(conn)
+    except sqlite3.Error:
+        ok, bad = None, None
+    finally:
+        conn.close()
+    when = lambda t: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(t)))  # noqa: E731
+    print(f"Last upload: {when(ok) if ok else 'never accepted'}")
+    if bad:
+        print(f"Problem:     {upload.REJECTED_MESSAGE} (HTTP {bad['status']} at {when(bad['at'])}).")
+        print("             The collector asks again every hour. On the hub, Manage, Replace upload token; then here:")
+        print("             sudo daemonsight set-upload-token && sudo systemctl restart daemonsight-collector")
+    return 0
+
+
+def cmd_uninstall(args, cfg) -> int:
+    """Remove DaemonSight from this host (see uninstall.py). The hub's request comes through here too."""
+    from . import uninstall
+    allowed = cfg is not None and cfg.collector.allow_remote_uninstall
+    return uninstall.main(args.yes, hub_request=args.hub_request, allowed=allowed)
+
+
 def cmd_hub(args, cfg) -> int:
     from . import hub
     if not cfg.hub.enabled:
@@ -264,6 +300,16 @@ def cmd_hub(args, cfg) -> int:
             return 1
         print(f"Revoked {args.name}: its token or API key no longer works." +
               (" Its data is deleted." if args.purge else " Its data stays until you run this with --purge."))
+    elif args.hub_command == "uninstall":
+        if args.cancel:
+            done = hub.cancel_uninstall(conn, args.name)
+            print(f"Cancelled the uninstall of {args.name}." if done else f"{args.name} has no uninstall waiting.")
+            return 0 if done else 1
+        if not hub.request_uninstall(conn, args.name, time.time()):
+            print(f"No collector host named {args.name}.", file=sys.stderr)
+            return 1
+        print(f"Asked {args.name} to uninstall its collector with its next upload. When it says it started, the hub "
+              f"removes it and deletes its data. Cancel: daemonsight hub uninstall {args.name} --cancel")
     return 0
 
 
@@ -280,6 +326,10 @@ def main(argv: list[str] | None = None) -> int:
     rd.add_argument("--socket", default="/var/run/docker.sock", help="Docker's unix socket")
     rd.add_argument("--listen", default="0.0.0.0", help="address to listen on (inside the container)")
     rd.add_argument("--port", type=int, default=8467)
+    sub.add_parser("status", help="show what this host's uploads to the hub are doing")
+    un = sub.add_parser("uninstall", help="remove DaemonSight from this host (root)")
+    un.add_argument("--yes", action="store_true", help="really remove it; without this, only list what would go")
+    un.add_argument("--hub-request", action="store_true", help=argparse.SUPPRESS)  # daemonsight-uninstall.service
     sub.add_parser("set-password", help="set the web login password")
     sub.add_parser("init", help="create the session secret and database")
     once = sub.add_parser("collect-once", help="run sources once and print JSON")
@@ -303,10 +353,18 @@ def main(argv: list[str] | None = None) -> int:
     rev = hubsub.add_parser("revoke", help="stop accepting a host's uploads")
     rev.add_argument("name")
     rev.add_argument("--purge", action="store_true", help="also delete the host's data")
+    uni = hubsub.add_parser("uninstall", help="ask a host to uninstall its collector; the hub then removes the host")
+    uni.add_argument("name")
+    uni.add_argument("--cancel", action="store_true", help="withdraw the request")
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
-    cfg = config.load(args.config)
-    if cfg.log_file and args.command in ("web", "collector"):
+    try:
+        cfg = config.load(args.config)
+    except (ValueError, OSError):
+        if args.command != "uninstall":
+            raise
+        cfg = None  # a host whose config no longer loads can still be uninstalled by hand
+    if cfg is not None and cfg.log_file and args.command in ("web", "collector"):
         from logging.handlers import RotatingFileHandler
         fh = RotatingFileHandler(cfg.log_file, maxBytes=5 * 2**20, backupCount=3)
         fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
@@ -318,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         "init": cmd_init, "collect-once": cmd_collect_once,
         "set-upload-token": cmd_set_upload_token, "hub": cmd_hub,
         "docker-reader": cmd_docker_reader, "backup": cmd_backup, "restore": cmd_restore,
+        "status": cmd_status, "uninstall": cmd_uninstall,
     }[args.command]
     return handler(args, cfg)
 

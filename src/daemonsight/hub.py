@@ -214,6 +214,9 @@ class UpdateStateIn(_Model):
         return v
 
 
+UNINSTALL_ACKS = ("started", "refused", "failed")
+
+
 class Upload(_Model):
     # Unknown top-level fields are ignored, so a host updated ahead of its
     # hub can still report. Everything inside stays strict.
@@ -234,6 +237,11 @@ class Upload(_Model):
     remote_update: bool | None = None
     update: UpdateStateIn | None = None
     inventory: InventoryIn | None = None
+    # Seconds between this host's uploads. A top-level field, not in `settings` (which is strict), so an older hub ignores it.
+    upload_interval: float | None = Field(default=None, ge=1, le=86400)
+    # The collector's answer to the hub's `uninstall: true`; see "Uninstall from the hub" below.
+    uninstall: Literal[UNINSTALL_ACKS] | None = None  # type: ignore[valid-type]
+    uninstall_detail: Annotated[str, Field(max_length=200, pattern=r"^[^\x00-\x1f\x7f]*$")] | None = None
 
     @field_validator("inventory", mode="wrap")
     @classmethod
@@ -415,10 +423,11 @@ def store(conn, host_row, up: Upload, now: float, address: str | None) -> str | 
             [(host, e.ts, e.kind, e.severity, e.title, e.detail, e.link, e.id) for e in up.events])
         conn.execute(
             "UPDATE hosts SET last_seq=?, last_seen=?, last_sent_at=?, max_interval=?, version=?, address=?, "
-            "remote_update=?, update_state=COALESCE(?, update_state) WHERE id=?",
+            "remote_update=?, update_state=COALESCE(?, update_state), upload_interval=COALESCE(?, upload_interval) "
+            "WHERE id=?",
             (up.seq, now, up.sent_at, up.max_interval, up.version, address,
              None if up.remote_update is None else int(up.remote_update),
-             up.update.model_dump_json() if up.update else None, host))
+             up.update.model_dump_json() if up.update else None, up.upload_interval, host))
         pending = _pending_update(conn, host, up, now)
         conn.execute("COMMIT")
     except Exception:
@@ -505,6 +514,69 @@ def _pending_update(conn, host: str, up: Upload, now: float) -> str | None:
     if up.remote_update is False:
         return None
     return target
+
+
+# --- uninstall from the hub -------------------------------------------------
+# "Remove from hub" can first ask the host to uninstall its collector, like an RMM tool removing its agent. The
+# hub marks the host "pending" (kept in the hosts row, so a restart keeps it). On the host's next authenticated
+# upload the reply carries `uninstall: true`. The collector acts only on a 2xx reply to an upload made with its
+# token (collector/upload.py) and only while `[collector] allow_remote_uninstall` is on. It answers in a later
+# upload: "started" (the hub then revokes and purges, as Remove does), or "refused" / "failed" (the hub stops
+# asking and shows why; the admin can cancel, or remove the host anyway and uninstall by hand).
+
+UNINSTALL_STATES = ("pending", "refused", "failed")
+
+
+def request_uninstall(conn, host_id: str, now: float) -> bool:
+    """Mark a collector host "uninstall pending". False when there is no such host."""
+    return conn.execute("UPDATE hosts SET uninstall_state='pending', uninstall_asked=?, uninstall_detail=NULL "
+                        "WHERE id=? AND kind IS NULL", (now, host_id)).rowcount == 1
+
+
+def cancel_uninstall(conn, host_id: str) -> bool:
+    return conn.execute("UPDATE hosts SET uninstall_state=NULL, uninstall_asked=NULL, uninstall_detail=NULL "
+                        "WHERE id=? AND uninstall_state IS NOT NULL", (host_id,)).rowcount == 1
+
+
+def uninstall_wanted(conn, host_id: str) -> bool:
+    """True while this host is pending: the only case in which an upload's reply says `uninstall`."""
+    row = conn.execute("SELECT uninstall_state FROM hosts WHERE id=? AND kind IS NULL", (host_id,)).fetchone()
+    return bool(row) and row["uninstall_state"] == "pending"
+
+
+def remove_host(conn, host_id: str, data_dir=None, cve_path=None) -> None:
+    """Revoke a host and delete its stored data, in one transaction (what the Remove button does)."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        revoke_host(conn, host_id, purge=True, data_dir=data_dir, cve_path=cve_path)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def hub_event(conn, ts: float, title: str, detail: str | None = None) -> None:
+    db.add_event(conn, db.HUB_HOST, ts, "setting", title, detail=detail)
+
+
+def handle_uninstall_ack(conn, host_id: str, up: Upload, now: float, data_dir=None, cve_path=None) -> bool:
+    """Act on what the host said about an uninstall, after its upload is stored. Only a host that is pending
+    counts. "started": revoke and purge it and record an event; True is returned. "refused" or "failed": keep
+    the host, stop asking and keep the reason."""
+    if up.uninstall is None or not uninstall_wanted(conn, host_id):
+        return False
+    detail = up.uninstall_detail or None
+    if up.uninstall == "started":
+        remove_host(conn, host_id, data_dir, cve_path)
+        hub_event(conn, now, f"Host uninstalled and removed: {host_id}",
+                  "the collector reported that its uninstall started; its token and stored data are deleted")
+        log.info("Host %s reported its uninstall started; removed", host_id)
+        return True
+    conn.execute("UPDATE hosts SET uninstall_state=?, uninstall_detail=? WHERE id=?", (up.uninstall, detail, host_id))
+    word = "refused" if up.uninstall == "refused" else "failed"
+    hub_event(conn, now, f"Uninstall {word} by {host_id}", detail)
+    log.warning("Host %s %s the uninstall: %s", host_id, word, detail or "no reason given")
+    return False
 
 
 def _event(conn, host: str, ts: float, severity: str | None, title: str, detail: str | None = None) -> None:

@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for an uninstall the DaemonSight hub asked for
+Documentation=https://github.com/bradbrownjr/daemonsight/blob/main/docs/INSTALL.md
+
+[Path]
+# Written by the collector (root, mode 0600) after the hub's reply carried uninstall and
+# [collector] allow_remote_uninstall is on (the default). See docs/INSTALL.md "Remove".
+PathExists=/var/lib/daemonsight/uninstall.request
+Unit=daemonsight-uninstall.service
+
+[Install]
+WantedBy=paths.target
