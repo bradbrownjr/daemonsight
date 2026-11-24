@@ -97,6 +97,15 @@
   </div>
   <div class="card-body">
     <div class="datagrid">
+      {% if v.priority %}
+      <div class="datagrid-item" id="priority-table">
+        <div class="datagrid-title">Prioritisation table</div>
+        <div class="datagrid-content"><a href="{{ v.priority.url }}" target="_blank" rel="noopener noreferrer">{{ v.priority.title }}</a>, version {{ v.priority.version }}</div>
+        <div class="text-secondary small">{{ v.priority.origin }}{{ v.priority.when }} · directive dated {{ v.priority.date }}</div>
+        <div class="text-secondary small">{{ v.priority.checked }}{% if v.priority.note %} · {{ v.priority.note }}{% endif %}</div>
+        {% if v.priority.error %}<div class="text-red small">Could not update the table: {{ v.priority.error }}</div>{% endif %}
+      </div>
+      {% endif %}
       {% for f in v.feeds %}
       <div class="datagrid-item">
         <div class="datagrid-title">{{ f.title }}{{ src("src-feed-" ~ f.name, f.src) }}</div>
@@ -107,7 +116,7 @@
       </div>
       {% endfor %}
     </div>
-    <div class="text-secondary small mt-3">The hub downloads these every {{ v.refresh_hours|default(24) }} hours. EPSS scores are from FIRST (<a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">first.org/epss</a>); the KEV list is CISA's, released as CC0. CISA's SSVC ratings come from each matched CVE's record in the CVE Services API (<a href="https://cveawg.mitre.org/api-docs/" target="_blank" rel="noopener noreferrer">cveawg.mitre.org</a>), asked for once and again after 7 days.{% if v.feeds|map(attribute='alpine')|select|list %} The Alpine files are Alpine Linux's security database (<a href="https://secdb.alpinelinux.org/" target="_blank" rel="noopener noreferrer">secdb.alpinelinux.org</a>), downloaded only for the Alpine releases that container images run.{% endif %}{% if v.feeds|map(attribute='ubuntu')|select|list %} The Ubuntu files are Canonical's OVAL data (<a href="https://ubuntu.com/security/oval" target="_blank" rel="noopener noreferrer">ubuntu.com/security/oval</a>, licensed CC BY-SA 4.0), downloaded only for the Ubuntu releases that hosts and container images run.{% endif %}{% if v.feeds|selectattr('name', 'equalto', 'opnsense-changelog')|list %} The OPNsense changelog is the project's own release notes, downloaded only while a firewall has a release update pending.{% endif %}</div>
+    <div class="text-secondary small mt-3">The hub downloads these every {{ v.refresh_hours|default(24) }} hours. The prioritisation table is asked for once a day from the DaemonSight repository (raw.githubusercontent.com); it is data only and checked before use. EPSS scores are from FIRST (<a href="https://www.first.org/epss/" target="_blank" rel="noopener noreferrer">first.org/epss</a>); the KEV list is CISA's, released as CC0. CISA's SSVC ratings come from each matched CVE's record in the CVE Services API (<a href="https://cveawg.mitre.org/api-docs/" target="_blank" rel="noopener noreferrer">cveawg.mitre.org</a>), asked for once and again after 7 days.{% if v.feeds|map(attribute='alpine')|select|list %} The Alpine files are Alpine Linux's security database (<a href="https://secdb.alpinelinux.org/" target="_blank" rel="noopener noreferrer">secdb.alpinelinux.org</a>), downloaded only for the Alpine releases that container images run.{% endif %}{% if v.feeds|map(attribute='ubuntu')|select|list %} The Ubuntu files are Canonical's OVAL data (<a href="https://ubuntu.com/security/oval" target="_blank" rel="noopener noreferrer">ubuntu.com/security/oval</a>, licensed CC BY-SA 4.0), downloaded only for the Ubuntu releases that hosts and container images run.{% endif %}{% if v.feeds|selectattr('name', 'equalto', 'opnsense-changelog')|list %} The OPNsense changelog is the project's own release notes, downloaded only while a firewall has a release update pending.{% endif %}</div>
   </div>
 </section>
 {% endif %}

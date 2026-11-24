@@ -481,6 +481,18 @@ host needs a VPN or an open inbound port for DaemonSight. The design is in
   advisory answer is HTTPS only, from the host asked, never redirected, capped
   (128 KB FreeBSD, 512 KB GitHub), and only CVE ids, GitHub's rating and a
   short title are kept.
+- **The prioritisation table can be updated from the DaemonSight repository.** Once a day the hub asks `raw.githubusercontent.com`
+  (a new outbound source) for two small JSON files in this project's repository,
+  `/bradbrownjr/daemonsight/main/src/daemonsight/data/priority/current.json` (the name of the active table file) and that table, so
+  that a directive replacing CISA BOD 26-04 reaches the hub without a release. The files are data only and nothing in them is
+  executed, expanded or used as a template. Each is capped at 256 KB, fetched over HTTPS with a conditional request, and a redirect
+  may only stay on `raw.githubusercontent.com`. The table goes through the same strict check as any table file (exact keys, types, all
+  16 rows, allowed severities, https addresses), and only a `version` greater than the bundled table's (and the installed one's) is
+  accepted, so a table cannot be rolled back. An invalid, oversized or unreachable answer changes nothing and is shown on the Data
+  feeds card. A table you place at `<data folder>/priority/override.json` is never replaced. The request carries the User-Agent
+  `DaemonSight/<version>` and nothing about your hosts. Settings, CVE checks, "Fetch prioritisation table updates from the DaemonSight
+  repository" (`[cve] priority_updates = false`) turns it off. Trust placed in it: whoever can push to the repository's `main` branch
+  can change the severities and deadlines your hub shows (never what runs); protect that branch accordingly.
 - **Outside checks send one thing to Shodan: an IP address.** Off by default
   (Settings page, or `[outside] enabled`). When on, the hub asks Shodan's InternetDB,
   `GET https://internetdb.shodan.io/<ip>`, for each public address of each

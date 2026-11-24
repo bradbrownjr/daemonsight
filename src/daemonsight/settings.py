@@ -135,6 +135,10 @@ FIELDS: tuple[Field, ...] = (
           "estimates it: automatable when the CVE's EPSS probability is at or above this (marked \"estimated by DaemonSight\"). "
           "FIRST: the threshold is \"a very localized effort\"; the \"EPSS equivalent effort level\" of patching every CVSS "
           "Critical is \"approximately the 90th percentile (>=0.04)\". It only matters for CVEs CISA has not rated.", 0.001, 1.0),
+    Field("cve.priority_updates", "Fetch prioritisation table updates from the DaemonSight repository", "cve", "bool",
+          "Once a day the hub asks raw.githubusercontent.com for the table of remediation timelines the project publishes "
+          "(two small JSON files, checked strictly, never run). A newer table replaces the bundled one when CISA issues a "
+          "successor to BOD 26-04, with no new release. Off: the table bundled with this version is used, and a fetched one is removed."),
     Field("retention.metrics_hours", "Keep chart points for", "retention", "int",
           "Chart points, about one a second per host. 0 keeps them for good.", 0, 87600, unit="hours"),
     Field("retention.events_days", "Keep Recent changes for", "retention", "int",

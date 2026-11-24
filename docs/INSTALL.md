@@ -545,6 +545,7 @@ tracker. It needs outbound HTTPS, nothing inbound, to:
 | `cveawg.mitre.org` | CISA's SSVC rating of each CVE a host or image matches (the CVE Services record), one request per CVE, asked again after 7 days | 5 to 100 KB each |
 | `codeload.github.com` | The OPNsense project's changelog (a tarball of github.com/opnsense/changelog), only while an OPNsense firewall is enabled | 0.6 MB |
 | `www.freebsd.org` | The CVE ids of a FreeBSD security advisory the changelog names (one small file each, asked for once), only for a release a firewall needs | 6 KB each |
+| `raw.githubusercontent.com` | The prioritisation table the DaemonSight repository publishes (two small JSON files, once a day; Settings, CVE checks, "Fetch prioritisation table updates from the DaemonSight repository") | 20 KB |
 | `api.github.com` | The CVE id and rating of an OPNsense security advisory the changelog names (one request each, asked for once; no token, 60 requests an hour allowed) | 20 KB each |
 
 It fetches each every 24 hours, asking only for what changed, keeps them in
@@ -560,6 +561,7 @@ Change these on the Settings page (CVE checks), or in the config file:
 enabled = true       # false: no downloads and no cve.* findings
 refresh_hours = 24
 epss_automatable = 0.04   # where CISA has not rated a CVE, an EPSS probability at or above this counts as "automatable"
+priority_updates = true   # false: use only the prioritisation table bundled with this version
 ```
 
 A config file that still has `epss_high` is read as `epss_automatable` and logs a warning; a value saved on the Settings page
@@ -571,6 +573,12 @@ Critical, 14 days High, 60 days Medium and "fix at the next upgrade" Low. CISA's
 CVE record at `cveawg.mitre.org`. Where CISA has not rated a CVE, the hub estimates them (an EPSS probability at or above
 `epss_automatable` counts as automatable, the impact as partial) and the page says "estimated by DaemonSight". CVSS is shown for
 information and decides nothing.
+
+When CISA replaces the directive, the project publishes the new table in its repository and the hub fetches it once a day
+(`raw.githubusercontent.com`, two small JSON files, checked before use), so the new deadlines arrive without a release. The Data
+feeds card on the Vulnerabilities page shows which table is in force and where it came from, and any error. Turn this off with
+the Settings page ("Fetch prioritisation table updates from the DaemonSight repository") or `priority_updates = false`; a fetched
+table is then removed and the bundled one is used. A table you place yourself, as below, is never replaced by a fetched one.
 
 The table is a data file. To use a different one (for example when CISA replaces the directive), put a file in the format described
 in DESIGN.md ("The table is a data file") at `<data_dir>/priority/override.json` (`/data/priority/override.json` in the

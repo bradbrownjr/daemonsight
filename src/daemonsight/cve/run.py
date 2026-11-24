@@ -19,7 +19,7 @@ from functools import partial
 from .. import db, settings
 from ..config import Config
 from ..findings import Finding
-from . import advisories, alpine, exposure, feeds, match, opnsense, priority, records, store, ubuntu
+from . import advisories, alpine, exposure, feeds, match, opnsense, priority, priority_fetch, records, store, ubuntu
 
 log = logging.getLogger("daemonsight.cve")
 
@@ -137,6 +137,7 @@ class Chore:
         if self.cfg.cve.epss_automatable != self._epss_auto:
             self._epss_auto = self.cfg.cve.epss_automatable
             self.dirty = True          # the Automatable estimate moved
+        await self._fetch_priority(now)
         table = priority.use(self.cfg.data_dir)
         sig = (table.source, table.version, table.name)
         if sig != self._table_sig:
@@ -206,6 +207,21 @@ class Chore:
         await asyncio.to_thread(self._forget, set(every) | set(opn) | set(unseen))
         await self._fetch_records(now)
         await self._findings(invs, now)
+
+    async def _fetch_priority(self, now: float) -> None:
+        """Once a day, ask the DaemonSight repository for a newer prioritisation table (priority_fetch.py). A table that was installed is
+        logged, shown under Recent hub changes, and makes the next pass rate every finding again."""
+        try:
+            update = await priority_fetch.refresh(self.cfg.data_dir, now, self.cfg.cve.priority_updates, self.client)
+        except Exception:
+            log.exception("Prioritisation table update failed")
+            return
+        if update is None:
+            return
+        self.dirty = True
+        if self.state is not None:
+            db.add_event(self.state, db.HUB_HOST, now, "priority", f"Prioritisation table updated to {update.name} v{update.version}",
+                         detail=f"Fetched {update.file} from the DaemonSight repository")
 
     async def _fetch_records(self, now: float) -> None:
         """CISA's SSVC rating of the CVEs the hub has matched (records.py): the ones due, up to a cap in one pass. A record that

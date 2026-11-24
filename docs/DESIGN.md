@@ -1141,7 +1141,7 @@ The format, checked strictly (exact keys at every level, no extras):
 | Key | Content |
 |---|---|
 | `version` | A whole number. |
-| `directive` | `name` ("CISA BOD 26-04", used in every finding's wording), `title`, `table_name` ("Table 1"), `url`, `guidance_url`, `table_url` (https addresses) and `date` (YYYY-MM-DD). |
+| `directive` | `name` ("CISA BOD 26-04", used in every finding's wording), `title`, `table_name` ("Table 1"), `url`, `guidance_url`, `table_url` (https addresses) and `date` (YYYY-MM-DD); optionally `table_sha256` (the SHA-256 of the image at `table_url`, 64 lowercase hex digits, which the watcher compares). |
 | `inputs` | The four inputs and their allowed values: `exposed`, `kev` and `automatable` are `yes` or `no`, `impact` is `total` or `partial`. Fixed: the program decides the inputs, the file only the answers. |
 | `rows` | Exactly 16 rows, one for each combination of the inputs, each with `row` (1 to 16), the four inputs, `timeline` (the directive's words), `days` (a whole number, or null for "fix on system upgrade") and `triage` (true or false). |
 | `severity` | Maps each timeline the rows use to a severity: a day count as a string, or `upgrade` for null, to `critical`, `high`, `medium` or `low`. It must list exactly the timelines the rows use. |
@@ -1149,6 +1149,51 @@ The format, checked strictly (exact keys at every level, no extras):
 
 A file that is missing a row, repeats a combination, names an unknown severity, has a key that is not listed, or has a value of the wrong
 type, is refused. The tests cover each of these and that an override is preferred over the bundled file.
+
+#### When the directive changes
+
+CISA publishes the table only as an image, so turning a new directive into a table needs a person. DaemonSight automates noticing
+the change and spreading the result, not reading the image.
+
+**Detection (the watcher).** `.github/workflows/directive-watch.yml` runs `scripts/check_directive.py` every Monday and on demand.
+It reads the active table file (`src/daemonsight/data/priority/current.json` names it) and fetches `directive.url` and
+`directive.table_url` from it. It opens an issue titled "CISA directive change: review the prioritisation table", unless one is
+already open, when:
+
+- the directive's page says it was revoked or superseded. When CISA revoked BOD 22-01 its page gained the paragraph "This Directive
+  has been revoked. It is superseded by BOD 26-04.", its title gained "(Revoked)" and its address gained "-revoked" (the old address
+  now redirects; archived page dated June 10, 2026). The script looks at that wording in the page's title, heading and opening text,
+  not at the list of other directives at the foot of the page, which names revoked ones; or
+- the SHA-256 of the table image differs from `directive.table_sha256`.
+
+A page that cannot be fetched, an image that is not an image, or a table file with no `table_sha256` fails the run instead, so it
+shows in Actions. No issue is opened for that. The workflow has `issues: write` and `contents: read` only.
+
+**The maintainer's steps.**
+
+1. Read the new table from CISA's page and transcribe it into `src/daemonsight/data/priority/<directive>.json` in the format above, with
+   a `version` higher than the one in force. Compare every row with the image.
+2. Put the SHA-256 of the new image in `directive.table_sha256` (`curl -s <table_url> | sha256sum`).
+3. Point `current.json` at the new file: `{"table": "<directive>.json"}`.
+4. Run the tests and push to `main`. Hubs fetch the new file from there; the next release bundles it. The old table file can stay.
+
+If the table changed but the directive did not, edit the same file, raise its `version` and update the hash.
+
+**How hubs pick it up.** Once a day the CVE chore (`cve/priority_fetch.py`) asks `raw.githubusercontent.com` for
+`.../main/src/daemonsight/data/priority/current.json` and for the file it names, each with a conditional request (ETag and
+Last-Modified), over https, a redirect only to the same host, at most 256 KB each. The table goes through the same strict check as
+any file (`priority.parse`) and is accepted only when its `version` is greater than the bundled table's and than the fetched one already installed. It is
+written atomically to `<data_dir>/priority/override.json`, so `priority.load` uses it from the next pass; no restart and no release.
+A table that fails the check, is too big or cannot be fetched changes nothing: what was in force stays, and the Data feeds card on
+the Vulnerabilities page shows the reason beside the table's line (a failure is asked again after an hour). When a new table is
+installed the hub logs it, adds "Prioritisation table updated to <directive name> v<version>" to Recent hub changes, and the next pass
+rates every finding again. The card also shows the table in force: directive, version, where it came from (bundled, fetched or a file
+placed by hand) and when.
+
+The Settings switch "Fetch prioritisation table updates from the DaemonSight repository" (`[cve] priority_updates`, default on)
+turns this off: no request is made and a fetched table is removed, leaving only the bundled one. A table an administrator put at
+`override.json` is never replaced or removed by this: it keeps winning, and the card says a fetched one was not installed. A
+fetched table is dropped when the bundled one has caught up with it (a release that carries the same or a newer version).
 
 **Sources of the classification.** The directive and its guidance [83][84], the table image [85], the CVE Services API and its
 terms [86], CISA's Vulnrichment (the SSVC fields in the ADP container) [87], FIRST on using EPSS and its percentiles [88] and FIRST's CVSS v4.0 user guide [89].
