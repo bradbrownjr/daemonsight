@@ -201,8 +201,11 @@ def add_remote_routes(app: FastAPI, cfg: Config, conn, *, render, require_login,
                     problems.append("Docker reader: " + docker_storage.error_text(exc, reader_token))
             return ctx, None
         if existing is None:
-            if not hub.HOST_RE.match(form["name"]):
-                problems.append("Name: use letters, digits, '.', '_' and '-', starting with a letter or digit (63 at most).")
+            if not form["name"]:
+                problems.append("Name: type a name for this system, e.g. firewall (the grey text is only an example).")
+            elif not hub.HOST_RE.match(form["name"]):
+                problems.append("Name: use letters, digits, '.', '_' and '-', starting with a letter or digit (63 at most); "
+                                "no spaces.")
             elif conn.execute("SELECT 1 FROM hosts WHERE id = ?", (form["name"],)).fetchone():
                 problems.append(f"Name: {form['name']} already exists.")
         try:

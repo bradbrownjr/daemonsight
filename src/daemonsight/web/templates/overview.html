@@ -6,7 +6,10 @@
     <div class="page-pretitle">{{ v.host.id }}{% if v.host.kernel %} · kernel {{ v.host.kernel }}{% endif %}{% if v.host.virt %} · {{ v.host.virt }}{% endif %}</div>
     <h1 class="page-title">Overview</h1>
   </div>
-  <a class="btn" href="{{ base }}/report">Report: what to do</a>
+  <div class="d-flex flex-wrap gap-2">
+    {% if hub and v.host.kind %}<a class="btn" href="/remotes/{{ v.host.id }}/edit">Edit system</a>{% endif %}
+    <a class="btn" href="{{ base }}/report">Report: what to do</a>
+  </div>
 </div>
 {% include "partials/overview.html" %}
 {% endblock %}
