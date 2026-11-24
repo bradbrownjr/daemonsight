@@ -363,8 +363,10 @@ def attach(cves: list[dict], exposed: bool, epss_automatable: float, table: Tabl
 
 
 def sort_key(c: dict):
-    """Most urgent first (the table's timeline), then the higher EPSS probability, then a fix over none, then the CVE id."""
-    return (c["rating"].order, -(c.get("epss") or 0), {"fix": 0, "esm": 1}.get(c.get("state"), 2), c["cve"])
+    """Most urgent first by the table (the timeline, forensic triage before none), then the higher EPSS probability, then a CVE in
+    the KEV catalog, the table row, a fix over none, and the CVE id."""
+    r = c["rating"]
+    return (r.order[:2], -(c.get("epss") or 0), not r.kev, r.row, {"fix": 0, "esm": 1}.get(c.get("state"), 2), c["cve"])
 
 
 # --- text ----------------------------------------------------------------------------------------------------------------

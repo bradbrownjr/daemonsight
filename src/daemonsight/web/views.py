@@ -1071,7 +1071,7 @@ def vulnerabilities(conn, cfg: Config) -> dict:
         actionable = [c for c in items if c["state"] in ("fix", "esm", "nofix")]
         raised = cve_match.counted(items)
         top = (raised or actionable or items)[0]
-        worst = priority.worst(c["rating"] for c in raised)
+        worst = raised[0]["rating"] if raised else None
         kev_n = sum(1 for c in items if c["kev"] and c["state"] in ("fix", "esm", "nofix"))
         fixed_v = cve_match._fixed_version([c for c in items if c["state"] == "fix"]) if backend == "apt" else None
         if backend == "apt" and not fixed_v and counts["esm"]:

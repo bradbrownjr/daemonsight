@@ -520,7 +520,7 @@ def test_a_cve_on_the_kev_list_makes_the_finding_high_as_for_a_debian_host(tmp_p
     f = updates(fw, cves)
     assert f.severity == "high" and "fixes 1 CVE (1 known exploited)" in f.title and "on CISA's list of exploited vulnerabilities (KEV)" in f.detail
     assert "exploited, CISA KEV" in f.detail and f.basis == base.basis       # the basis is the CVE ids, as for a Debian host
-    # A high exploit score does the same (the Debian rule), and one below the threshold does not.
+    # A high EPSS probability makes the CVE automatable (estimated), which moves a firewall's CVE to 14 days; a low one does not.
     set_epss(cfg, "CVE-2026-30868", 0.02)
     s = store.connect(cfg.cve_db_path)
     s.execute("DELETE FROM kev")
@@ -528,7 +528,8 @@ def test_a_cve_on_the_kev_list_makes_the_finding_high_as_for_a_debian_host(tmp_p
     assert updates(fw, opnsense_cves.load(cfg, conn, "fw1", fw)).severity == "medium"
     set_epss(cfg, "CVE-2026-30868", 0.5)
     hot = updates(fw, opnsense_cves.load(cfg, conn, "fw1", fw))
-    assert hot.severity == "high" and "1 with a high exploit score" in hot.detail and "EPSS 50%" in hot.detail
+    assert hot.severity == "high" and "Fix within 14 days (CISA BOD 26-04 timeline)" in hot.detail and "EPSS 50.0% (50th)" in hot.detail
+    assert "Publicly exposed: yes: a firewall is a network device" in hot.howto
     # The CVE never lowers what the packages already make High.
     many = copy.deepcopy(fw)
     many["count"] = many["count_packages"] = 25
@@ -638,7 +639,8 @@ def test_the_card_lists_the_cves_the_update_fixes_with_their_rank_and_the_panel(
     card = html.split('id="firmware-cves"')[1].split("</section>")[0]
     assert "Fixes 1 CVE (1 known exploited)" in card
     assert 'data-table="opn-firmware-cves"' in card and "https://www.cve.org/cverecord?id=CVE-2026-30868" in card
-    assert "81%" in card and ">KEV<" in card and "26.1.4" in card and "2026-03-11" in card
+    assert "81.2%" in card and ">KEV<" in card and "<th data-sort=\"num\">Fix within</th>" in card and "3 days" in card
+    assert "Fix within 3 days (CISA BOD 26-04 timeline)" in card and "26.1.4" in card and "2026-03-11" in card
     assert "mvc: fix CSRF vulnerability in multiple API endpoints" in card
     assert "https://github.com/opnsense/changelog/blob/master/community/26.1/26.1.4" in card
     # The panel: sources, terms, and the same check in OPNsense.
@@ -852,7 +854,7 @@ def test_severity_comes_from_the_same_summary_call_as_the_updates_finding(tmp_pa
         asyncio.run(c.run_once(NOW + 30))
         cves = opnsense_cves.load(cfg, conn, "fw1", idle_fw)
         un = unseen_findings(cfg, conn, idle_fw, now)[0][0]
-        want = opnsense_cves.summary(cves["unseen"]["cves"], cves["epss_high"], cves["unseen"]["advisories"])["severity"]
+        want = opnsense_cves.summary(cves["unseen"]["cves"], cves["epss_automatable"], cves["unseen"]["advisories"])["severity"]
         assert un.severity == want == up.severity == ("medium" if mark is None else "high")
 
 

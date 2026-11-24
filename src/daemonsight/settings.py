@@ -410,9 +410,9 @@ def save(conn, base: Config, changes: dict[str, object], by: str, now: float | N
             old = get(current, f)
             if value == old:
                 continue
-            for old, new in LEGACY.items():
-                if new == key:
-                    conn.execute("DELETE FROM settings WHERE key = ?", (old,))
+            for legacy, renamed in LEGACY.items():
+                if renamed == key:
+                    conn.execute("DELETE FROM settings WHERE key = ?", (legacy,))
             conn.execute("INSERT INTO settings (key, value, changed_at, changed_by) VALUES (?, ?, ?, ?) "
                          "ON CONFLICT (key) DO UPDATE SET value = excluded.value, "
                          "changed_at = excluded.changed_at, changed_by = excluded.changed_by",
@@ -435,8 +435,8 @@ def reset(conn, base: Config, key: str, by: str, now: float | None = None) -> bo
     conn.execute("BEGIN IMMEDIATE")
     try:
         gone = conn.execute("DELETE FROM settings WHERE key = ?", (key,)).rowcount > 0
-        for old, new in LEGACY.items():
-            if new == key and conn.execute("DELETE FROM settings WHERE key = ?", (old,)).rowcount:
+        for legacy, renamed in LEGACY.items():
+            if renamed == key and conn.execute("DELETE FROM settings WHERE key = ?", (legacy,)).rowcount:
                 gone = True
         if gone:
             new = file_value(base, f)

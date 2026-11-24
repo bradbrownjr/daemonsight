@@ -307,7 +307,7 @@ def test_a_database_from_before_the_table_gives_nothing_and_an_older_one_gains_i
     assert adv.cached(r) == {} and adv.generation(r) == "adv:0:0"
     r.close()
     conn = store.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION == 6
     assert conn.execute("SELECT COUNT(*) FROM opn_adv").fetchone()[0] == 0
     conn.close()
 
@@ -346,7 +346,7 @@ def test_the_cves_of_the_advisories_join_the_set_with_the_advisory_as_evidence(t
     assert len(advs) == 23 and advs[GH_1]["cves"] == [] and advs[GH_1]["severity"] == "high" and advs[GH_1]["state"] == "ok"
     assert advs[SA_74]["cves"] == ["CVE-2026-101313"] and advs[SA_74]["url"] == "https://www.freebsd.org/security/advisories/FreeBSD-SA-26:74.ktls.asc"
     assert advs[GH_2]["url"] == "https://github.com/opnsense/core/security/advisories/GHSA-89wp-xvvm-9pp4"
-    s = opnsense_cves.summary(got["cves"], whole["epss_high"], got["advisories"])
+    s = opnsense_cves.summary(got["cves"], whole["epss_automatable"], got["advisories"])
     assert len(s["fixable"]) == 25 and {a["ref"] for a in s["unresolved"]} == {GH_1, GH_2}
 
 
@@ -357,10 +357,14 @@ def test_ranking_applies_to_the_resolved_cves(tmp_path):
     set_epss(cfg, "CVE-2026-127750", 0.9)
     whole = opnsense_cves.load(cfg, conn, "fw1", fw)
     got = whole["unseen"]
-    s = opnsense_cves.summary(got["cves"], whole["epss_high"], got["advisories"])
-    assert [c["cve"] for c in s["kev"]] == ["CVE-2026-101313"] and [c["cve"] for c in s["hot"]] == ["CVE-2026-127750"]
-    assert s["severity"] == "high" and s["fixable"][0]["cve"] == "CVE-2026-101313" and s["fixable"][1]["cve"] == "CVE-2026-127750"
-    assert "via FreeBSD-SA-26:74.ktls" in opnsense_cves.describe(s["fixable"][0])
+    s = opnsense_cves.summary(got["cves"], whole["epss_automatable"], got["advisories"])
+    assert [c["cve"] for c in s["kev"]] == ["CVE-2026-101313"]
+    # A firewall is exposed. The KEV CVE (no EPSS, so not automatable) is row 4 and the one with EPSS 90% (automatable) row 6: both 14
+    # days, so the higher EPSS comes first.
+    assert [x["rating"].row for x in s["fixable"][:2]] == [6, 4] and s["fixable"][0]["rating"].days == s["fixable"][1]["rating"].days == 14
+    assert s["severity"] == "high" and s["fixable"][0]["cve"] == "CVE-2026-127750" and s["fixable"][1]["cve"] == "CVE-2026-101313"
+    assert s["worst"] is s["fixable"][0] and s["exposure"].exposed
+    assert "via FreeBSD-SA-26:74.ktls" in opnsense_cves.describe(s["fixable"][1])
 
 
 def test_a_cve_named_by_a_line_and_by_an_advisory_is_one_cve_at_the_highest_section(tmp_path):

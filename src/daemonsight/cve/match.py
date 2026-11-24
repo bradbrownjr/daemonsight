@@ -230,7 +230,7 @@ def finding_text(worst: dict, why: str | None, extra: list[str] | None = None) -
                      "so it waits for the next upgrade")
     if r.triage:
         lines.append("This row also asks for forensic triage. Check for signs of compromise (CISA's recommended best practice):")
-        lines += priority.TRIAGE_STEPS
+        lines += priority.current().triage_steps
     if r.estimated:
         lines.append(f"Values marked \"{priority.EST}\" are not CISA's: CISA has not rated this CVE yet, so DaemonSight estimates them "
                      "(Automatable from the EPSS probability, Technical impact as partial)")
@@ -271,8 +271,8 @@ def package_findings(cves: list[dict], binaries: dict[str, list[str]], pending: 
         raised = counted(items)
         if not raised:
             continue
-        top = priority.worst(c["rating"] for c in raised)
-        worst = next(c for c in raised if c["rating"] is top)
+        worst = raised[0]                 # `items` is sorted: the most urgent first
+        top = worst["rating"]
         kev = [c for c in raised if c["kev"]]
         if kev:
             base = (f"{src}: {kev[0]['cve']} is being exploited (CISA KEV)" if len(kev) == 1

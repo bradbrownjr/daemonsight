@@ -17,10 +17,10 @@ from daemonsight import db, hub
 from daemonsight.collector import upload
 from daemonsight.collector.sources import inventory as inv
 from daemonsight.config import Config
-from daemonsight.cve import feeds, match, run, store, tracker
+from daemonsight.cve import exposure, feeds, match, priority, run, store, tracker
 from daemonsight.web.app import create_app
 
-from . import fake_advisories, fake_changelog
+from . import fake_advisories, fake_changelog, fake_cve_services
 from .conftest import PASSWORD
 from .test_hub import body, hub_cfg, post, token  # noqa: F401 (fixtures)
 from .test_web import seeded  # noqa: F401 (fixture)
@@ -120,12 +120,12 @@ def test_epss_loader_skips_junk(tmp_path):
     ("resolved", "1.2-1", "medium", None, "1.1-1", "fix"),
     ("resolved", "1.2-1", "medium", None, "1.2-1", None),          # already fixed
     ("resolved", "1.2-1", "medium", None, "1.2-1+b1", None),
-    ("resolved", "1.2-1", "unimportant", None, "1.1-1", "minor"),   # a fix exists, Debian calls it minor
+    ("resolved", "1.2-1", "unimportant", None, "1.1-1", "fix"),     # a vendor rating, applied by cve/priority.py, not a state
     ("resolved", "1.2-1", "not yet assigned", "Minor issue", "1.1-1", "minor"),
     ("resolved", "0", "unimportant", None, "1.1-1", None),
     ("resolved", "1.0-", "low", None, "1.1-1", None),               # malformed version: skipped
     ("open", None, "not yet assigned", None, "1.1-1", "nofix"),
-    ("open", None, "unimportant", None, "1.1-1", "minor"),
+    ("open", None, "unimportant", None, "1.1-1", "nofix"),
     ("open", None, "end-of-life", None, "1.1-1", "minor"),
     ("open", None, "not yet assigned", "ignored", "1.1-1", "minor"),
     ("undetermined", None, "not yet assigned", None, "1.1-1", "undetermined"),
@@ -151,9 +151,10 @@ def test_match_host_states(cvedb):
     r = match.match_host(cvedb, "h", i, "g")
     assert r["packages"] == 4
     assert states(cvedb, "h", "brotli") == {"CVE-2026-111497": "fix"}
-    assert states(cvedb, "h", "c-ares") == {"CVE-2016-5180": "fix", "CVE-2017-1000381": "fix", "CVE-2023-31124": "minor"}
-    assert states(cvedb, "h", "libxml2") == {"CVE-2026-11979": "minor", "CVE-2026-6653": "minor", "CVE-2026-74860": "nofix"}
-    assert states(cvedb, "h", "nodejs") == {"CVE-2026-111497": "minor"}
+    assert states(cvedb, "h", "c-ares") == {"CVE-2016-5180": "fix", "CVE-2017-1000381": "fix", "CVE-2023-31124": "fix"}
+    # Debian's urgency "unimportant" is kept as the vendor's rating (the prioritiser lowers it); nodsa stays "minor".
+    assert states(cvedb, "h", "libxml2") == {"CVE-2026-11979": "nofix", "CVE-2026-6653": "minor", "CVE-2026-74860": "nofix"}
+    assert states(cvedb, "h", "nodejs") == {"CVE-2026-111497": "nofix"}
 
 
 def test_running_kernel_is_listed_under_linux():
@@ -192,18 +193,29 @@ def test_unmatched_release_says_why(cvedb):
 
 # ---- findings ------------------------------------------------------------------------
 
-def findings_for(conn, sources, epss_high=0.1, pending=frozenset()):
+def findings_for(conn, sources, auto=0.04, pending=frozenset(), exposed=False):
     match.match_host(conn, "h", inventory(sources), "g")
     bins = {s: b for s, _v, b in sources}
-    return {f.key: f for f in match.package_findings(match.host_cves(conn, "h", ("fix", "nofix")), bins,
-                                                     set(pending), epss_high)}
+    return {f.key: f for f in match.package_findings(match.host_cves(conn, "h", ("fix", "nofix")), bins, set(pending),
+                                                     exposure.Exposure(exposed, "test exposure"), auto)}
 
 
-def test_kev_makes_a_high_finding(cvedb):
+def rate_ssvc(conn, cve, exploitation, automatable, impact):
+    conn.execute("INSERT OR REPLACE INTO cve_record (cve, status, fetched_at, tried_at, kev, exploitation, automatable, impact) "
+                 "VALUES (?, 'ok', 1, 1, 0, ?, ?, ?)", (cve, exploitation, automatable, impact))
+
+
+def test_kev_without_a_cisa_rating_is_estimated_and_labelled(cvedb):
+    # KEV, EPSS 83% (so Automatable is estimated "yes"), Technical impact assumed partial: row 10 for a host that is not exposed.
     f = findings_for(cvedb, [["brotli", "1.0.9-2", ["libbrotli1"]]])["brotli"]
     assert f.severity == "high"
-    assert f.title == "brotli: CVE-2026-111497 is being exploited (CISA KEV)"
-    assert "1.1.0-2+deb13u1" in f.detail and "EPSS 83%" in f.detail
+    assert f.title == "brotli: CVE-2026-111497 is being exploited (CISA KEV); fix within 14 days"
+    assert "Fix within 14 days (CISA BOD 26-04 timeline)" in f.detail and "CISA BOD 26-04 Table 1 row 10: 14 days" in f.detail
+    assert "1.1.0-2+deb13u1" in f.detail and "EPSS 82.6% (100th)" in f.detail
+    howto = f.howto.split("\n")
+    assert "Publicly exposed: no: test exposure" in howto and "In CISA's KEV catalog: yes" in howto
+    assert any("Automatable by an adversary: yes (estimated by DaemonSight, from the EPSS probability)" in x for x in howto)
+    assert any("Technical impact: partial (estimated by DaemonSight" in x for x in howto)
     assert f.fix == "sudo apt update\nsudo apt upgrade"   # not offered yet: refresh first
     assert f.link == "/vulnerabilities#cve-brotli"
     assert "apt isn't offering it yet" in f.detail            # not among the pending updates
@@ -211,22 +223,56 @@ def test_kev_makes_a_high_finding(cvedb):
     assert "apt lists this update" in f2.detail and f2.fix == "sudo apt upgrade"
 
 
-def test_a_fix_is_medium_and_names_the_cves(cvedb):
-    f = findings_for(cvedb, [["c-ares", "1.10.0-1", []]])["c-ares"]
-    assert (f.severity, f.title) == ("medium", "c-ares: 2 CVEs fixed in an update")
-    assert "CVE-2016-5180" in f.detail and "1.12.0-4" in f.detail  # the newest fixed version
+def test_cisa_rating_replaces_the_estimate_and_exposure_moves_the_row(cvedb):
+    rate_ssvc(cvedb, "CVE-2026-111497", "active", "no", "total")
+    src = [["brotli", "1.0.9-2", ["libbrotli1"]]]
+    f = findings_for(cvedb, src)["brotli"]                    # not exposed, KEV, not automatable, total: row 11
+    assert (f.severity, "row 11: 14 days" in f.detail) == ("high", True)
+    assert not any("estimated" in x for x in f.howto.split("\n"))
+    assert "Automatable by an adversary: no (CISA)" in f.howto and "Technical impact: total (CISA)" in f.howto
+    e = findings_for(cvedb, src, exposed=True)["brotli"]      # exposed, KEV, not automatable, total: row 3, 3 days and triage
+    assert e.severity == "critical" and "row 3: 3 days and forensic triage" in e.detail
+    assert e.title.endswith("fix within 3 days")
+    assert "This row also asks for forensic triage" in e.howto and "Preserve evidence before patching" in e.howto
+    assert "forensic triage" not in f.howto
+    # The basis does not carry the severity: an accepted finding stays accepted when the exposure changes.
+    assert e.basis == f.basis
 
 
-def test_epss_threshold_makes_a_fix_high(cvedb):
-    # CVE-2016-5180 has EPSS 8.7%: below the default 10%, above a 5% setting.
-    assert findings_for(cvedb, [["c-ares", "1.10.0-1", []]], epss_high=0.1)["c-ares"].severity == "medium"
-    f = findings_for(cvedb, [["c-ares", "1.10.0-1", []]], epss_high=0.05)["c-ares"]
-    assert f.severity == "high" and "high exploit score" in f.title
+def test_a_fix_is_low_medium_or_high_by_the_table_not_by_cvss(cvedb):
+    src = [["c-ares", "1.10.0-1", []]]
+    # CVE-2016-5180 has EPSS 8.7%. At the default 0.04 it is estimated automatable: N/N/Y/partial, row 14, 60 days.
+    f = findings_for(cvedb, src)["c-ares"]
+    assert (f.severity, f.title) == ("medium", "c-ares: 3 CVEs fixed in an update; fix within 60 days")
+    assert "CVE-2016-5180" in f.detail and "fixed in 1.19.1-2" in f.detail  # the newest fixed version
+    # Raise the estimate threshold above it: N/N/N, "fix on system upgrade", low.
+    f = findings_for(cvedb, src, auto=0.1)["c-ares"]
+    assert f.severity == "low" and f.title.endswith("fix at the next upgrade") and f.detail.startswith("Fix at the next upgrade, set by")
+    # Exposed: Y/N/N/partial is row 8, 60 days.
+    assert findings_for(cvedb, src, auto=0.1, exposed=True)["c-ares"].severity == "medium"
 
 
-def test_unfixed_and_minor_make_no_finding(cvedb):
+def test_the_vendor_rating_lowers_only_an_unexposed_cve_that_is_not_in_the_kev(cvedb):
+    match.match_host(cvedb, "h", inventory([["c-ares", "1.10.0-1", []], ["nodejs", "26.13.0-1", []]]), "g")
+    cves = {c["cve"] + c["source"]: c for c in match.host_cves(cvedb, "h", ("fix", "nofix"))}
+    unimportant = cves["CVE-2023-31124c-ares"]
+    assert unimportant["urgency"] == "unimportant" and not unimportant["kev"]
+    r = priority.rate(unimportant, False, 0.04)
+    assert (r.vendor_lowered, r.days, r.severity) == (True, None, "low")
+    assert priority.rate(unimportant, True, 0.04).vendor_lowered is False      # exposed: the table decides
+    kev = cves["CVE-2026-111497nodejs"]
+    assert kev["urgency"] == "unimportant" and kev["kev"]
+    assert priority.rate(kev, False, 0.04).vendor_lowered is False             # in the KEV: the table decides
+    assert priority.rate({**unimportant, "urgency": "low"}, False, 0.04).vendor_lowered is False   # another rating
+    assert priority.rate({**unimportant, "urgency": "negligible"}, False, 0.04).vendor_lowered is True   # Ubuntu's word
+
+
+def test_unfixed_and_minor_raise_nothing_unless_exploited(cvedb):
     got = findings_for(cvedb, [["libxml2", "2.12.0", []], ["nodejs", "26.13.0-1", []], ["openssh", "10.0", []]])
-    assert got == {}  # no fix yet, or minor; nodejs and openssh are on KEV but Debian calls them minor
+    # libxml2: no fix yet, or minor (nodsa): nothing. nodejs and openssh are in the KEV with no fix: the owner may mitigate.
+    assert set(got) == {"nodejs", "openssh"}
+    assert got["openssh"].title == "openssh: CVE-2026-123158 is being exploited (CISA KEV); fix within 14 days"
+    assert "Debian has no fix yet" in got["openssh"].detail
 
 
 def test_up_to_date_package_has_nothing(cvedb):
@@ -269,6 +315,9 @@ def serve(tmp_path, calls=None, etag='"v1"', override=None):
              "www.cisa.gov": (kev_gz(tmp_path), True)}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        records = fake_cve_services.handler(request)    # CISA's SSVC ratings: not one of the feeds `calls` counts
+        if records is not None:
+            return records
         if calls is not None:
             calls.append((request.url.host, dict(request.headers)))
         assert request.headers["user-agent"] == feeds.USER_AGENT and request.headers["user-agent"].startswith("DaemonSight/")
@@ -369,6 +418,7 @@ def test_chore_end_to_end(tmp_path):
     state.execute("INSERT INTO hosts (id, token_hash, created_at) VALUES ('web1', 'x', 0)")
     put_inventory(state, "web1", [["brotli", "1.0.9-2", ["libbrotli1"]], ["c-ares", "1.19.1-2", []]])
     calls = []
+    fake_cve_services.CALLS.clear()
 
     async def go():
         chore = run.Chore(cfg, state, serve(tmp_path, calls))
@@ -379,6 +429,7 @@ def test_chore_end_to_end(tmp_path):
         assert open_[("cve.package", "brotli")]["severity"] == "high"
         assert not any(k[0] == "cve.feed_stale" for k in open_)
         assert len(calls) == 3
+        assert "CVE-2026-111497" in fake_cve_services.CALLS         # CISA's rating of the matched CVE was asked for
         events = [r["title"] for r in db.recent_events(state, "web1", 10)]
         assert any("brotli" in t for t in events)
         # An hour later nothing is due; nothing is asked again.
@@ -503,9 +554,9 @@ def test_fedora_advisories_become_fixes_ranked_with_epss_and_kev(cvedb):
     rows = match.host_cves(cvedb, "fed", ("fix", "nofix"))
     assert {c["state"] for c in rows} == {"fix"}
     assert {"CVE-2026-92822", "CVE-2026-123177", "CVE-2026-86145"} <= {c["cve"] for c in rows}
-    fs = {f.key: f for f in match.package_findings(rows, {}, set(), 0.1, "dnf")}
+    fs = {f.key: f for f in match.package_findings(rows, {}, set(), exposure.Exposure(False, "test"), 0.04, "dnf")}
     f = fs["libmodulemd"]
-    assert (f.rule, f.severity) == ("cve.package", "medium") and "libmodulemd" == f.key
+    assert (f.rule, f.severity) == ("cve.package", "low") and "libmodulemd" == f.key   # not exposed, not in KEV: fix at the next upgrade
     assert f.fix == "sudo dnf upgrade --refresh" and "apt" not in f.detail and "apt" not in f.fix
     assert {"pcre2", "pcre2-syntax", "dnf5", "libdnf5"} <= set(fs)
 
@@ -611,7 +662,10 @@ def test_vulnerabilities_page(hub_cfg, token, tmp_path):
     assert "Vulnerabilities" in html and 'href="/h/testhost/vulnerabilities"' in html
     assert 'id="cve-brotli"' in html and 'id="cve-c-ares"' in html
     assert "https://security-tracker.debian.org/tracker/CVE-2026-111497" in html
-    assert ">KEV<" in html and "83%" in html
+    assert ">KEV<" in html and "82.6% (100th)" in html
+    # The deadline: a column, the table's name and the host's exposure, with CVSS only as information.
+    assert "<th data-sort=\"num\">Fix within</th>" in html and "14 days" in html and "CISA BOD 26-04" in html
+    assert "This host counts as" in html and "sets nothing" in html
     assert 'id="feeds"' in html and "EPSS scores (FIRST)" in html and "CC0 1.0" in html
     # Every table cell carries a label for the phone card layout.
     rows = re.findall(r"<tr data-row.*?</tr>", html, re.S)
@@ -678,7 +732,8 @@ def test_page_says_when_cve_matching_is_off(hub_cfg, token):
 def test_config_section(tmp_path):
     from daemonsight import config
     p = tmp_path / "c.toml"
-    p.write_text("[cve]\nenabled = false\nrefresh_hours = 12\nepss_high = 0.25\n")
+    p.write_text("[cve]\nenabled = false\nrefresh_hours = 12\nepss_automatable = 0.25\n")
     c = config.load(p)
-    assert (c.cve.enabled, c.cve.refresh_hours, c.cve.epss_high) == (False, 12, 0.25)
+    assert (c.cve.enabled, c.cve.refresh_hours, c.cve.epss_automatable) == (False, 12, 0.25)
+    assert config.Config().cve.epss_automatable == 0.04
     assert config.Config().cve.enabled is True and config.Config().cve.refresh_hours == 24
