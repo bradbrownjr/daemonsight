@@ -9,7 +9,7 @@ from .test_hub import hub_cfg, token  # noqa: F401 (fixtures)
 from .test_remote import KEY
 from .test_web import client, login, seeded  # noqa: F401 (fixture)
 
-PAGE_KEYS = {"": {"overview", "exposure", "routes", "services", "packages", "vulnerabilities", "fail2ban", "report"},
+PAGE_KEYS = {"": {"overview", "exposure", "routes", "services", "images", "packages", "vulnerabilities", "fail2ban", "report"},
              "unraid": {"overview", "disks", "containers", "docker", "images", "vms", "notifications", "report"},
              "opnsense": {"overview", "firewall", "vpn", "network", "report"},
              "unifi": {"overview", "devices", "wifi", "report"},
@@ -52,7 +52,7 @@ def test_registry_shape():
 
 def test_collector_pages_have_every_listed_anchor(seeded):
     c = login(client(seeded))
-    check_registry(c, "", "", skip=("vulnerabilities",))      # that page has data only on a hub
+    check_registry(c, "", "", skip=("vulnerabilities", "images"))      # those pages have data only on a hub
 
 
 def test_vulnerabilities_page_on_a_hub(hub_cfg, token, tmp_path):

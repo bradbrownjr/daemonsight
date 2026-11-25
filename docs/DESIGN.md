@@ -3163,6 +3163,117 @@ Not verified: the whole path on a live hub with a real Alpine container (tested 
 server, and the parser against the real v3.23 files on 2026-11-24, not a running hub); how an Alpine edge image's `VERSION_ID`
 looks; that `apk version -l '<'` inside a stock image prints what the page suggests without `apk update`; the secdb project's own README.
 
+### Collector hosts: image CVEs
+
+A Linux server with a collector (not an Unraid system) gets the same image checks as the Docker reader gives an Unraid system: each
+running container's image is read for its OS and packages, matched like a host, and `docker.image_cves` is raised with the Unraid
+wording, how-tos, deadlines and held/resolve rules. The collector reads from the same engine API the Docker source already uses.
+Sources: https://docs.docker.com/reference/api/engine/version/v1.54.yaml [105] (`GET /containers/{id}/archive`, ContainerArchive: a
+tar stream, 404 when the path is missing; `GET /containers/json?all=1`, ContainerList). The `PUT` of the archive URL
+(PutContainerArchive, which writes into a container) and its `HEAD` are never sent.
+
+**On the collector** (`collector/sources/docker_images.py`).
+
+- A source named `docker_images`, built only when `[upload]` has a URL (a host with no hub has nothing to send the lists to). It
+  reuses `docker_reader.Docker` (GET only, the fixed target list, capped replies) and `docker_packages` (the four paths, the
+  caps and the dpkg and apk parsers), so the paths read and the limits are the Docker reader's, described under "Container images
+  (phase 3c, part 1)". Nothing is written to disk.
+- Per image id, not per container: the first running container by name is read; the result is cached by image id. A read
+  that worked is kept until the image id changes. An OS without dpkg or apk is also kept ("does not use dpkg or apk"). Any other
+  failure (a distroless image with no database, a Docker error) is tried again after 30 minutes. At most 10 images are read per look
+  (`interval_docker_images`, 300 s), so the first pass over 25 images takes three looks. An image only stopped containers use is
+  "not read: stopped": Docker can also archive a stopped container, but that was not tried, so it is not used. The cache is
+  restored from the collector's last stored snapshot at start, so a collector restart reads nothing again.
+- Off switch: `[collector] docker_read_packages = false`. The source then reports "unavailable" and the hub shows the reason.
+  With no Docker socket the same. `docker_socket` is the one the Docker source uses.
+- The payload is a top-level field `docker_images` of the upload (not a snapshot): `v`, `engine`, `containers`
+  (name, image, image id, state), `images` (id, tags, digests) and `image_packages`, one entry per image id with `os`, `manager`,
+  `count`, `packages`, `error`, `read_at` and `hash`. An older hub ignores the unknown field; a hub that cannot read it drops it
+  and still stores the rest of the upload (the field is wrapped, so a bad field is a warning, not a 422).
+- What goes on the wire (`collector/upload.py`). A package list is sent only when the image id's `hash` (sha256 of
+  os, manager, count and packages, cut to 32 hex digits) differs from the last hash the hub accepted, when the hub asked for the
+  list (below), or once a day. Otherwise the entry carries the hash and count with an empty list. When nothing changed since the
+  last accepted upload the field is left out. The sent hashes are saved only after the hub answered 200, so an upload the hub
+  did not take is sent again in full.
+
+**On the hub** (`hub.py`).
+
+- Checked as strictly as the rest of the upload: an image id must be `sha256:` and 64 lower-case hex digits; a package is four
+  printable strings (name, source, version, source version) cut to 100 characters, the name not empty; the manager is `dpkg` or
+  `apk`; at most 4,000 packages per image, 40,000 per upload, 1,000 image entries, 3,000 images, 2,000 containers; an image id
+  sent twice, NaN and infinity are refused. An unreadable field is dropped with a warning. A collector can not send it as a
+  snapshot (`docker_images` is not an accepted source name) and can not send a `docker.*` finding (those are the hub's
+  rules: `HUB_RULES`).
+- Stored as the snapshot `docker_images` for the host, in the Unraid summary's shape (`image_packages`, `containers`, `images`),
+  with `source: "collector"`. A hash-only entry takes the list the hub already holds when both the image id and the hash
+  match. If they do not (the hub lost the list, or its copy is of another version), the entry is stored as "not read yet"
+  and the reply to the upload carries `docker_images_resend`: the image ids to send in full (at most 100; the collector honours
+  an id at most once every 10 minutes). "Not read yet" and "not read: stopped" carry the last good read of that image id
+  forward, marked `carried`, like `_carry_packages` does for an Unraid system's reader. A read that failed is stored as the
+  failure it is.
+- The CVE chore (`cve/run.py`) matches each Debian, Ubuntu and Alpine image under the pseudo-host
+  `docker:<host>:<image id, 16 hex>`, next to the Unraid ones (the host id cannot hold a colon). It then evaluates each
+  collector host's snapshot with `docker_images.evaluate(..., platform="host")` and sets that host's `docker.` findings
+  (`_set_cve_findings`). `HUB_RULES` includes `docker.`, so an upload never reconciles those findings away.
+- No flapping. A finding is kept open while its data is unknown: a collector restart or a hub restart (carry-forward and the
+  stored snapshot), the CVE database being rebuilt (the `held` and `prior` rules the Unraid findings use), a hash the hub holds
+  no list for. It resolves only when a read shows the CVEs fixed or the image gone. Tests cover each case.
+- Turning CVE matching off clears these findings.
+
+**Exposure** (`cve/exposure.py`, `collector_image_exposures`). An image is rated for the exposure of the containers that run it
+(the worst one counts). The reason is written into the finding's text under "Publicly exposed", and the rating follows CISA BOD
+26-04's Table 1, which ranks a CVE higher when the product is internet-facing [83][84]. The rules run in this order:
+
+1. A port published on loopback (127.0.0.1 or ::1) is not exposed by itself.
+2. A port published on 0.0.0.0 or :: on a host with a publicly routable address (the `ports` snapshot's address list) is
+   exposed, unless the provider's allow list (`[exposure] upstream_allow`) leaves the port out.
+3. A port published on a specific public address is exposed.
+4. A published port the firewall's forward leads to (`reach_by_listener`: an OPNsense port forward or a Caddy listener) is exposed
+   when the binding is wide or one of the host's own addresses.
+5. A container on the host network is judged by the listeners the collector reports as owned by its container id.
+6. A Caddy site that proxies to the container is exposed when the site is open to the internet and Caddy itself is reachable. A
+   site is open to the internet when it has no `allow` list, or an allow list with a public range (an allow list of private
+   ranges only is "lan"). The site finds the container by a published port with a local upstream (`127.0.0.1`, `localhost`,
+   `::1` or one of the host's own addresses) or, for Caddy in a container, by the container's name or its Compose service name.
+   Caddy is reachable when it publishes a port on a public host, when a firewall forward leads to it, or when it listens on a
+   public address that the host firewall does not block. This is the case that makes a container bound to 127.0.0.1 exposed
+   behind a host Caddy site.
+7. Unknown: no `ports` or `docker` snapshot, the container not found, or no bindings and a Caddy that was never read. Then the
+   best-effort rule for hosts decides (`exposure.unknown`: a publicly routable host address is treated as public) and the text
+   says the data is missing.
+8. Otherwise not exposed, with the reasons: for example "it publishes 127.0.0.1:8080/tcp, which the internet cannot reach (loopback,
+   a host with no public address, or blocked by the provider's allow list); no internet-facing Caddy site on this host proxies to
+   it" or "the host has no Caddy". An image no running container uses is not exposed.
+
+The Compose service name is taken from the container name `<project>-<service>-<number>`, which is the name Compose generates
+by default; the project label comes from `com.docker.compose.project`. A container with its own `container_name` is found by that
+name only. Sources for the Caddy data: https://caddyserver.com/docs/api [4].
+
+**Payload numbers** (measured on the test fixtures, `tests/test_collector_images.py`: 30 images of 300 Debian packages each,
+more than a typical image):
+
+| Upload | Unpacked | Gzipped |
+|---|---|---|
+| First upload, 9,000 packages in full | 489,562 bytes | 38,515 bytes |
+| Hashes only, 30 images, nothing changed | 14,544 bytes | 2,634 bytes |
+| One image changed, 29 hashes and one list | not measured | 5,088 bytes |
+
+The hub's cap on an upload is `max_upload_mb` = 8 gzipped and `max_unpacked_mb` = 48, so the first upload is under 0.5 percent of the
+first and about 1 percent of the second. At the hub's own limit (40,000 packages) the field is about 2 MB unpacked. On the collector, the
+cost is the Docker calls: two list reads each look, and one archive read per image that is new or changed.
+
+**The page.** A collector host's Container images tab (`/h/<host>/images`, hub mode only) uses the same table, cells and coverage
+card as an Unraid system's page (`web/image_views.py`, shared by both), with these differences: the source text says the lists come
+from the collector, the (i) panel names the collector's read and a `docker compose pull` fix, there is no reader endpoint, and
+an image of a collector that sent no lists (an older version) is listed from its Docker snapshot as "Not read" and "Not
+checked", with a line saying the page needs the newer collector, so "not read" is never shown as "no CVEs".
+
+Not verified: that Docker archives a stopped container's files (not used); Compose's default container name format `<project>-<service>-<number>`
+(not checked against Compose's documentation or source; the
+container_name entry of the services reference says only that the default is "a name generated by default"); how a real VPS with Caddy in a container and Docker's published ports
+behaves next to the host firewall (Docker writes its own iptables rules for published ports); the whole path on a live hub and
+collector (tested against a fake engine on a unix socket and the hub's test client).
+
 ### Provider firewalls
 
 Many VPS hosts sit behind a cloud firewall policy that the host can't see.
@@ -3468,3 +3579,4 @@ The collector must stay light:
 102. Google, "Sign in with app passwords" (needs 2-Step Verification; 16 characters; not available with only security keys, with work or school accounts the organisation restricts, or with Advanced Protection), read 2026-11-24: https://support.google.com/mail/answer/185833
 103. Google Workspace, "Send email from a printer, scanner, or app" (`smtp.gmail.com`, port 465 SSL and 587 TLS, authentication, app password, the statement about less secure apps from 1 May 2025), read 2026-11-24: https://knowledge.workspace.google.com/admin/gmail/send-email-from-a-printer-scanner-or-app
 104. Microsoft, "How to set up a multifunction device or application to send email using Microsoft 365 or Office 365" (client SMTP submission: `smtp.office365.com`, port 587, TLS 1.2 or 1.3, SMTP AUTH per mailbox, port 465 unsupported; basic authentication scheduled for deprecation), read 2026-11-24: https://learn.microsoft.com/en-us/exchange/mail-flow-best-practices/how-to-set-up-a-multifunction-device-or-application-to-send-email-using-microsoft-365-or-office-365
+105. Docker Engine API v1.54 (swagger): https://docs.docker.com/reference/api/engine/version/v1.54.yaml (ContainerArchive: `GET /containers/{id}/archive?path=`, a tar stream, 404 when missing; PutContainerArchive and ContainerArchiveInfo are the `PUT` and `HEAD` of the same URL; ContainerList: `GET /containers/json?all=1`), read 2026-11-25.

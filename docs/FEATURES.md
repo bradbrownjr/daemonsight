@@ -92,6 +92,15 @@ setup see [INSTALL.md](INSTALL.md); for how it protects the hosts it runs on see
   against Alpine's security database and Ubuntu images against Canonical's
   OVAL data in the same way; an Ubuntu fix that needs Ubuntu Pro is shown, not
   raised, since an image has no Pro.
+- **Container images on a collector host.** A Linux server with a collector gets
+  the same checks without a Docker reader: the collector reads each running
+  image's OS and package list through the Docker socket (the same four files, GET
+  only) and sends it to the hub when it is new or changed. The host's Container
+  images page and the findings match the Unraid ones. An image counts as exposed
+  when a container publishes a port on a host with a public address, when a
+  firewall forward leads to it, or when an internet-facing Caddy site on the host
+  proxies to it, even if the port is bound to 127.0.0.1. Images no running
+  container uses are listed as not read. Switch off with `docker_read_packages = false`.
 
 ## Unraid
 

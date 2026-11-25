@@ -26,6 +26,7 @@ socket, the fail2ban socket and the firewall needs it.
   |---|---|
   | systemd | D-Bus `ListUnitsByPatterns` and `Properties.GetAll` |
   | Docker | Docker API `GET` requests only |
+| Docker images | Docker API `GET /containers/{id}/archive` for four fixed paths in a running container |
   | Caddy | Admin API `GET /config/` and `GET /reverse_proxy/upstreams` |
   | fail2ban | Socket commands `version`, `status` and `get` |
   | Firewall | `iptables-save`, `ip6tables-save`, `nft -j list ruleset` |
@@ -47,6 +48,29 @@ socket, the fail2ban socket and the firewall needs it.
   pending security advisories instead. That tells the hub, and anyone who reads its database,
   which versions of what the host runs. The collector downloads no
   vulnerability data.
+- **Container images are read from inside the containers.** With `[upload]` set and `[collector] docker_read_packages` on
+  (the default), the collector, which is root and holds the Docker socket, asks Docker for four files in each running container's
+  filesystem: `/usr/lib/os-release`, `/etc/os-release`, `/var/lib/dpkg/status` and `/lib/apk/db/installed`. That is Docker's
+  "Get an archive of a filesystem resource in a container" (ContainerArchive, Engine API v1.54:
+  https://docs.docker.com/reference/api/engine/version/v1.54.yaml). It is the same read, with the same code and limits, as
+  the Docker reader's (see "The Docker reader" below).
+  - **Which paths and which containers.** The four paths are fixed in code and URL-encoded exactly; the container is named by its
+    64-digit id; anything else, including a `..` or an extra query parameter, is refused before a request is built. Only
+    running containers are read, one per image id, and the result is kept by image id, so a file is read again only after the
+    image changes. At most 10 images are read per look.
+  - **Limits.** The reply is held in memory up to the file's cap plus 32 KiB: 64 KB for os-release, 16 MB for dpkg's status
+    file, 4 MB for apk's database. It must be a tar stream with one regular file (a link, directory, second member or a
+    stream cut short is refused), read in streaming mode with no decompression and nothing written to disk. Lines are
+    parsed for the named fields only and cut to 100 characters, 4,000 packages per image; the rest is dropped.
+  - **Why it stays GET only.** The same URL with PUT is PutContainerArchive, which extracts an archive into a container: file
+    writes, so code execution inside it. The Docker client of the collector has one method, GET, with a fixed target list, and a
+    PUT or HEAD is not built even by mistake. A test sends every request to a fake engine and checks that all were GET and that every
+    archive read was one of the four paths.
+  - **What it sends.** The container names, image names and ids and the package lists (names and versions) of the images,
+    to the hub. It does not read environment files, keys, configuration or data, and does not call container inspect (whose reply
+    holds environment variables). The hub checks the field's shape and size (4,000 packages per image, 40,000 per upload)
+    and drops an unreadable one.
+  - **Turn it off** with `docker_read_packages = false`: nothing is read from inside a container.
 - **Secrets in container logs and command lines are masked** before
   they're stored: `password=`, `token=`, `api_key=` and similar values,
   `Authorization` headers, and passwords inside URLs. The command line of

@@ -37,11 +37,16 @@ class CollectorConfig:
     interval_systemd: int = 30
     interval_ports: int = 60
     interval_docker: int = 30
+    # How often the image package lists are checked for a new image id (an image's packages are read once per id).
+    interval_docker_images: int = 300
     interval_caddy: int = 60
     interval_fail2ban: int = 60
     interval_firewall: int = 300
     interval_packages: int = 3600
     docker_socket: str = "/var/run/docker.sock"
+    # Read each running container image's OS and package list (a few files out of the container, through the Docker
+    # socket, GET only) and send them to the hub for CVE matching. false: nothing is read from inside a container.
+    docker_read_packages: bool = True
     # Caddy's admin address as Caddy writes it: "localhost:2019" or
     # "unix//run/caddy/admin.sock".
     caddy_admin: str = "localhost:2019"

@@ -33,8 +33,9 @@ log = logging.getLogger("daemonsight.hub")
 # firewall or a UniFi controller), docker.* (an Unraid server's Docker reader), crowdsec.* (bans on a firewall's CrowdSec) and outside.*
 # (what Shodan's InternetDB says the internet sees).
 HUB_RULES = ("host.", "cve.", "remote.", "unraid.", "opnsense.", "unifi.", "outside.", "docker.", "crowdsec.")
-# The package list is not a snapshot source: see InventoryIn.
+# The package list is not a snapshot source: see InventoryIn. Nor is the container images' package lists: see DockerImagesIn.
 INVENTORY = "inventory"
+DOCKER_IMAGES = "docker_images"
 SOURCES = ("system", "systemd", "ports", "docker", "caddy", "fail2ban", "firewall", "packages")
 SILENT_AFTER_INTERVALS = 3
 SKEW_SECONDS = 300
@@ -196,6 +197,84 @@ class InventoryIn(BaseModel):
     advisories: list[AdvisoryIn] = Field(default_factory=list, max_length=2_000)
 
 
+PkgOpt = Annotated[str, Field(max_length=100, pattern=r"^[^\x00-\x1f\x7f]*$")]
+Printable = Annotated[str, Field(pattern=r"^[^\x00-\x1f\x7f]*$")]
+ImageId = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+MAX_IMAGE_PACKAGES = 4_000           # per image, the cap the Docker reader and the collector apply
+CARRY_ERRORS = ("not read yet", "not read: stopped")    # what the collector says of an image it has no read of (as the Docker reader does)
+MAX_IMAGE_PACKAGES_TOTAL = 40_000    # across one host's upload, the same as the Docker reader's summary
+
+
+class ImageOsIn(BaseModel):
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+    id: Annotated[str, Field(max_length=40, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+    like: list[Annotated[str, Field(max_length=40, pattern=r"^[^\x00-\x1f\x7f]*$")]] = Field(default_factory=list, max_length=6)
+    version_id: Annotated[str, Field(max_length=40, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+    codename: Annotated[str, Field(max_length=40, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+    pretty: Annotated[str, Field(max_length=80, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
+class ImageEntryIn(BaseModel):
+    """One image's OS and packages, as the collector read them. `packages` is empty with a `hash` and a `count` when the hub is
+    meant to have the list already (merge_docker_images)."""
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+    image_id: ImageId
+    container: Annotated[str, Field(max_length=80, pattern=r"^[^\x00-\x1f\x7f]*$")] | None = None
+    read_at: int | None = Field(default=None, ge=0, le=10 ** 11)
+    os: ImageOsIn | None = None
+    manager: Literal["dpkg", "apk"] | None = None
+    count: int = Field(default=0, ge=0, le=10 ** 6)
+    hash: Annotated[str, Field(max_length=64, pattern=r"^[0-9a-f]*$")] = ""
+    # [name, source package, version, source version]; the source fields are empty when they equal the package's own
+    packages: list[tuple[PkgName, PkgOpt, PkgVersion, PkgOpt]] = Field(default_factory=list, max_length=MAX_IMAGE_PACKAGES)
+    error: Annotated[str, Field(max_length=200, pattern=r"^[^\x00-\x1f\x7f]*$")] | None = None
+
+
+class ContainerRefIn(BaseModel):
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+    name: Annotated[str, Field(max_length=80, pattern=r"^[^\x00-\x1f\x7f]*$")]
+    image: Annotated[str, Field(max_length=200, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+    image_id: Annotated[str, Field(max_length=80, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+    state: Annotated[str, Field(max_length=20, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
+class ImageRefIn(BaseModel):
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+    id: ImageId
+    tags: list[Annotated[str, Field(max_length=200, pattern=r"^[^\x00-\x1f\x7f]*$")]] = Field(default_factory=list, max_length=40)
+    digests: list[Annotated[str, Field(max_length=200, pattern=r"^[^\x00-\x1f\x7f]*$")]] = Field(default_factory=list, max_length=40)
+
+
+class EngineIn(BaseModel):
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+    version: Annotated[str, Field(max_length=40, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+    api: Annotated[str, Field(max_length=10, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+
+
+class DockerImagesIn(BaseModel):
+    """The OS and package list of each container image a collector host runs, for CVE matching (docs/DESIGN.md, "Collector hosts:
+    image CVEs"). Like InventoryIn it ignores unknown fields and `Upload.docker_images` drops what it can't read instead of
+    refusing the upload. `available` false says why the collector sends none (no Docker, or turned off)."""
+    model_config = ConfigDict(extra="ignore", allow_inf_nan=False)
+    v: Literal[1]
+    taken_at: float
+    available: bool = True
+    reason: Annotated[str, Field(max_length=200, pattern=r"^[^\x00-\x1f\x7f]*$")] = ""
+    engine: EngineIn = Field(default_factory=EngineIn)
+    containers: list[ContainerRefIn] = Field(default_factory=list, max_length=2_000)
+    images: list[ImageRefIn] = Field(default_factory=list, max_length=3_000)
+    image_packages: list[ImageEntryIn] = Field(default_factory=list, max_length=1_000)
+
+    @field_validator("image_packages")
+    @classmethod
+    def _within_the_total(cls, entries: list[ImageEntryIn]) -> list[ImageEntryIn]:
+        if len({e.image_id for e in entries}) != len(entries):
+            raise ValueError("an image sent twice")
+        if sum(len(e.packages) for e in entries) > MAX_IMAGE_PACKAGES_TOTAL:
+            raise ValueError("more packages than one host may send")
+        return entries
+
+
 UPDATE_STATES = ("running", "done", "failed", "refused", "rolled_back")
 
 
@@ -237,6 +316,7 @@ class Upload(_Model):
     remote_update: bool | None = None
     update: UpdateStateIn | None = None
     inventory: InventoryIn | None = None
+    docker_images: DockerImagesIn | None = None
     # Seconds between this host's uploads. A top-level field, not in `settings` (which is strict), so an older hub ignores it.
     upload_interval: float | None = Field(default=None, ge=1, le=86400)
     # The collector's answer to the hub's `uninstall: true`; see "Uninstall from the hub" below.
@@ -251,6 +331,16 @@ class Upload(_Model):
             return handler(v)
         except ValidationError as exc:
             log.warning("Ignoring an unreadable inventory: %s", exc.errors()[0]["msg"])
+            return None
+
+    @field_validator("docker_images", mode="wrap")
+    @classmethod
+    def _docker_images_optional(cls, v, handler):
+        """Image package lists this hub can't read are dropped, not a reason to refuse the upload."""
+        try:
+            return handler(v)
+        except ValidationError as exc:
+            log.warning("Ignoring unreadable image package lists: %s", exc.errors()[0]["msg"])
             return None
 
     @field_validator("snapshots")
@@ -388,6 +478,45 @@ def unpack(body: bytes, gzipped: bool, max_unpacked: int) -> Upload:
 
 # --- storing ----------------------------------------------------------------
 
+def merge_docker_images(new: DockerImagesIn, prev: dict | None) -> tuple[dict, list[str]]:
+    """What is stored for a collector host's images: the upload, with each image's package list carried forward from the last stored
+    one when the collector sent only its hash. An image id is a content hash, so the list read from it does not change; a list is
+    carried only for the same image id AND the same `hash`. A hash-only entry the hub has no list for is stored as "not read yet"
+    and its id is returned, so the reply can ask the collector for it (`docker_images_resend`, collector/upload.py). The shape is
+    the one the Unraid Docker reader's summary has (remote/docker_storage.py), so remote/docker_images.py analyses both."""
+    old = {e["image_id"]: e for e in (prev or {}).get("image_packages") or [] if e.get("manager") and e.get("packages") and e.get("hash")}
+    entries, missing = [], []
+    for e in new.image_packages:
+        d = e.model_dump()
+        d["packages"] = [list(p) for p in d["packages"]]
+        d["os"] = e.os.model_dump() if e.os else None
+        o = old.get(e.image_id)
+        if d["manager"] and not d["packages"] and d["count"] > 0:      # the hash stands for a list the hub should have
+            if o is not None and o["hash"] == e.hash:
+                d["packages"] = o["packages"]
+            else:
+                d.update(manager=None, count=0, error="not read yet", need_list=True)
+                missing.append(e.image_id)
+        elif not d["manager"] and o is not None and d["error"] in CARRY_ERRORS:
+            # Not read (the collector restarted, or only stopped containers use the image): the last good read of the same image id
+            # stands, marked carried and with its own read time, as for the Unraid reader (remote/docker_storage._carry_packages).
+            d = {**o, "carried": True}
+        entries.append(d)
+    data = {"generated": new.taken_at, "source": "collector", "available": new.available, "reason": new.reason or None,
+            "docker": {"version": new.engine.version, "api": new.engine.api},
+            "images": [{"id": i.id, "tags": i.tags, "digests": i.digests} for i in new.images],
+            "containers": [c.model_dump() for c in new.containers], "image_packages": entries}
+    if not new.available:                 # no Docker, or turned off: nothing to carry over
+        data["image_packages"], data["images"], data["containers"] = [], [], []
+    return data, missing
+
+
+def docker_images_missing(conn, host: str) -> list[str]:
+    """The image ids whose package list the hub is waiting for (hash-only entries it could not carry), for the upload reply."""
+    snap = db.get_snapshot(conn, host, DOCKER_IMAGES)
+    return [e["image_id"] for e in (snap.data or {}).get("image_packages", []) if e.get("need_list")][:100] if snap and snap.data else []
+
+
 def store(conn, host_row, up: Upload, now: float, address: str | None) -> str | None:
     """Write one accepted upload. Safe to repeat: snapshots only move
     forward, metric points with the same time and name are replaced, and
@@ -408,6 +537,14 @@ def store(conn, host_row, up: Upload, now: float, address: str | None) -> str | 
                 "ON CONFLICT (host, source) DO UPDATE SET taken_at=excluded.taken_at, data=excluded.data "
                 "WHERE excluded.taken_at >= snapshots.taken_at",
                 (host, INVENTORY, up.inventory.taken_at, up.inventory.model_dump_json(exclude_defaults=True)))
+        if up.docker_images is not None:
+            prev = db.get_snapshot(conn, host, DOCKER_IMAGES)
+            stored, _ = merge_docker_images(up.docker_images, prev.data if prev else None)
+            conn.execute(
+                "INSERT INTO snapshots (host, source, taken_at, ok, error, data) VALUES (?, ?, ?, 1, NULL, ?) "
+                "ON CONFLICT (host, source) DO UPDATE SET taken_at=excluded.taken_at, data=excluded.data "
+                "WHERE excluded.taken_at >= snapshots.taken_at",
+                (host, DOCKER_IMAGES, up.docker_images.taken_at, json.dumps(stored)))
         conn.execute(
             "INSERT INTO snapshots (host, source, taken_at, ok, error, data) VALUES (?, 'settings', ?, 1, NULL, ?) "
             "ON CONFLICT (host, source) DO UPDATE SET taken_at=excluded.taken_at, data=excluded.data",

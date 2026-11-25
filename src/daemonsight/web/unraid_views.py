@@ -13,6 +13,7 @@ from ..remote import docker_images, docker_storage, release, store, unraid, unra
 from ..cve import priority
 from . import provenance as prov
 from . import views
+from .image_views import coverage, image_findings, image_rows
 from .views import _sortval, fmt_ago, fmt_bytes, fmt_duration, level_class, pct_class, status_of
 from ..remote.docker_storage import fmt_size
 
@@ -382,98 +383,6 @@ def docker(conn, cfg: Config) -> dict:
     }
 
 
-CVES_SHOWN = 30
-
-
-def _image_findings(conn, host: str) -> dict[tuple[str, str], dict]:
-    active, held = views.findings_lists(conn, host)
-    return {(f["rule"], f["key"]): f for f in active + held if f["rule"] in ("docker.eol_base", "docker.image_cves")}
-
-
-def _cve_cell(r: dict) -> dict:
-    """The "Fixable CVEs" cell of one image: {"text", "kev", "top", "note", "v"}."""
-    kind, c = r["kind"], r["cve"]
-    if kind in ("debian", "alpine", "ubuntu") and c and c["state"] == "matched":
-        n = len(c["fixable"])
-        top = c["fixable"][0] if c["fixable"] else None
-        from ..cve import match
-        # Alpine's secdb has no count of CVEs without a fix; Ubuntu's data has fixes that exist only in Ubuntu Pro's ESM archives
-        bits = ([f"{c['unfixed']} with no fix yet"] if c["unfixed"] else []) + (
-            [f"{len(c['esm'])} fixed only in Ubuntu Pro (ESM)"] if c.get("esm") else [])
-        note = ", ".join(bits) or None
-        why = c["exposure"].why
-        base = {"ubuntu": views.UBUNTU_TRACKER, "debian": views.TRACKER}.get(kind, views.NVD)
-        rows = [{"cve": x["cve"], "url": base + x["cve"], "kev": x["kev"], "fix": views.fix_cell(x, why),
-                 "epss_text": priority.epss_text(x["epss"], x.get("pctile")) if x["epss"] is not None else "—",
-                 "cvss": views.cvss_text(x), "fixed": x.get("fixed") or ""} for x in c["fixable"][:CVES_SHOWN]]
-        return {"text": f"{n} fixable" if n else "None fixable", "kev": len(c["kev"]),
-                "top": priority.epss_text(top["epss"], top.get("pctile")) if top and top["epss"] is not None else None,
-                "note": note or c.get("note") or None, "v": n,
-                "fix": views.fix_cell(c["worst"], why) if c["worst"] else None,
-                "exposure": {"label": c["exposure"].label, "why": why}, "rows": rows, "more": max(0, n - CVES_SHOWN)}
-    if kind == "alpine" and c and c["state"] == "absent":
-        return {"text": f"{c['label']}: not in Alpine's security database", "v": -1}
-    if kind == "ubuntu" and c and c["state"] == "absent":
-        return {"text": f"{c['label']}: not in Canonical's OVAL data", "v": -1}
-    if kind == "alpine" and c and c["state"] == "unmapped":
-        return {"text": "Release not named (edge?): not matched", "v": -1}
-    if kind in ("debian", "alpine", "ubuntu"):
-        return {"text": "CVE matching is off" if c and c["state"] == "off" else "Waiting for the CVE matcher", "v": -1}
-    if kind == "other" and r["manager"]:
-        return {"text": "Not matched for this OS", "v": -1}
-    return {"text": "—", "v": -1}
-
-
-def _packages_cell(r: dict) -> dict:
-    if r["state"] == "read":
-        return {"text": f"{r['count']} read", "note": r["manager"], "v": r["count"]}
-    reasons = {"stopped": "Not read: stopped", "waiting": "Waiting for its first read"}
-    err = r["error"] or "not read"
-    return {"text": reasons.get(r["state"]) or err[:1].upper() + err[1:], "note": None, "v": -1}
-
-
-def _ubuntu_lines(cves: dict | None, now: float) -> list[dict]:
-    """One line per Ubuntu release the system's images run, for the coverage card: how Canonical's OVAL data stands for it,
-    and the last failed download's reason when there was one ({"text", "error"})."""
-    from ..cve import ubuntu
-    out = []
-    for rel, st in sorted(((cves or {}).get("ubuntu") or {}).items()):
-        name = ubuntu.display(rel)
-        if st["state"] == "absent":
-            text = f"{name}: not in Canonical's OVAL data, so nothing is matched for it"
-        elif st["state"] == "ok":
-            text = f"{name}: OVAL data checked {fmt_ago(st['ok_at'], now)}"
-        else:
-            text = f"{name}: OVAL data not downloaded yet"
-        err = None
-        if st["error"]:
-            err = (f"The last download failed ({st['error']}); "
-                   + ("the copy from the earlier download is used" if st["state"] == "ok" else "there is no copy yet"))
-        out.append({"text": text, "error": err})
-    return out
-
-
-def _alpine_lines(cves: dict | None, now: float) -> list[dict]:
-    """One line per Alpine release the system's images run, for the coverage card: how secdb stands for it, and the last
-    failed download's reason when there was one ({"text", "error"})."""
-    from ..cve import alpine
-    out = []
-    for rel, st in sorted(((cves or {}).get("alpine") or {}).items()):
-        name = alpine.display(rel)
-        if st["state"] == "absent":
-            text = f"{name}: not in Alpine's security database, so nothing is matched for it"
-        elif st["state"] == "ok":
-            text = f"{name}: secdb data checked {fmt_ago(st['ok_at'], now)}"
-        else:
-            text = f"{name}: secdb data not downloaded yet"
-        err = None
-        if st["error"]:
-            err = (f"The last download failed ({st['error']}); "
-                   + ("the copy from the earlier download is used" if st["state"] == "ok" else "there is no copy yet"))
-        out.append({"text": text, "error": err})
-    return out
-
-
 def images(conn, cfg: Config) -> dict:
     """The Container images page: each image a container uses, its base OS and support, and the CVEs in its Debian
     packages, from the Docker reader's package lists and the hub's CVE data."""
@@ -484,42 +393,21 @@ def images(conn, cfg: Config) -> dict:
     data = _data(snaps, docker_storage.SNAPSHOT)
     cves = docker_images.load_cves(cfg, conn, host, data)
     a = docker_images.analyze(data, _data(snaps, "unraid_docker"), cves)
-    found = _image_findings(conn, host)
+    found = image_findings(conn, host)
     snap = snaps.get(docker_storage.SNAPSHOT)
     now = time.time()
-    rows = []
-    for r in (a or {}).get("rows", []):
-        cands = []
-        if (("docker.image_cves", r["name"])) in found:
-            cands.append(found[("docker.image_cves", r["name"])])
-        if r["support"]["status"] in ("eol", "ended") and ("docker.eol_base", "all") in found:
-            cands.append(found[("docker.eol_base", "all")])
-        sts = [(views.status_of(False, f), f) for f in cands]
-        st, f = next(((s, f) for s, f in sts if s["attention"]), sts[0] if sts else (None, None))
-        sup = r["support"]
-        rows.append({**r, "status": st, "pk": _packages_cell(r), "cvec": _cve_cell(r),
-                     "sup_badge": distro_badge(sup["status"]), "sup_v": sup["eol"] or "",
-                     "containers_text": ", ".join(r["containers"][:3]) + (f" and {len(r['containers']) - 3} more" if len(r["containers"]) > 3 else ""),
-                     "src": {**prov.docker_image_row(r), "finding": f, "anchor": r["anchor"]}})
-    counts = (a or {}).get("counts") or {}
-    alpine_lines = _alpine_lines(cves, now)
-    ubuntu_lines = _ubuntu_lines(cves, now)
-    fixable = sum(1 for r in rows if r["cvec"]["v"] > 0)
-    kev = sum(1 for r in rows if r["cvec"].get("kev"))
+    rows = image_rows(a, found)
+    cov = coverage(rows, a, cves, now)
     return {
         "host": views._host(cfg, snaps), "configured": bool(reader_url), "state": views._source_state(snaps, docker_storage.SNAPSHOT),
         "edit": f"/remotes/{host}/edit#docker-reader", "ago": fmt_ago(snap.taken_at, now) if snap and snap.data else None,
         "has_data": bool(data), "old_reader": bool(data) and a is None,
-        "rows": rows, "counts": counts, "eol": len((a or {}).get("eol", [])), "fixable": fixable, "kev": kev,
-        "cve_off": bool(cves) and not cves["enabled"], "cve_missing": bool(cves) and cves["enabled"] and not cves["available"],
-        "feed_ago": fmt_ago(cves["feed_at"], now) if cves and cves.get("feed_at") else None, "alpine_lines": alpine_lines, "ubuntu_lines": ubuntu_lines,
+        "empty": None, "collector": False,
+        "source_text": "Docker reader: what is inside the images containers use",
+        "update_hint": "Update an image on Unraid: Docker tab, Check for Updates, then apply.",
+        **cov,
         "src": {"images": prov.images_section(reader_url)},
     }
-
-
-def distro_badge(status: str) -> str:
-    from .. import distro
-    return distro.STATUS_BADGE.get(status, "bg-secondary-lt")
 
 
 def _groups(rows: list[dict], folders: dict | None) -> list[dict]:

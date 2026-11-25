@@ -14,6 +14,7 @@ SECTIONS: dict[str, dict[str, list[tuple[str, str]]]] = {
                      ("forwards", "Port forwards"), ("outside", "Seen from outside"),
                      ("docker-published", "Docker published ports")],
         "services": [("containers", "Containers"), ("units", "systemd services"), ("ports", "Listening sockets")],
+        "images": [("image-list", "Images"), ("image-coverage", "What is checked")],
         "packages": [("security", "Security updates"), ("other", "Other updates"), ("held", "Held packages"),
                      ("reboot", "Reboot and restarts"), ("auto", "Automatic updates"), ("lists", "Package lists")],
         "vulnerabilities": [("summary", "This host"), ("packages", "Packages"), ("feeds", "Data feeds")],

@@ -1,0 +1,99 @@
+{% from "_macros.html" import src, status_cell with context %}
+<div id="live" hx-get="{{ base }}/partials/images" hx-trigger="every 300s" hx-swap="outerHTML">
+{% if v %}
+{% set c = v.counts %}
+{% macro unset() %}Container images are not read for this system. <a href="{{ v.edit }}">Edit it</a> and tick "Read images and volumes".{% endmacro %}
+{% macro problem() %}{% if v.state.state == 'error' %}<div class="text-red small mt-1">The last read failed: {{ v.state.reason }}{% if v.ago %} These are the figures from the last good read, {{ v.ago }}.{% endif %}</div>{% endif %}{% endmacro %}
+
+<section class="card mb-4" id="image-list" aria-labelledby="ci-title" data-section{% if not v.rows %} data-empty{% endif %}>
+  <div class="card-header">
+    <h2 class="card-title" id="ci-title">Images in use</h2>{{ src("src-images", v.src.images) }}
+    {% if v.rows %}<div class="card-actions text-secondary"><span class="ds-shown"></span>{{ v.rows|length }}</div>{% endif %}
+  </div>
+  {% if v.empty %}
+  <div class="card-body text-secondary">{{ v.empty }}</div>
+  {% if v.unread %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table ds-dk" data-table="container-images-unread">
+      <thead><tr><th data-sort="text">Image</th><th data-sort="text">Containers</th><th data-sort="text">Packages</th><th data-sort="text">Fixable CVEs</th></tr></thead>
+      <tbody>
+        {% for r in v.unread %}
+        <tr data-row>
+          <td class="font-monospace" data-label="Image"><strong>{{ r.name }}</strong></td>
+          <td data-label="Containers">{{ r.containers }}</td>
+          <td data-label="Packages" class="text-secondary">Not read</td>
+          <td data-label="Fixable CVEs" class="text-secondary">Not checked</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% elif not v.configured %}
+  <div class="card-body text-secondary">{{ unset() }}</div>
+  {% elif not v.has_data %}
+  <div class="card-body text-secondary">{% if v.state.state == 'error' %}<span class="text-red">The reader could not be read: {{ v.state.reason }}</span>{% else %}No data yet. The first read happens within a few seconds of saving.{% endif %}</div>
+  {% elif v.old_reader %}
+  <div class="card-body text-secondary">The Docker reader on this server does not send package lists yet. Update its container to the newest DaemonSight image and restart it.{{ problem() }}</div>
+  {% else %}
+  <div class="card-body">{{ v.rows|length }} {{ 'image is' if v.rows|length == 1 else 'images are' }} in use: {{ v.eol }} on an end-of-life base, {{ v.fixable }} with CVEs that an update fixes{% if v.kev %}, {{ v.kev }} with a known-exploited one{% endif %}.{{ problem() }}</div>
+  {% if v.rows %}
+  <div class="table-responsive">
+    <table class="table table-vcenter card-table ds-dk" data-table="container-images">
+      <thead><tr><th data-sort="text">Image</th><th data-sort="text">Base OS</th><th data-sort="text">Support</th><th data-sort="num">Packages</th><th data-sort="num">Fixable CVEs</th><th data-sort="num">Fix within</th><th data-sort="text">Status</th></tr></thead>
+      <tbody>
+        {% for r in v.rows %}
+        <tr id="{{ r.anchor }}" data-row>
+          <td class="font-monospace" data-label="Image"><strong>{{ r.name }}</strong>{{ src("src-ci-" ~ r.anchor, r.src) }}{% if r.containers_text %}<div class="text-secondary small">{{ r.containers_text }}</div>{% endif %}</td>
+          <td data-label="Base OS">{{ r.os_name }}{% if r.codename %}<div class="text-secondary small">{{ r.codename }}</div>{% endif %}</td>
+          <td data-v="{{ r.sup_v }}" data-label="Support">{% if r.support.status == 'unknown' %}<span class="text-secondary">{{ r.support.label }}</span>{% else %}<span class="badge {{ r.sup_badge }} text-wrap text-start lh-base">{{ r.support.label }}</span>{% endif %}</td>
+          <td data-v="{{ r.pk.v }}" data-label="Packages">{{ r.pk.text }}{% if r.pk.note %}<div class="text-secondary small">{{ r.pk.note }}</div>{% endif %}</td>
+          <td data-v="{{ r.cvec.v }}" data-label="Fixable CVEs">{{ r.cvec.text }}{% if r.cvec.kev %} <span class="badge bg-red text-red-fg" title="On CISA's Known Exploited Vulnerabilities list">{{ r.cvec.kev }} exploited (KEV)</span>{% endif %}{% if r.cvec.top %}<div class="text-secondary small">top EPSS {{ r.cvec.top }}</div>{% endif %}{% if r.cvec.note %}<div class="text-secondary small">{{ r.cvec.note }}</div>{% endif %}
+            {% if r.cvec.rows %}<details class="mt-1"><summary class="small">CVE list</summary>
+              <ul class="list-unstyled small mb-0 mt-1">
+              {% for x in r.cvec.rows %}<li class="mb-1"><a class="font-monospace" href="{{ x.url }}" target="_blank" rel="noopener noreferrer">{{ x.cve }}</a>{% if x.kev %} <span class="badge bg-red text-red-fg">KEV</span>{% endif %}
+                <span class="badge {{ x.fix.badge }}" title="{{ x.fix.title }}">Fix within {{ x.fix.text }}</span>{% if x.fix.triage %} <span class="badge bg-red-lt">+ triage</span>{% endif %}{% if x.fix.estimated %} <span class="text-secondary" title="CISA has not rated this CVE: estimated by DaemonSight">est.</span>{% endif %}
+                <span class="text-secondary">EPSS {{ x.epss_text }}{% if x.cvss %} · {{ x.cvss }}, information only{% endif %}{% if x.fixed %} · fixed in {{ x.fixed }}{% endif %}</span></li>{% endfor %}
+              </ul>{% if r.cvec.more %}<div class="text-secondary small">{{ r.cvec.more }} more not shown.</div>{% endif %}
+            </details>{% endif %}</td>
+          <td data-v="{{ r.cvec.fix.v if r.cvec.fix else 99999999 }}" data-label="Fix within">{% if r.cvec.fix %}<span class="badge {{ r.cvec.fix.badge }}" title="{{ r.cvec.fix.title }}">{{ r.cvec.fix.text }}</span>{% if r.cvec.fix.triage %} <span class="badge bg-red-lt" title="This row also asks for forensic triage">+ triage</span>{% endif %}{% if r.cvec.fix.estimated %} <span class="text-secondary small" title="CISA has not rated this CVE: estimated by DaemonSight">est.</span>{% endif %}<div class="text-secondary small">{{ r.cvec.exposure.label }}: {{ r.cvec.exposure.why }}</div>{% else %}—{% endif %}</td>
+          <td data-label="Status" data-v="{{ r.status.label if r.status else '' }}">{{ status_cell(r.status) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-secondary">No container uses an image.</div>
+  {% endif %}
+  <div class="card-body text-secondary small">DaemonSight only reads. {{ v.update_hint }} The (i) beside each image has the command to look at its packages yourself.</div>
+  {% endif %}
+  <div class="card-body text-secondary ds-nomatch">No images match the filter.</div>
+</section>
+
+<section class="card" id="image-coverage" aria-labelledby="cov-title" data-section>
+  <div class="card-header"><h2 class="card-title" id="cov-title">What is checked</h2></div>
+  {% if v.empty %}
+  <div class="card-body text-secondary">Nothing yet.</div>
+  {% elif not v.configured %}
+  <div class="card-body text-secondary">{{ unset() }}</div>
+  {% elif not v.has_data or v.old_reader %}
+  <div class="card-body text-secondary">Nothing yet.</div>
+  {% else %}
+  <div class="card-body">{{ c.read or 0 }} of {{ v.rows|length }} images have a package list. CVEs are matched for Debian, Ubuntu and Alpine images.</div>
+  <div class="card-body pt-0 text-secondary small"><ul class="list-unstyled mb-0">
+    <li>Debian: {{ c.debian or 0 }} {{ 'image' if c.debian == 1 else 'images' }} matched against Debian's security tracker{% if v.feed_ago %}, tracker data checked {{ v.feed_ago }}{% endif %}.</li>
+    {% if c.ubuntu %}<li>Ubuntu: {{ c.ubuntu }} {{ 'image' if c.ubuntu == 1 else 'images' }} matched against Canonical's Ubuntu OVAL data. It names fixes, and a package that "might be affected" without one; it does not say why, so those are counted as no fix yet. A fix that exists only in Ubuntu Pro's ESM archives is shown apart and is not a fix an image can take.
+      {% if v.ubuntu_lines %}<ul class="list-unstyled mb-0 ms-3">{% for l in v.ubuntu_lines %}<li>{{ l.text }}.{% if l.error %} <span class="text-red">{{ l.error }}.</span>{% endif %}</li>{% endfor %}</ul>{% endif %}</li>{% endif %}
+    {% if c.alpine %}<li>Alpine: {{ c.alpine }} {{ 'image' if c.alpine == 1 else 'images' }} matched against Alpine's security database (secdb). It lists fixes only, so an Alpine image has no count of CVEs without a fix.
+      {% if v.alpine_lines %}<ul class="list-unstyled mb-0 ms-3">{% for l in v.alpine_lines %}<li>{{ l.text }}.{% if l.error %} <span class="text-red">{{ l.error }}.</span>{% endif %}</li>{% endfor %}</ul>{% endif %}</li>{% endif %}
+    {% if c.other_os %}<li>{{ c.other_os }} {{ 'image uses' if c.other_os == 1 else 'images use' }} an OS without dpkg or apk; its packages are not read.</li>{% endif %}
+    {% if c.stopped %}<li>{{ c.stopped }} {{ 'image is' if c.stopped == 1 else 'images are' }} used only by stopped containers: not read.</li>{% endif %}
+    {% if c.waiting %}<li>{{ c.waiting }} {{ 'image waits' if c.waiting == 1 else 'images wait' }} for a first read (ten at a time, so a busy server is not asked for much).</li>{% endif %}
+    {% if c.failed %}<li>{{ c.failed }} {{ 'image' if c.failed == 1 else 'images' }} could not be read; each row says why.</li>{% endif %}
+    {% if v.cve_off %}<li class="text-red">CVE matching is off in Settings, so no image is matched.</li>{% elif v.cve_missing %}<li>The CVE database is not downloaded yet.</li>{% endif %}
+  </ul></div>
+  {% endif %}
+</section>
+{% endif %}
+</div>

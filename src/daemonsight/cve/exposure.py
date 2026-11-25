@@ -9,9 +9,16 @@ DaemonSight has real exposure data for most of what it watches, so that rule is 
   bind on a host with one, past the host firewall and the provider's allow list), Docker's published ports on a public
   address, and the port forwards and Caddy sites of the hub's OPNsense systems that lead to the host's addresses. This is
   what the Exposure page shows (findings.public_listeners, remote/opnsense.reach_by_listener).
+* A container image on a host with a collector: exposed when a running container from it is reached from the internet by one of
+  these routes (the first that holds is quoted). Docker publishes a port on all interfaces, or on a public address, of a host that
+  has a public address, and the provider's allow list passes it. Or an OPNsense port forward leads to a port it publishes on a
+  non-loopback address. Or an internet-facing Caddy site on the host proxies to it (its published port on this host, or its name
+  on a Docker network) and Caddy itself can be reached from the internet. A container that publishes to 127.0.0.1 only is exposed
+  through the last route and no other. A container on the host network is judged by the listeners the collector reports for it.
+  See collector_image_exposures and DESIGN.md, "Collector hosts: image CVEs".
 * An OPNsense firewall: always exposed. It is a network device, which the guidance treats as public, and its own interfaces
   face the internet.
-* A container image: exposed when a running container from it publishes a port that an OPNsense port forward or Caddy site
+* An Unraid container image: exposed when a running container from it publishes a port that an OPNsense port forward or Caddy site
   sends the internet to, on the Unraid system's address. Without that link (the Unraid address is a name, no firewall is
   read, the container uses host networking and publishes no port) the guidance's fallback decides: public only when the
   Unraid address is publicly routable and the container publishes a port on it.
@@ -164,3 +171,183 @@ def image_exposures(conn, host: str, data: dict | None, unraid_docker: dict | No
 
 def firewall_exposure() -> Exposure:
     return FIREWALL
+
+
+# --- a container image on a host with a collector -----------------------------------------------------------------------------
+
+LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def _is_loopback(ip: str | None) -> bool:
+    import ipaddress
+    if ip in LOOPBACK:
+        return True
+    try:
+        return ipaddress.ip_address(str(ip).split("%", 1)[0]).is_loopback
+    except ValueError:
+        return False
+
+
+def _ok_data(snaps: dict, name: str) -> dict | None:
+    s = snaps.get(name)
+    return s.data if s and s.data and s.data.get("available") is not False else None
+
+
+def _listen_port(spec: str) -> tuple[str, int] | None:
+    """(host part, port) of a Caddy listen address (":443", "0.0.0.0:443", "[::1]:8080", "tcp/:443"); None for a Unix socket or a
+    form that is not one."""
+    if "/" in spec.split(":", 1)[0]:
+        spec = spec.split("/", 1)[1]
+    if spec.startswith("unix"):
+        return None
+    host, sep, port = spec.rpartition(":")
+    if not sep or not port.isdigit():
+        return None
+    return host.strip("[]"), int(port)
+
+
+def _service_name(container: dict) -> str | None:
+    """The Docker Compose service a container is likely to be, from its name "<project>-<service>-<n>" (Compose v2). A Caddy that
+    proxies to `app:8080` on a Compose network names the service, not the container. An inference, used only to match a Caddy
+    upstream."""
+    project, name = container.get("project"), container.get("name") or ""
+    if not project or not name.startswith(project + "-"):
+        return None
+    rest = name[len(project) + 1:]
+    head, _, tail = rest.rpartition("-")
+    return head if head and tail.isdigit() else rest or None
+
+
+def _site_audience(site: dict) -> str:
+    """"internet" or "lan" for a Caddy site, from its access list (`remote_ip` ranges, collector/sources/caddy.py): no list is anyone; a
+    list of private ranges only is LAN-only (the same test as opnsense_rules._lan_only); any other list still lets internet
+    addresses in."""
+    import ipaddress
+    allow = site.get("allow") or []
+    if not allow:
+        return "internet"
+    try:
+        if all(not ipaddress.ip_network(str(r).strip(), strict=False).is_global for r in allow):
+            return "lan"
+    except ValueError:
+        pass
+    return "internet"
+
+
+def collector_image_exposures(conn, cfg, host: str, data: dict | None) -> dict[str, Exposure]:
+    """image id -> Exposure for every image in a collector host's stored image data (`data`, hub.merge_docker_images). `cfg` is
+    the config as that host sees it (web.views.host_config: its provider allow list). Everything comes from what the hub holds for
+    the host: its Docker snapshot (published ports), its listeners and addresses, its firewall, its Caddy sites, and the hub's
+    OPNsense systems. Without the host's ports and Docker data the guidance's best-effort rule decides (`unknown`)."""
+    from .. import db, findings as rules
+    from ..collector.sources.caddy import is_local
+    from ..remote import opnsense as opn_mod
+    snaps = db.get_snapshots(conn, host)
+    ids = [e["image_id"] for e in (data or {}).get("image_packages") or []]
+    row = conn.execute("SELECT address FROM hosts WHERE id = ?", (host,)).fetchone()
+    ports, docker, caddy = _ok_data(snaps, "ports"), _ok_data(snaps, "docker"), _ok_data(snaps, "caddy")
+    caddy_state = "unread" if snaps.get("caddy") is None else "read" if caddy else "none"      # "none": no Caddy on the host
+    public_own = [a["ip"] for a in (ports or {}).get("addresses", []) if isinstance(a, dict) and a.get("scope") == "public"]
+    address = row["address"] if row else None
+    if ports is None or docker is None:
+        return {i: unknown([address, *public_own]) for i in ids}
+    pub = rules.host_is_public(ports)
+    own = {a["ip"] for a in ports.get("addresses", []) if isinstance(a, dict) and a.get("ip")}
+    through = opn_mod.reach_by_listener(conn, own) if own else {}
+    published = {(p.get("proto"), p.get("host_port")) for c in docker.get("containers", []) for p in c.get("ports", [])}
+    by_name = {c.get("name"): c for c in docker.get("containers", [])}
+    listeners = ports.get("listeners", [])
+
+    def binding_reason(proto: str, port: int, ip: str | None, who: str) -> str | None:
+        """Why the internet reaches this host port, or None. The provider's allow list can rule it out."""
+        if _is_loopback(ip) or not rules.upstream_allows(cfg, proto, port):
+            return None
+        if ip in WIDE and pub:
+            return f"port {port}/{proto} of {who} is published on all interfaces of a host with a public address"
+        if ip not in WIDE and _public_ip(ip):
+            return f"port {port}/{proto} of {who} is published on the public address {ip}"
+        if (proto, port) in through and (ip in WIDE or ip in own):
+            return f"port {port}/{proto} of {who} is reached from the internet through {_forward_text(through[(proto, port)][0])}"
+        return None
+
+    def caddy_reaches(site: dict) -> str | None:
+        """Why the internet can reach this Caddy site's listener, or None: a Docker-published port or a public listener on a host
+        with a public address, or an OPNsense forward to it."""
+        for spec in site.get("listen") or [":443", ":80"]:
+            hp = _listen_port(spec)
+            if hp is None or _is_loopback(hp[0]) or not rules.upstream_allows(cfg, "tcp", hp[1]):
+                continue
+            port = hp[1]
+            if ("tcp", port) in published and pub:
+                return f"Caddy is published on port {port}/tcp of a host with a public address"
+            if ("tcp", port) in through:
+                return f"port {port}/tcp is reached from the internet through {_forward_text(through[('tcp', port)][0])}"
+            for r in listeners:
+                if r["proto"] == "tcp" and r["port"] == port and rules.reach(r, pub) == "internet" \
+                        and rules.firewall_state(snaps, "tcp", port, r["addresses"])["state"] not in ("blocked", "forwarded"):
+                    return f"Caddy listens on port {port}/tcp, which the internet can reach"
+        return None
+
+    by_image: dict[str, list[dict]] = {}
+    for c in (data or {}).get("containers", []):
+        if c.get("image_id") and c.get("state") == "running":
+            by_image.setdefault(c["image_id"], []).append(c)
+    out: dict[str, Exposure] = {}
+    for iid in ids:
+        names = [c["name"] for c in by_image.get(iid, [])]
+        if not names:
+            out[iid] = Exposure(False, "no running container uses it", False)
+            continue
+        reasons: list[str] = []
+        bound: set[str] = set()                # what the containers bind, for the explanation when nothing exposes them
+        proxied = seen = False
+        for name in names:
+            dc = by_name.get(name)
+            if dc is None:
+                continue
+            seen = True
+            who = f"container {name}"
+            bindings = [(p.get("proto") or "tcp", p.get("host_port"), p.get("host_ip") or "0.0.0.0") for p in dc.get("ports", [])
+                        if isinstance(p.get("host_port"), int)]
+            for r in listeners:                # a container on the host network publishes nothing; its listeners are its bindings
+                o = r.get("owner") or {}
+                if o.get("kind") == "container" and o.get("id") == dc.get("id"):
+                    bindings += [(r["proto"], r["port"], a) for a in r.get("addresses") or []]
+            for proto, port, ip in bindings:
+                bound.add(f"{ip}:{port}/{proto}")
+                why = binding_reason(proto, port, ip, who)
+                if why:
+                    reasons.append(why)
+            if not caddy:
+                continue
+            svc = _service_name(dc)
+            tcp_ports = {port for proto, port, _ip in bindings if proto == "tcp"}
+            for site in caddy.get("sites", []):
+                if _site_audience(site) != "internet":
+                    continue
+                for h in site.get("handlers", []):
+                    for u in h.get("upstreams", []) if h.get("kind") == "proxy" else []:
+                        on_host = bool(u.get("port")) and u["port"] in tcp_ports and is_local(u.get("host"), own)
+                        on_network = bool(u.get("host")) and u["host"] in (name, svc)
+                        if not (on_host or on_network):
+                            continue
+                        proxied = True
+                        via = caddy_reaches(site)
+                        if via:
+                            reasons.append(f"Caddy site {site['host']} proxies to {who} ({u.get('text')}) and {via}")
+        if reasons:
+            out[iid] = Exposure(True, reasons[0] + (f" (and {len(reasons) - 1} more)" if len(reasons) > 1 else ""))
+        elif not seen or (not bound and not proxied and caddy_state == "unread"):
+            out[iid] = unknown([address, *public_own])          # the host's Caddy sites were never read: cannot tell
+        else:
+            shown = sorted(bound)
+            parts = [f"it publishes {_list(shown[:3], max(len(shown) - 3, 0))}, which the internet cannot reach (loopback, a host with no "
+                     "public address, or blocked by the provider's allow list)" if bound else "it publishes no port"]
+            if proxied:
+                parts.append("a Caddy site proxies to it, but the internet cannot reach Caddy")
+            elif caddy_state == "read":
+                parts.append("no internet-facing Caddy site on this host proxies to it")
+            elif caddy_state == "none":
+                parts.append("the host has no Caddy")
+            out[iid] = Exposure(False, "; ".join(parts))
+    return out

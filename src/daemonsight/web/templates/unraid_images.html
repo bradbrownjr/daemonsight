@@ -2,8 +2,8 @@
 {% block title %}Container images · DaemonSight{% endblock %}
 {% block content %}
 <div class="mb-4">
-  <div class="page-pretitle">{{ v.host.id }} · Docker reader: what is inside the images containers use</div>
+  <div class="page-pretitle">{{ v.host.id }} · {{ v.source_text }}</div>
   <h1 class="page-title">Container images</h1>
 </div>
-{% include "partials/unraid_images.html" %}
+{% include "partials/images.html" %}
 {% endblock %}

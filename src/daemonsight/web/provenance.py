@@ -654,12 +654,21 @@ IMAGES_READ = ("GET /containers/{id}/archive?path=<p> on the Docker socket (Engi
                "One running container per image is read, once, and again only when the image changes")
 
 
-def images_section(reader_url: str | None) -> dict:
-    """The panel of the Container images card: where the lists come from, how they are matched, and the CLI."""
-    entries = [plain("Reader endpoint", f"GET {reader_url or 'http://<reader>:8467'}/v1/summary, field image_packages"),
+def images_section(reader_url: str | None, collector: bool = False) -> dict:
+    """The panel of the Container images card: where the lists come from, how they are matched, and the CLI. `collector`: the host's
+    own collector read them (a host with a collector), not a Docker reader."""
+    if collector:
+        source = plain("Collector", "The DaemonSight collector on this host reads each image's OS and packages (it already holds the "
+                                    "Docker socket, GET only) and sends them with its uploads, as the field docker_images. A list is "
+                                    "sent when it is new or changed; otherwise only its hash")
+        pace = "At most 10 images are read per look, and a look is every 5 minutes ([collector] interval_docker_images)"
+    else:
+        source = plain("Reader endpoint", f"GET {reader_url or 'http://<reader>:8467'}/v1/summary, field image_packages")
+        pace = "At most 10 images are read per minute"
+    entries = [source,
                plain("Docker call", IMAGES_READ),
                plain("Limits", "Each file is capped (16 MB dpkg, 4 MB apk, 64 KB os-release) and must be a single regular file in the tar "
-                               "stream; a link is not followed and nothing is written to disk. At most 10 images are read per minute"),
+                               "stream; a link is not followed and nothing is written to disk. " + pace),
                plain("Support status", "Debian, Ubuntu and Fedora bases use the same release data as a host (distro-info). Alpine and "
                                        "CentOS Linux use endoflife.date's end dates, bundled with DaemonSight"),
                plain("CVEs", "Debian images: each package is matched by its source package and version against Debian's security "
@@ -673,16 +682,18 @@ def images_section(reader_url: str | None) -> dict:
                cmd("One image's packages, on the server", "docker cp -L <container>:/var/lib/dpkg/status - | tar -xO"),
                plain("Alpine instead", "docker cp -L <container>:/lib/apk/db/installed - | tar -xO"),
                cmd("Its OS", "docker cp -L <container>:/usr/lib/os-release - | tar -xO")]
-    if reader_url:
+    if reader_url and not collector:
         entries.append(text("Same read, $TOKEN", f"curl -s -H \"Authorization: Bearer $TOKEN\" {q(reader_url + '/v1/summary')}"))
-    return {"title": "Container images", "read": "The Docker reader on this server (GET only) and the hub's CVE data", "entries": entries}
+    return {"title": "Container images", "read": ("The collector on this host (GET only) and the hub's CVE data" if collector
+                                                  else "The Docker reader on this server (GET only) and the hub's CVE data"), "entries": entries}
 
 
 ALPINE_TRACKER = "https://security.alpinelinux.org/vuln/"
 
 
-def docker_image_row(r: dict) -> dict:
-    """The panel of one container image: what was read, how, and the CLI for that image."""
+def docker_image_row(r: dict, collector: bool = False) -> dict:
+    """The panel of one container image: what was read, how, and the CLI for that image. `collector`: a host with a collector, not an
+    Unraid system (its fix is a Compose pull, not the Docker tab)."""
     from ..cve import match
     cname = r["read_container"] or (r["containers"][0] if r["containers"] else "<container>")
     entries = [plain("Base OS", f"{r['os_name']}" + (f", {r['support']['label']}" if r["support"]["status"] != "unknown" else "")),
@@ -727,9 +738,11 @@ def docker_image_row(r: dict) -> dict:
     path = "/lib/apk/db/installed" if r["manager"] == "apk" else "/var/lib/dpkg/status"
     entries.append(cmd("Its packages", f"docker cp -L {q(cname)}:{path} - | tar -xO"))
     entries.append(cmd("Its OS", f"docker cp -L {q(cname)}:/usr/lib/os-release - | tar -xO"))
-    entries.append(plain("Fix", "Update the image: on Unraid, Docker tab, Check for Updates, then apply. "
-                                + ("apk upgrade" if alpine else "apt upgrade") + " inside a container does not persist"))
-    return {"title": f"Image {r['name']}", "read": "The Docker reader's package list for this image, and the hub's matching of it", "entries": entries}
+    update = "pull a newer tag and create the container again (docker compose pull, then docker compose up -d). " if collector \
+        else "on Unraid, Docker tab, Check for Updates, then apply. "
+    entries.append(plain("Fix", "Update the image: " + update + ("apk upgrade" if alpine else "apt upgrade") + " inside a container does not persist"))
+    return {"title": f"Image {r['name']}", "read": ("The collector's package list for this image" if collector else "The Docker reader's package list for this image")
+                                                   + ", and the hub's matching of it", "entries": entries}
 
 
 def docker_volume(v: dict) -> dict:

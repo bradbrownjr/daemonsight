@@ -112,10 +112,10 @@
       {% elif host and host.kind == 'unifi' %}
       {% set sections = [('overview', '/', 'Overview'), ('devices', '/devices', 'Devices'), ('wifi', '/wifi', 'Wi-Fi'), ('report', '/report', 'Report')] %}
       {% else %}
-      {% set sections = [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('packages', '/packages', 'Packages'), ('vulnerabilities', '/vulnerabilities', 'Vulnerabilities'), ('fail2ban', '/fail2ban', 'fail2ban'), ('report', '/report', 'Report')] %}
+      {% set sections = [('overview', '/', 'Overview'), ('exposure', '/exposure', 'Exposure'), ('routes', '/routes', 'Routes'), ('services', '/services', 'Services'), ('images', '/images', 'Container images'), ('packages', '/packages', 'Packages'), ('vulnerabilities', '/vulnerabilities', 'Vulnerabilities'), ('fail2ban', '/fail2ban', 'fail2ban'), ('report', '/report', 'Report')] %}
       {% endif %}
       {% for key, href, label in sections %}
-      {% if key != 'vulnerabilities' or hub %}
+      {% if (key != 'vulnerabilities' and key != 'images') or hub %}
       {% set items = [] %}
       {% for anchor, text in page_sections.get(key, []) %}{% set _ = items.append({'href': base ~ href ~ '#' ~ anchor, 'text': text}) %}{% endfor %}
       {{ nav_tab(key, base, href, label, items, page == key) }}
