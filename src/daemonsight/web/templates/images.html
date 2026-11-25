@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Container images · DaemonSight{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="page-pretitle">{{ v.host.id }} · {{ v.source_text }}</div>
+  <h1 class="page-title">Container images</h1>
+</div>
+{% include "partials/images.html" %}
+{% endblock %}

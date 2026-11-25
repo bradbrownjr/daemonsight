@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -41,6 +43,11 @@ REJECTED_RETRY = 3600
 REJECTED_MESSAGE = "the hub rejected this host's upload token"
 INVENTORY = "inventory"
 INVENTORY_RESEND = 86400  # send the package list again after a day even when unchanged
+DOCKER_IMAGES = "docker_images"
+DOCKER_IMAGES_RESEND = 86400   # send every image's package list again after a day, so a hub that lost one recovers
+RESEND_ASKED_EVERY = 600       # a package list the hub asks for again is sent at most this often per image
+# Sources that have a top-level field of their own in the upload instead of a snapshot (see _inventory, _docker_images).
+OWN_FIELD = (INVENTORY, DOCKER_IMAGES)
 
 
 class UploadError(Exception):
@@ -104,6 +111,49 @@ def _inventory(conn, snapshot_rows) -> tuple[dict | None, dict]:
     return body, {"upload.inv_hash": data["hash"], "upload.inv_at": now}
 
 
+def _docker_images(conn, snapshot_rows, resend: frozenset[str] = frozenset()) -> tuple[dict | None, dict]:
+    """The container images' OS and package lists for the hub, and the cursors to save when it accepts them. Its own top-level
+    upload field, like the inventory (an older hub ignores it). A list is sent in full only when the hub does not have it: the
+    image's `hash` is not what the hub last accepted from this host, or the hub asked for it (`resend`, from its reply), or a day
+    has passed. Otherwise the entry carries the hash and the count and no packages, and the hub keeps the list it has per image id
+    (hub.merge_docker_images). When nothing changed at all, the field is left out of the upload. See docs/DESIGN.md "Collector
+    hosts: image CVEs" for the sizes."""
+    row = next((r for r in snapshot_rows if r["source"] == DOCKER_IMAGES), None)
+    if row is None or not row["ok"] or not row["data"]:
+        return None, {}
+    data = json.loads(row["data"])
+    now = time.time()
+    full_at = _meta_float(conn, "upload.dimg_full_at")
+    full_all = now - full_at >= DOCKER_IMAGES_RESEND
+    held: dict[str, str] = {}
+    try:
+        held = {k: v for k, v in json.loads(db.get_meta(conn, "upload.dimg_sent") or "{}").items() if isinstance(v, str)}
+    except ValueError:
+        pass
+    if data.get("available") is False:
+        body = {"v": 1, "available": False, "reason": str(data.get("reason") or "")[:200]}
+        hashes: dict[str, str] = {}
+    else:
+        entries = []
+        for e in data.get("image_packages") or []:
+            e = dict(e)
+            if e.get("hash") and not (full_all or held.get(e["image_id"]) != e["hash"] or e["image_id"] in resend):
+                e["packages"] = []                   # the hub has this list: the hash says which
+            entries.append(e)
+        body = {"v": 1, "engine": data.get("engine") or {}, "containers": data.get("containers") or [],
+                "images": data.get("images") or [], "image_packages": entries}
+        hashes = {e["image_id"]: e["hash"] for e in data.get("image_packages") or [] if e.get("hash")}
+    # What the hub would learn from this upload: the entries without their lists (the hashes stand for them).
+    shape = json.dumps({**body, "image_packages": [{**e, "packages": None} for e in body.get("image_packages", [])]},
+                       sort_keys=True, separators=(",", ":"))
+    fp = hashlib.sha256(shape.encode()).hexdigest()[:32]
+    if db.get_meta(conn, "upload.dimg_fp") == fp and not full_all and not resend:
+        return None, {}
+    body["taken_at"] = row["taken_at"]
+    return body, {"upload.dimg_fp": fp, "upload.dimg_sent": json.dumps(hashes, separators=(",", ":")),
+                  "upload.dimg_full_at": now if full_all else full_at}
+
+
 def _finding_payload(f) -> dict:
     """fix and basis are sent only when set, so a host updated ahead of its hub
     still reports when it has nothing to say there."""
@@ -115,7 +165,8 @@ def _finding_payload(f) -> dict:
     return out
 
 
-def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple[dict, dict, bool]:
+def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float,
+          resend: frozenset[str] = frozenset()) -> tuple[dict, dict, bool]:
     """The next upload, the cursors to save once the hub accepts it, and
     whether more is waiting after it."""
     host = cfg.host_id
@@ -124,7 +175,7 @@ def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple
 
     rows_all = conn.execute("SELECT * FROM snapshots WHERE host = ?", (host,)).fetchall()
     snaps = [s for s in rows_all
-             if s["source"] != INVENTORY and s["taken_at"] != _meta_float(conn, f"upload.snap.{s['source']}")]
+             if s["source"] not in OWN_FIELD and s["taken_at"] != _meta_float(conn, f"upload.snap.{s['source']}")]
     rows = conn.execute("SELECT rowid, ts, name, value FROM metrics WHERE host = ? AND rowid > ? "
                         "ORDER BY rowid LIMIT ?", (host, metric_row, MAX_METRICS + 1)).fetchall()
     more = len(rows) > MAX_METRICS
@@ -135,6 +186,7 @@ def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple
     events = events[:MAX_EVENTS]
     findings = db.open_findings(conn, host)
     inventory, inv_cursors = _inventory(conn, rows_all)
+    images, img_cursors = _docker_images(conn, rows_all, resend)
 
     payload = {
         "v": 1,
@@ -157,8 +209,11 @@ def build(conn, cfg: Config, eph: tuple[int, int], max_interval: float) -> tuple
     }
     if inventory is not None:
         payload["inventory"] = inventory
+    if images is not None:
+        payload["docker_images"] = images
     cursors = {
         **inv_cursors,
+        **img_cursors,
         **{f"upload.snap.{s['source']}": s["taken_at"] for s in snaps},
         "upload.metric_row": rows[-1]["rowid"] if rows else metric_row,
         "upload.event_id": events[-1]["id"] if events else event_id,
@@ -179,6 +234,26 @@ class Uploader:
         # What to tell the hub about an uninstall it asked for, sent with the next upload (see _hub_uninstall).
         self._uninstall_ack: tuple[str, str] | None = None
         self._uninstalling = False
+        # Image ids whose package lists the hub's last reply asked for again, and when each was last asked for.
+        self._resend: frozenset[str] = frozenset()
+        self._asked_at: dict[str, float] = {}
+
+    def _hub_wants_lists(self, reply) -> None:
+        """Note the image package lists the hub says it is missing (`docker_images_resend`, a short list of image ids), to send in
+        full with the next upload. An id is honoured at most once per RESEND_ASKED_EVERY, so a hub that keeps refusing a list
+        is not sent it every upload."""
+        try:
+            ids = reply.json().get("docker_images_resend")
+        except (ValueError, AttributeError):
+            ids = None
+        now = time.time()
+        asked = set()
+        for i in (ids if isinstance(ids, list) else [])[:100]:
+            if isinstance(i, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", i) and now - self._asked_at.get(i, 0) >= RESEND_ASKED_EVERY:
+                asked.add(i)
+                self._asked_at[i] = now
+        self._resend = frozenset(asked)
+        self._asked_at = {k: v for k, v in self._asked_at.items() if now - v < 3600}
 
     def _hub_asks(self, reply) -> None:
         """Act on an update the hub's reply asks for, logging each change."""
@@ -254,7 +329,7 @@ class Uploader:
         """Send one upload. Returns True when more data is waiting."""
         token = self._token()
         async with self.lock:
-            payload, cursors, more = build(self.conn, self.cfg, self.eph, self.max_interval)
+            payload, cursors, more = build(self.conn, self.cfg, self.eph, self.max_interval, self._resend)
             seq = self._next_seq()
             db.set_meta(self.conn, {"upload.seq": seq})
         payload["seq"] = seq
@@ -282,6 +357,7 @@ class Uploader:
             log.debug("uploaded seq %d (%d bytes, %d metrics, %d events)", seq, len(body),
                       len(payload["metrics"]), len(payload["events"]))
             self._hub_asks(r)
+            self._hub_wants_lists(r)
             await self._hub_uninstall(r, seq)
             return more
         if r.status_code == 409:

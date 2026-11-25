@@ -194,6 +194,32 @@ with, read-only, because its web process opens the database read-only by design.
 Edit `/etc/daemonsight/config.toml` and restart the two units, as above.
 Settings that only a hub uses are labelled "Hub only".
 
+### Container image CVEs on a host
+
+A host with Docker and `[upload]` set reads the operating system and package list of each running container's image and sends
+it to the hub, which matches it against the same CVE data as the host's own packages. The hub's Container images tab for that
+host shows the result, and a finding is raised per image. Nothing to install: the collector already has the Docker socket.
+
+```toml
+[collector]
+docker_read_packages = true    # false: nothing is read from inside a container
+interval_docker_images = 300   # seconds between looks; at most 10 new images are read per look
+```
+
+- **The host needs this collector version.** An older collector sends no package lists. Until you update it
+  (`sudo daemonsight-update`, or Update now on the hub), the host's Container images page lists the images as "Not read",
+  which is not the same as having no CVEs.
+- **What is read:** four fixed files (`/usr/lib/os-release`, `/etc/os-release`, `/var/lib/dpkg/status` and
+  `/lib/apk/db/installed`) through Docker's container archive call, GET only. See [SECURITY.md](../SECURITY.md), "The collector".
+- **One read per image id.** The first running container of an image is read; the list is read again only when the image id
+  changes (after a pull and recreate). A restart of the collector or the hub reads nothing again.
+- **Images with no running container** are not read: the page lists them as "Not read: stopped" and no finding is raised for them.
+  Start a container from the image to have it checked.
+- **Images that are not Debian, Ubuntu or Alpine** (or have no package database, such as distroless images) are listed and
+  not matched; the page says why.
+- The package lists go to the hub, so anyone who can read the hub's database can see which package versions your containers run.
+  Switch it off with `docker_read_packages = false` if that is not acceptable.
+
 ### Updates and reboots
 
 The Packages page needs nothing extra on Debian or Ubuntu. DaemonSight runs

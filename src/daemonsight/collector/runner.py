@@ -13,6 +13,7 @@ from ..config import Config
 from .sources import Source, SourceUnavailable
 from .sources.caddy import CaddySource
 from .sources.docker import DockerSource
+from .sources.docker_images import DockerImagesSource
 from .sources.fail2ban import Fail2banSource
 from .sources.firewall import FirewallSource
 from .sources.inventory import InventorySource
@@ -41,6 +42,8 @@ def build_sources(cfg: Config) -> list[Source]:
         # The hub matches installed packages against CVE data; a host that
         # keeps its data to itself has no use for the list.
         sources.append(InventorySource(c.interval_packages))
+        # Likewise the images' package lists: the hub matches them, and a host that keeps its data to itself has no use for them.
+        sources.append(DockerImagesSource(c.interval_docker_images, c.docker_socket, c.docker_read_packages))
     return sources
 
 
@@ -211,6 +214,13 @@ class Collector:
                              link=f["link"])
 
     async def _loop(self, source: Source) -> None:
+        restore = getattr(source, "restore", None)
+        if restore is not None:      # a source that keeps reads between looks takes them from its last snapshot
+            try:
+                prev = db.get_snapshot(self.conn, self.host, source.name)
+                restore(prev.data if prev and prev.ok else None)
+            except Exception:
+                log.exception("restoring %s failed", source.name)
         while True:
             started = time.monotonic()
             try:

@@ -157,6 +157,34 @@ def counts(units):
     return out
 
 
+def web01_images():
+    """What the hub stores of web-01's container images (hub.merge_docker_images): `app` (Debian 12, behind the host's Caddy site) and
+    `db` (Debian 13, published on all interfaces), and the stopped `worker`."""
+    from daemonsight import hub
+    from tests.fake_docker import hid
+    from tests.test_docker_images import BOOKWORM_PACKAGES, DEB12, entry, os_
+    from daemonsight import docker_packages as pk
+
+    def wire(e):
+        e = dict(e)
+        if e["manager"]:
+            e["hash"] = pk.fingerprint(e)
+        return e
+    app, dbi, worker = hid("web01-app"), hid("web01-db"), hid("web01-worker")
+    entries = [wire(entry(app, DEB12, BOOKWORM_PACKAGES, container="app", read_at=int(NOW - 3000))),
+               wire(entry(dbi, os_("debian", "13", "trixie", "Debian GNU/Linux 13 (trixie)"), [("libc-ares2", "c-ares", "1.10.0-1", ""), ("bash", "", "5.2.37-2", "")],
+                          container="db", read_at=int(NOW - 3000))),
+               wire(entry(worker, DEB12, None, error="not read: stopped", container=None, read_at=None))]
+    up = hub.DockerImagesIn.model_validate({
+        "v": 1, "taken_at": NOW - 25, "engine": {"version": "29.0.0", "api": "1.54"},
+        "containers": [{"name": "app", "image": "example/app:2.4", "image_id": app, "state": "running"},
+                       {"name": "db", "image": "postgres:17", "image_id": dbi, "state": "running"},
+                       {"name": "worker", "image": "example/worker:2.4", "image_id": worker, "state": "exited"}],
+        "images": [{"id": app, "tags": ["example/app:2.4"]}, {"id": dbi, "tags": ["postgres:17"]}, {"id": worker, "tags": ["example/worker:2.4"]}],
+        "image_packages": entries})
+    return hub.merge_docker_images(up, None)[0]
+
+
 def seed_collectors(conn):
     from daemonsight import hub
     from daemonsight.collector.sources.caddy import parse_config
@@ -185,6 +213,7 @@ def seed_collectors(conn):
                    "containers": [ctr("app", "example/app:2.4"), ctr("db", "postgres:17", ports=wide, memory=210 * 2**20),
                                   ctr("worker", "example/worker:2.4", status="exited", exit_code=1, restarts=3)]},
         "caddy": caddy,
+        "docker_images": web01_images(),
         "fail2ban": {"version": "1.1.0", "jails": [{
             "name": "sshd", "backend": "systemd", "logpaths": [], "journalmatch": ["_SYSTEMD_UNIT=ssh.service"], "units": ["ssh.service"],
             "failed_now": 2, "failed_total": 311, "banned_now": 2, "banned_total": 57,
@@ -272,9 +301,11 @@ def seed_remotes(conn, cfg, workdir):
     for name, f in feeds.FEEDS.items():
         feeds.feed_row(cdb, f)
         feeds._record(cdb, f, checked_at=NOW, ok_at=NOW - 3600, changed_at=NOW, status="ok", rows=3, size=1000, note="")
-    for ph, inv in di.image_inventories({"tower": {"image_packages": entries}}).items():
+    for ph, inv in di.image_inventories({"tower": {"image_packages": entries}, "web-01": web01_images()}).items():
         match.match_host(cdb, ph, inv, "g")
     cdb.close()
+    from daemonsight.cve import run as cve_run
+    asyncio.run(cve_run.Chore(cfg, conn, None)._docker_findings(NOW - 10))     # web-01's image findings, as the CVE chore raises them
 
     unraid, firewall, lapi = FakeUnraid(), FakeOpnsense(), FakeLapi()
     lapi.decisions = [decision("192.0.2.10", id_=1),
@@ -407,6 +438,7 @@ def take(base: str, out: Path) -> None:
         shoot(page, base + "/", out / "hosts.png", limit=900)
         shoot(page, base + "/h/web-01/", out / "overview.png", limit=960, selector="section.card, .list-group-item")
         shoot(page, base + "/h/tower/images", out / "unraid-images.png", limit=960)
+        shoot(page, base + "/h/web-01/images", out / "collector-images.png", limit=960)
         ctx.close()
 
         ctx = browser.new_context(viewport={"width": 390, "height": 844}, has_touch=True, is_mobile=True, **opts)
@@ -418,6 +450,9 @@ def take(base: str, out: Path) -> None:
         page.locator("#ds-menu-btn").first.click()
         page.wait_for_timeout(300)
         page.screenshot(path=str(out / "phone.png"))
+        page.goto(base + "/h/web-01/images")
+        settle(page)
+        page.screenshot(path=str(out / "collector-images-phone.png"), full_page=True)
         ctx.close()
         browser.close()
     for f in sorted(out.glob("*.png")):

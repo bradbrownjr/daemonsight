@@ -50,7 +50,7 @@ one list of what to fix, without a SIEM.
 | Exposure | Listening ports, nftables rules, Caddy admin API, fail2ban |
 | Containers | Docker socket; on Unraid, a small read-only Docker reader |
 | Host package CVEs | Debian security tracker and Canonical's Ubuntu OVAL data, CISA KEV and SSVC ratings, EPSS; Fedora advisories |
-| Container image CVEs | Debian, Alpine and Ubuntu images |
+| Container image CVEs | Debian, Alpine and Ubuntu images, from the package lists the collector or the Unraid Docker reader reads out of running containers |
 | Unraid | GraphQL API, Viewer-only key |
 | OPNsense and CrowdSec | REST API, GET only, and the project's changelog, with the FreeBSD and GitHub advisories it names, for the CVEs a pending update fixes; CrowdSec Local API, read-only key |
 | UniFi Network | Integration API, GET only, with a View Only admin's key: devices, firmware updates, Wi-Fi security, clients as a count |

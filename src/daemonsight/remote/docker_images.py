@@ -58,6 +58,16 @@ HOWTO_CVES = "\n".join((
     "The CVEs are listed on the Container images page, each with its deadline, exploit probability and whether it is on CISA's KEV list",
     "The finding goes away when the image no longer holds the vulnerable package versions"))
 
+# The same steps for a host with a collector: it has no Docker tab, so the first line says how to pull and recreate a container.
+UPDATE_HOST = ("Update the image: pull a newer tag and create the container again. With Docker Compose, in the project's folder, "
+               "run docker compose pull and then docker compose up -d. Without Compose, run docker pull for the image, then stop, "
+               "remove and start the container again with the same options")
+HOWTO_EOL_HOST = "\n".join((HOWTO_EOL.split("\n")[0],
+                            "Update each image: pull a newer tag and create the container again (docker compose pull, then docker compose up -d). "
+                            "Or switch to another tag of the same app", *HOWTO_EOL.split("\n")[2:]))
+HOWTO_CVES_ALPINE_HOST = "\n".join((UPDATE_HOST, *HOWTO_CVES_ALPINE.split("\n")[1:]))
+HOWTO_CVES_HOST = "\n".join((UPDATE_HOST, *HOWTO_CVES.split("\n")[1:]))
+
 
 # --- the base OS ---------------------------------------------------------------------------------------------------------
 
@@ -261,8 +271,12 @@ def load_cves(cfg, state_conn, host: str, data: dict | None) -> dict | None:
     if cdb is None:
         return out
     from .. import db
-    snap = db.get_snapshot(state_conn, host, "unraid_docker")
-    exposures = cve_exposure.image_exposures(state_conn, host, data, snap.data if snap and snap.data else None)
+    if state_conn.execute("SELECT 1 FROM hosts WHERE id = ? AND kind IS NULL", (host,)).fetchone():     # a host with a collector
+        from ..web import views
+        exposures = cve_exposure.collector_image_exposures(state_conn, views.host_config(state_conn, eff, host), host, data)
+    else:
+        snap = db.get_snapshot(state_conn, host, "unraid_docker")
+        exposures = cve_exposure.image_exposures(state_conn, host, data, snap.data if snap and snap.data else None)
     try:
         out["available"] = True
         feed = cdb.execute("SELECT ok_at FROM feed WHERE name = 'debian'").fetchone()
@@ -436,8 +450,9 @@ def _held_images(a: dict, data: dict, emitted: set[str], prior: dict) -> list[Fi
 
 
 def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | None = None,
-             today: date | None = None, prior: dict | None = None) -> list[Finding]:
-    """`prior` maps (rule, key) to this system's open findings. Without package data at all (no summary, a reader from before
+             today: date | None = None, prior: dict | None = None, platform: str = "unraid") -> list[Finding]:
+    """`platform` is "unraid" (the steps name Unraid's Docker tab) or "host" (a host with a collector: docker compose pull).
+    `prior` maps (rule, key) to this system's open findings. Without package data at all (no summary, a reader from before
     package lists, an empty list) every open `docker.image_cves` finding is emitted unchanged."""
     a = analyze(data, unraid_docker, cves, today)
     # A reachable reader with no image and no container at all has nothing left to keep a finding for: they resolve (see _held_images).
@@ -454,7 +469,8 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
                            f"{n} container {_plural(n, 'image runs', 'images run')} on an end-of-life OS",
                            f"{_plural(n, 'This image is', 'These images are')} built on an operating system that no longer gets free security updates: {listed}. "
                            "A flaw found in its packages stays unfixed until the image is rebuilt on a supported base.",
-                           f"{LINK}#image-list", None, "eol:" + digest(f"{r['repo']}@{r['os_name']}" for r in eol), HOWTO_EOL))
+                           f"{LINK}#image-list", None, "eol:" + digest(f"{r['repo']}@{r['os_name']}" for r in eol),
+                           HOWTO_EOL_HOST if platform == "host" else HOWTO_EOL))
     for r in a["rows"]:
         c = r["cve"]
         if not c or c["state"] != "matched" or not c["fixable"]:
@@ -479,7 +495,8 @@ def evaluate(data: dict | None, unraid_docker: dict | None = None, cves: dict | 
                        "they are listed on the page and raise nothing.")
         out.append(Finding("docker.image_cves", r["name"], c["severity"], title[:300], detail[:3900],
                            f"{LINK}#{r['anchor']}", None, f"{r['repo']}:{digest(x['cve'] for x in fixable)}",
-                           "\n".join(((HOWTO_CVES_ALPINE if r["kind"] == "alpine" else HOWTO_CVES).split("\n") + why))[:3900],
+                           "\n".join(((HOWTO_CVES_ALPINE_HOST if platform == "host" else HOWTO_CVES_ALPINE) if r["kind"] == "alpine"
+                                      else (HOWTO_CVES_HOST if platform == "host" else HOWTO_CVES)).split("\n") + why)[:3900],
                            deadline_days=top.days))
     if prior and (cves or {}).get("enabled"):          # with CVE matching switched off the findings go, as before
         out += _held_images(a, data, {f.key for f in out if f.rule == "docker.image_cves"}, prior)

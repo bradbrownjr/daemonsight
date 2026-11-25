@@ -20,7 +20,9 @@ written to disk, and no member name is used as a path.
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import re
 import tarfile
 from urllib.parse import quote
@@ -167,3 +169,11 @@ def os_kind(os_info: dict | None) -> str:
     if ids & {"debian", "ubuntu", "raspbian"}:
         return "dpkg"
     return "other" if os_info.get("id") else "unknown"
+
+
+def fingerprint(entry: dict) -> str:
+    """A short hash of what an image's package list says: its OS, package manager, count and packages. The collector sends it
+    with each image (collector/sources/docker_images.py) so the hub can tell that the list it holds is this one."""
+    raw = json.dumps([entry.get("os"), entry.get("manager"), entry.get("count"), entry.get("packages")],
+                     sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]

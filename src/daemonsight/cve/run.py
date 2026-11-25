@@ -16,7 +16,7 @@ import logging
 import time
 from functools import partial
 
-from .. import db, settings
+from .. import db, hub, settings
 from ..config import Config
 from ..findings import Finding
 from . import advisories, alpine, exposure, feeds, match, opnsense, priority, priority_fetch, records, store, ubuntu
@@ -41,18 +41,19 @@ def _inventories(conn) -> dict[str, dict]:
 
 
 def _image_inventories(conn) -> dict[str, dict]:
-    """pseudo-host -> inventory for every Debian, Ubuntu and Alpine container image an Unraid system's Docker reader listed (see
-    remote/docker_images.py). They are matched like hosts but never get findings here: poll.py raises
-    `docker.image_cves` from the matches."""
+    """pseudo-host -> inventory for every Debian, Ubuntu and Alpine container image an Unraid system's Docker reader listed or a
+    collector host sent (see remote/docker_images.py). They are matched like hosts but never get findings under their pseudo-host id:
+    poll.py raises `docker.image_cves` for an Unraid system, and `_docker_findings` below for a collector host, from the matches."""
     from ..remote import docker_images, docker_storage
     stored = {}
-    for r in conn.execute("SELECT host, data FROM snapshots WHERE source = ?", (docker_storage.SNAPSHOT,)):
-        try:
-            d = json.loads(r["data"]) if r["data"] else None
-        except ValueError:
-            d = None
-        if isinstance(d, dict):
-            stored[r["host"]] = d
+    for source in (docker_storage.SNAPSHOT, hub.DOCKER_IMAGES):
+        for r in conn.execute("SELECT host, data FROM snapshots WHERE source = ?", (source,)):
+            try:
+                d = json.loads(r["data"]) if r["data"] else None
+            except ValueError:
+                d = None
+            if isinstance(d, dict):
+                stored[r["host"]] = d
     return docker_images.image_inventories(stored)
 
 
@@ -105,10 +106,14 @@ def _set_cve_findings(conn, host: str, now: float, current: list[Finding], rules
 
 
 def clear_findings(conn, now: float) -> None:
-    """With [cve] off, close any cve.* finding left from when it was on."""
+    """With [cve] off, close any cve.* finding left from when it was on, and a collector host's docker.* ones (an Unraid
+    system's follow its own poll, which closes them when matching is off)."""
     for (host,) in conn.execute("SELECT DISTINCT host FROM findings WHERE rule LIKE 'cve.%' "
                                 "AND resolved_at IS NULL").fetchall():
         db.reconcile_findings(conn, host, now, [], only_prefix="cve.")
+    for (host,) in conn.execute("SELECT DISTINCT f.host FROM findings f JOIN hosts h ON h.id = f.host WHERE h.kind IS NULL "
+                                "AND f.rule LIKE 'docker.%' AND f.resolved_at IS NULL").fetchall():
+        _set_cve_findings(conn, host, now, [], "docker.")
 
 
 class Chore:
@@ -207,6 +212,7 @@ class Chore:
         await asyncio.to_thread(self._forget, set(every) | set(opn) | set(unseen))
         await self._fetch_records(now)
         await self._findings(invs, now)
+        await self._docker_findings(now)
 
     async def _fetch_priority(self, now: float) -> None:
         """Once a day, ask the DaemonSight repository for a newer prioritisation table (priority_fetch.py). A table that was installed is
@@ -405,6 +411,26 @@ class Chore:
                 _set_cve_findings(self.state, host, now, packages.get(host, []), "cve.package")
             db.set_finding(self.state, host, now, stale_f, rule="cve.feed_stale", key="feeds")
         self.dirty = False
+
+    async def _docker_findings(self, now: float) -> None:
+        """`docker.image_cves` and `docker.eol_base` for each collector host that sent its container images (docs/DESIGN.md,
+        "Collector hosts: image CVEs"): the same rules, wording and holds as for an Unraid system (remote/docker_images.py), run on the
+        stored image data and the matches made above. Each pass, because the inputs (the matches, the host's exposure, the
+        prioritisation table) change on their own; reconciling the same findings again changes nothing. A host that has sent no image
+        data keeps whatever findings it has: nothing says they no longer hold."""
+        from ..remote import docker_images, poll
+        for r in self.state.execute("SELECT s.host, s.data FROM snapshots s JOIN hosts h ON h.id = s.host "
+                                    "WHERE s.source = ? AND h.kind IS NULL", (hub.DOCKER_IMAGES,)).fetchall():
+            try:
+                data = json.loads(r["data"]) if r["data"] else None
+                if not isinstance(data, dict) or data.get("available") is False:
+                    continue
+                cves = docker_images.load_cves(self.cfg, self.state, r["host"], data)
+                current = docker_images.evaluate(data, None, cves, None, poll.open_findings(self.state, r["host"], ("docker.image_cves",)),
+                                                 platform="host")
+                _set_cve_findings(self.state, r["host"], now, current, "docker.")
+            except Exception:
+                log.exception("Container image findings failed for %s", r["host"])
 
     def _package_findings(self, invs: dict[str, dict], pending: dict[str, set[str]],
                           rebooting: set[str] = frozenset(), exposures: dict | None = None) -> dict[str, list[Finding]]:

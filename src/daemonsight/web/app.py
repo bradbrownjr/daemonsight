@@ -25,7 +25,7 @@ from .. import config as config_mod, db, full_version, hub, settings, shodan
 from ..config import Config
 from ..remote.client import Net
 from ..notify import schedule
-from . import notify_routes, opnsense_views, report, sections, unifi_views, unraid_views, views
+from . import image_views, notify_routes, opnsense_views, report, sections, unifi_views, unraid_views, views
 from .auth import PasswordStore, RateLimiter
 
 log = logging.getLogger("daemonsight.auth")
@@ -413,6 +413,8 @@ def create_app(cfg: Config, *, secret: str | None = None, config_file: Path | No
     pages = {"overview": views.overview, "exposure": views.exposure, "routes": views.routes,
              "services": views.services, "fail2ban": views.jails, "packages": views.packages,
              "vulnerabilities": views.vulnerabilities}
+    if cfg.hub.enabled:     # the package lists are sent to a hub; a standalone host has no matching to show
+        pages["images"] = image_views.host_images
 
     def resolve(conn, host: str | None) -> tuple[Config, str]:
         if not cfg.hub.enabled:
@@ -702,6 +704,11 @@ def add_ingest(app: FastAPI, cfg: Config, conn) -> None:
         reply = {"last_seq": up.seq}
         if target:
             reply["update_to"] = target
+        # Image package lists the hub got only a hash of and holds no list for: the collector sends them in full next time.
+        if up.docker_images is not None:
+            wanted = hub.docker_images_missing(conn, row["id"])
+            if wanted:
+                reply["docker_images_resend"] = wanted
         now = time.time()
         hub.handle_uninstall_ack(conn, row["id"], up, now, data_dir=cfg.data_dir, cve_path=cfg.cve_db_path)
         # Only a host marked "uninstall pending" is told to uninstall (docs/DESIGN.md, "Uninstall from the hub").
