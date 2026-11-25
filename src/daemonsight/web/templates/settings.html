@@ -6,9 +6,9 @@
   <h1 class="page-title">Settings</h1>
 </div>
 
-<nav class="ds-tabs mb-4" aria-label="Settings tabs">
-  <ul class="ds-tabs-list">
-    {% for t in v.tabs %}<li><a class="ds-tab" href="/settings/{{ t.id }}"{% if t.current %} aria-current="page"{% endif %}>{{ t.title }}</a></li>{% endfor %}
+<nav class="ds-ptabs mb-4" aria-label="Settings tabs">
+  <ul class="ds-ptabs-list">
+    {% for t in v.tabs %}<li><a class="ds-ptab" href="/settings/{{ t.id }}"{% if t.current %} aria-current="page"{% endif %}>{{ t.title }}</a></li>{% endfor %}
   </ul>
 </nav>
 

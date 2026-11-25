@@ -566,7 +566,7 @@ def test_each_tab_renders_its_sections_and_no_others(hub, tab):
     for sid in sum(SECTIONS_OF.values(), ()):
         assert (f'id="{sid}"' in html) == (sid in mine), sid
     assert f'href="/settings/{tab}" aria-current="page"' in html
-    assert html.count('class="ds-tab"') == len(settings.TAB_IDS)
+    assert html.count('class="ds-ptab"') == len(settings.TAB_IDS)
 
 
 def test_a_bare_settings_opens_the_first_tab(hub):

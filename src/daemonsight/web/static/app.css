@@ -412,15 +412,19 @@ textarea.ds-set-input { max-width: 28rem; }
 }
 
 /* Settings tabs: real links, one row on a desktop; on a phone they wrap and each row fills the width. */
-.ds-tabs-list { display: flex; flex-wrap: wrap; gap: .5rem; list-style: none; margin: 0; padding: 0; }
-.ds-tabs-list li { flex: 0 0 auto; }
-.ds-tab { display: flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .35rem .9rem;
-  border: 1px solid var(--tblr-border-color); border-radius: var(--tblr-border-radius, 4px); color: inherit; text-decoration: none; }
-.ds-tab[aria-current="page"] { background: var(--tblr-primary-lt, rgba(32, 107, 196, .1)); border-color: var(--tblr-primary);
-  color: var(--tblr-primary); font-weight: 600; }
-.ds-tab:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: 2px; }
-@media (hover: hover) { .ds-tab:hover { background: var(--tblr-bg-surface-secondary, rgba(128, 128, 128, .12)); } }
+/* Page tabs (Settings): underlined links, not buttons. The current tab has a primary underline and text; the row
+   sits on one rule. On a phone the row wraps, each tab keeps its own underline, and every tab is 44 px tall. */
+.ds-ptabs-list { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding: 0;
+  border-bottom: 1px solid var(--tblr-border-color); }
+.ds-ptabs-list li { flex: 0 0 auto; }
+.ds-ptab { display: flex; align-items: center; justify-content: center; min-height: 2.5rem; padding: .4rem 1rem;
+  margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--tblr-secondary); text-decoration: none; }
+.ds-ptab[aria-current="page"] { border-bottom-color: var(--tblr-primary); color: var(--tblr-primary); font-weight: 600; }
+.ds-ptab:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: -2px; }
+@media (hover: hover) { .ds-ptab:not([aria-current="page"]):hover { color: var(--tblr-body-color); border-bottom-color: var(--tblr-border-color); text-decoration: none; } }
 @media (max-width: 767.98px) {
-  .ds-tabs-list li { flex: 1 1 auto; }
-  .ds-tab { min-height: 44px; }
+  .ds-ptabs-list { border-bottom: 0; }
+  .ds-ptabs-list li { flex: 1 1 auto; }
+  .ds-ptab { min-height: 44px; padding: .4rem .75rem; margin-bottom: 0; border-bottom: 1px solid var(--tblr-border-color); }
+  .ds-ptab[aria-current="page"] { border-bottom: 2px solid var(--tblr-primary); }
 }

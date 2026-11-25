@@ -126,9 +126,14 @@ These apply to every page. Owner rules, kept as written.
   (a redirect with the message), and a validation error renders the tab that
   holds the bad field.
 - **Links to a setting name its tab** (`/settings/security#cve`).
+- **Tabs look like tabs, not buttons.** Plain links on one rule; the current
+  tab has a primary underline and primary text, the others are muted. No
+  borders or fills, which read as buttons (Owner: "Our tabs look like
+  buttons"). Page tabs use their own classes (`ds-ptab`); `ds-tab` is the
+  header nav's.
 - **Phone: the row wraps, each row fills the width.** Scrolling a row hides
   tabs without JavaScript, and a select hides the choices; five short names
-  wrap to three rows of 44 px targets with nothing off-screen, and the page
+  wrap to two rows of 44 px targets, each tab with its own underline, with nothing off-screen, and the page
   never scrolls sideways. (Project practice, within "Touch targets and focus".)
 - **Columns stay the same within a tab,** like every page.
 
